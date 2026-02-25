@@ -1,0 +1,13 @@
+services:
+  agorai-test:
+    build: .
+    container_name: agorai-test
+    volumes:
+      - ./data:/app/data
+      - ./agorai.config.json:/app/agorai.config.json:ro
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true

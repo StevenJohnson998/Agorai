@@ -1,0 +1,29 @@
+{
+  "name": "agorai",
+  "version": "0.1.0",
+  "description": "Multi-agent AI debate server — MCP + CLI",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "bin": {
+    "agorai": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "start": "node dist/server.js",
+    "cli": "node dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^11.10.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^18.19.0",
+    "typescript": "^5.7.0"
+  }
+}

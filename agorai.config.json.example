@@ -1,0 +1,43 @@
+{
+  "thoroughness": 0.5,
+  "agents": [
+    {
+      "name": "claude",
+      "command": "claude",
+      "args": ["-p", "--output-format", "json"],
+      "personas": ["architect", "security"],
+      "enabled": true
+    },
+    {
+      "name": "gemini",
+      "command": "gemini",
+      "args": ["-p", "--output-format", "json"],
+      "personas": ["pragmatist"],
+      "enabled": false
+    },
+    {
+      "name": "ollama",
+      "model": "qwen3",
+      "endpoint": "http://localhost:11434",
+      "personas": ["critic"],
+      "enabled": false
+    }
+  ],
+  "personas": [
+    {
+      "name": "devops",
+      "role": "DevOps Engineer",
+      "systemPrompt": "You are a DevOps engineer. Focus on deployment, CI/CD, infrastructure, monitoring, and operational concerns. Evaluate proposals for production-readiness.",
+      "consensusBonus": 1.0
+    }
+  ],
+  "budget": {
+    "maxTokensPerDebate": 0,
+    "maxTokensPerProject": 0,
+    "warnAtPercent": 80,
+    "estimatedTokensPerInvocation": 1500
+  },
+  "database": {
+    "path": "./data/agorai.db"
+  }
+}

@@ -1,0 +1,27 @@
+node_modules/
+dist/
+data/
+*.db
+
+agorai.config.json
+.env
+.env.*
+!.env.example
+
+# Local-only docs (not published)
+CHANGELOG.md
+FEATURES.md
+HANDOFF_CLAUDE_CODE.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archives
+versions/
