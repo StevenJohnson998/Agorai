@@ -18,6 +18,8 @@ export interface ConsensusInput {
   personaBonuses?: Map<string, number>;
   /** Minimum confidence threshold to count a vote */
   confidenceThreshold?: number;
+  /** All rounds so far (for debate protocol convergence tracking) */
+  allRounds?: import("../memory/base.js").RoundRecord[];
 }
 
 export interface ConsensusOutput {

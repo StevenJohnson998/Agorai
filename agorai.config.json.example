@@ -1,4 +1,5 @@
 {
+  "user": "default",
   "thoroughness": 0.5,
   "agents": [
     {
@@ -36,6 +37,19 @@
     "maxTokensPerProject": 0,
     "warnAtPercent": 80,
     "estimatedTokensPerInvocation": 1500
+  },
+  "logging": {
+    "info": {
+      "purge": "date",
+      "maxDays": 30,
+      "maxBytes": 52428800
+    },
+    "debates": {
+      "purge": "count",
+      "maxFiles": 50,
+      "maxDays": 14,
+      "maxBytes": 104857600
+    }
   },
   "database": {
     "path": "./data/agorai.db"

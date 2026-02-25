@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { IAgentAdapter, AgentResponse, AgentInvokeOptions } from "./base.js";
+import { extractConfidence, CONFIDENCE_INSTRUCTION, calculateTimeout } from "./base.js";
 import type { AgentConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 
@@ -11,6 +12,10 @@ const log = createLogger("gemini");
 /**
  * Adapter for Gemini CLI.
  * Invokes `gemini -p --output-format json` as a subprocess.
+ *
+ * NOTE: This adapter has not been tested against a real Gemini CLI installation.
+ * It follows the same pattern as ClaudeAdapter but Gemini CLI flags and JSON
+ * output format may differ. Contributions welcome.
  */
 export class GeminiAdapter implements IAgentAdapter {
   readonly name: string;
@@ -45,6 +50,8 @@ export class GeminiAdapter implements IAgentAdapter {
       let stderr = "";
       const timer = setTimeout(() => {
         child.kill("SIGTERM");
+        const killTimer = setTimeout(() => { child.kill("SIGKILL"); }, 2000);
+        killTimer.unref();
         reject(new Error(`gemini timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -66,12 +73,16 @@ export class GeminiAdapter implements IAgentAdapter {
   }
 
   async invoke(options: AgentInvokeOptions): Promise<AgentResponse> {
-    const { prompt, systemPrompt, timeoutMs = 120_000 } = options;
+    const { prompt, systemPrompt } = options;
+    const timeoutMs = options.timeoutMs ?? calculateTimeout(prompt.length, "cli");
     const start = Date.now();
 
-    const fullPrompt = systemPrompt
-      ? `[Your role]\n${systemPrompt}\n\n[Question]\n${prompt}`
-      : prompt;
+    // TODO: Gemini CLI may support a --system-prompt flag. Since this adapter
+    // is untested, we keep the concatenation approach for now.
+    const systemWithConf = systemPrompt
+      ? `${systemPrompt}\n\n${CONFIDENCE_INSTRUCTION}`
+      : CONFIDENCE_INSTRUCTION;
+    const fullPrompt = `[Your role]\n${systemWithConf}\n\n[Question]\n${prompt}`;
 
     log.debug(this.name, "invoke start, prompt length:", fullPrompt.length);
 
@@ -100,9 +111,12 @@ export class GeminiAdapter implements IAgentAdapter {
 
     log.info(this.name, "invoke complete:", durationMs + "ms");
 
+    const { confidence, cleanContent } = extractConfidence(content);
+    log.debug(this.name, "confidence:", confidence, confidence === 0.5 ? "(default)" : "(extracted)");
+
     return {
-      content,
-      confidence: 0.5,
+      content: cleanContent,
+      confidence,
       raw,
       durationMs,
     };

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { homedir } from "node:os";
 
 // --- Schemas ---
 
@@ -50,7 +51,7 @@ export const ConfigSchema = z.object({
       command: "gemini",
       args: ["-p", "--output-format", "json"],
       personas: ["pragmatist"],
-      enabled: true,
+      enabled: false,
     },
   ]),
 
@@ -120,9 +121,25 @@ export type Config = z.infer<typeof ConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
 
-/** Base data directory for a user: data/<user>/ */
+/** Directory where the loaded config file was found (null if defaults used). */
+let loadedConfigDir: string | null = null;
+
+/** Reset loadedConfigDir to null. Exported for testing only. */
+export function resetLoadedConfigDir(): void {
+  loadedConfigDir = null;
+}
+
+/**
+ * Base data directory for a user.
+ * - If a config file was loaded: resolves relative to its directory → <configDir>/data/<user>/
+ * - Otherwise: uses XDG_DATA_HOME/agorai/<user> (fallback ~/.local/share/agorai/<user>)
+ */
 export function getUserDataDir(config: Config): string {
-  return resolve("data", config.user);
+  if (loadedConfigDir) {
+    return resolve(loadedConfigDir, "data", config.user);
+  }
+  const xdg = process.env.XDG_DATA_HOME || resolve(homedir(), ".local", "share");
+  return resolve(xdg, "agorai", config.user);
 }
 
 // --- Loader ---
@@ -131,6 +148,7 @@ const CONFIG_FILENAMES = ["agorai.config.json", ".agorairc.json"];
 
 export function loadConfig(explicitPath?: string): Config {
   if (explicitPath) {
+    loadedConfigDir = dirname(resolve(explicitPath));
     const raw = JSON.parse(readFileSync(explicitPath, "utf-8"));
     return ConfigSchema.parse(raw);
   }
@@ -138,11 +156,13 @@ export function loadConfig(explicitPath?: string): Config {
   for (const filename of CONFIG_FILENAMES) {
     const fullPath = resolve(process.cwd(), filename);
     if (existsSync(fullPath)) {
+      loadedConfigDir = dirname(fullPath);
       const raw = JSON.parse(readFileSync(fullPath, "utf-8"));
       return ConfigSchema.parse(raw);
     }
   }
 
-  // No config file found — use defaults
+  // No config file found — use defaults (XDG path via getUserDataDir)
+  loadedConfigDir = null;
   return ConfigSchema.parse({});
 }

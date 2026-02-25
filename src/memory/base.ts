@@ -69,6 +69,8 @@ export interface ParticipantResponse {
   persona?: string;
   content: string;
   confidence: number;
+  /** Trust score from agent-registry (reserved for future use) */
+  trustScore?: number;
   durationMs: number;
 }
 

@@ -1,5 +1,6 @@
 import http from "node:http";
 import type { IAgentAdapter, AgentResponse, AgentInvokeOptions, TokenUsage } from "./base.js";
+import { extractConfidence, CONFIDENCE_INSTRUCTION, calculateTimeout } from "./base.js";
 import type { AgentConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 
@@ -46,14 +47,19 @@ export class OllamaAdapter implements IAgentAdapter {
   }
 
   async invoke(options: AgentInvokeOptions): Promise<AgentResponse> {
-    const { prompt, systemPrompt, timeoutMs = 300_000 } = options;
+    const { prompt, systemPrompt } = options;
+    const timeoutMs = options.timeoutMs ?? calculateTimeout(prompt.length, "http");
     const start = Date.now();
     log.debug(this.name, "invoke start, model=" + this.model + ", prompt length:", prompt.length);
+
+    const fullSystem = systemPrompt
+      ? `${systemPrompt}\n\n${CONFIDENCE_INSTRUCTION}`
+      : CONFIDENCE_INSTRUCTION;
 
     const body = {
       model: this.model,
       prompt,
-      ...(systemPrompt && { system: systemPrompt }),
+      system: fullSystem,
       stream: false,
     };
 
@@ -79,9 +85,12 @@ export class OllamaAdapter implements IAgentAdapter {
     log.info(this.name, "invoke complete:", durationMs + "ms" +
       (tokens ? `, ${tokens.inputTokens + tokens.outputTokens} tokens` : ""));
 
+    const { confidence, cleanContent } = extractConfidence(parsed.response.trim());
+    log.debug(this.name, "confidence:", confidence, confidence === 0.5 ? "(default)" : "(extracted)");
+
     return {
-      content: parsed.response.trim(),
-      confidence: 0.5,
+      content: cleanContent,
+      confidence,
       tokens,
       raw: parsed,
       durationMs,

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { IAgentAdapter, AgentResponse, AgentInvokeOptions, TokenUsage } from "./base.js";
+import { extractConfidence, CONFIDENCE_INSTRUCTION, calculateTimeout } from "./base.js";
 import type { AgentConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 
@@ -54,6 +55,9 @@ export class ClaudeAdapter implements IAgentAdapter {
       let stderr = "";
       const timer = setTimeout(() => {
         child.kill("SIGTERM");
+        // Escalate to SIGKILL after 2s if still alive
+        const killTimer = setTimeout(() => { child.kill("SIGKILL"); }, 2000);
+        killTimer.unref();
         reject(new Error(`claude timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -75,20 +79,24 @@ export class ClaudeAdapter implements IAgentAdapter {
   }
 
   async invoke(options: AgentInvokeOptions): Promise<AgentResponse> {
-    const { prompt, systemPrompt, timeoutMs = 120_000 } = options;
+    const { prompt, systemPrompt } = options;
+    const timeoutMs = options.timeoutMs ?? calculateTimeout(prompt.length, "cli");
     const start = Date.now();
 
-    // Build the full prompt with system context prepended
-    const fullPrompt = systemPrompt
-      ? `[Your role]\n${systemPrompt}\n\n[Question]\n${prompt}`
-      : prompt;
+    // Build args: add --system-prompt with confidence instruction
+    const args = [...this.baseArgs];
+    const fullSystem = systemPrompt
+      ? `${systemPrompt}\n\n${CONFIDENCE_INSTRUCTION}`
+      : CONFIDENCE_INSTRUCTION;
+    args.push("--system-prompt", fullSystem);
 
-    log.debug(this.name, "invoke start, prompt length:", fullPrompt.length);
+    log.debug(this.name, "invoke start, prompt length:", prompt.length,
+      systemPrompt ? `(+ system-prompt ${systemPrompt.length} chars)` : "");
 
-    // Pass prompt via stdin — more reliable than as a CLI argument
+    // Pass user prompt via stdin — more reliable than as a CLI argument
     const stdout = await this.spawnWithStdin(
-      this.baseArgs,
-      fullPrompt,
+      args,
+      prompt,
       timeoutMs
     );
 
@@ -101,18 +109,21 @@ export class ClaudeAdapter implements IAgentAdapter {
     try {
       raw = JSON.parse(stdout);
       const obj = raw as Record<string, unknown>;
-      // Claude Code JSON output: { result, cost_usd, ... }
+      // Claude Code JSON output: { result, total_cost_usd, usage: { input_tokens, output_tokens, ... }, ... }
       content = "result" in obj ? String(obj.result) : stdout.trim();
 
-      // Extract cost if available
-      if (typeof obj.cost_usd === "number") {
+      // Extract tokens from usage object (available in current Claude CLI)
+      const usage = obj.usage as Record<string, number> | undefined;
+      const costUsd =
+        typeof obj.total_cost_usd === "number" ? obj.total_cost_usd
+        : typeof obj.cost_usd === "number" ? obj.cost_usd  // legacy fallback
+        : undefined;
+
+      if (usage || costUsd !== undefined) {
         tokens = {
-          // Claude CLI doesn't expose token counts directly,
-          // but we can estimate from cost (Sonnet ~$3/1M input, $15/1M output)
-          // For now, report what we have — cost_usd is the reliable field.
-          inputTokens: 0,
-          outputTokens: 0,
-          costUsd: obj.cost_usd,
+          inputTokens: usage?.input_tokens ?? 0,
+          outputTokens: usage?.output_tokens ?? 0,
+          costUsd,
         };
       }
     } catch {
@@ -124,9 +135,13 @@ export class ClaudeAdapter implements IAgentAdapter {
     log.info(this.name, "invoke complete:", durationMs + "ms" +
       (tokens?.costUsd ? ", $" + tokens.costUsd.toFixed(4) : ""));
 
+    // Extract self-reported confidence from response
+    const { confidence, cleanContent } = extractConfidence(content);
+    log.debug(this.name, "confidence:", confidence, confidence === 0.5 ? "(default)" : "(extracted)");
+
     return {
-      content,
-      confidence: 0.5,
+      content: cleanContent,
+      confidence,
       tokens,
       raw,
       durationMs,

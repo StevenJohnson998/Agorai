@@ -10,10 +10,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadConfig, getUserDataDir } from "./config.js";
+import { loadConfig, getUserDataDir, type PersonaConfig } from "./config.js";
 import { createAdapter } from "./adapters/index.js";
 import { DebateSession } from "./orchestrator.js";
 import type { DebateMode } from "./orchestrator.js";
+import { resolvePersonas } from "./personas.js";
 import { createLogger, initFileLogging } from "./logger.js";
 
 const log = createLogger("server");
@@ -82,14 +83,49 @@ server.tool(
       };
     }
 
-    // TODO v0.2: wire up full DebateSession.run()
+    // Resolve personas from roles arg (Record<string, string[]>) → Map<string, PersonaConfig[]>
+    const agentPersonas = new Map<string, PersonaConfig[]>();
+    if (args.roles) {
+      for (const [agentName, personaNames] of Object.entries(args.roles)) {
+        agentPersonas.set(agentName, resolvePersonas(personaNames, config));
+      }
+    } else {
+      for (const ac of agentConfigs) {
+        if (ac.personas.length > 0) {
+          agentPersonas.set(ac.name, resolvePersonas(ac.personas, config));
+        }
+      }
+    }
+
+    // Run full debate
+    const session = new DebateSession(undefined, config.budget);
+    const result = await session.run({
+      projectId: "mcp-session",
+      debateId: args.debate_id,
+      prompt: args.prompt,
+      agents: adapters,
+      agentPersonas,
+      mode,
+      thoroughness,
+      maxRounds: args.max_rounds,
+      maxTokens: args.max_tokens,
+    });
+
+    // Format result
+    const costSummary = result.cost.totalCostUsd > 0
+      ? `\nCost: $${result.cost.totalCostUsd.toFixed(4)} | Tokens: ${result.cost.totalTokens.inputTokens + result.cost.totalTokens.outputTokens}`
+      : `\nTokens: ${result.cost.totalTokens.inputTokens + result.cost.totalTokens.outputTokens}`;
+
+    const output = [
+      `**Consensus** (protocol: ${result.protocol}, confidence: ${result.confidenceScore.toFixed(2)})`,
+      "",
+      result.consensus,
+      result.dissent ? `\n**Dissent:**\n${result.dissent}` : "",
+      `\n---\nDebate ${result.debateId} | ${result.rounds.length} rounds | ${(result.durationMs / 1000).toFixed(1)}s${costSummary}`,
+    ].filter(Boolean).join("\n");
+
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: "debate tool: not implemented yet (v0.2). Config thoroughness: " + config.thoroughness,
-        },
-      ],
+      content: [{ type: "text" as const, text: output }],
     };
   }
 );

@@ -172,13 +172,32 @@ async function cmdDebate(args: string[]) {
   const thoroughness = values.thoroughness
     ? parseFloat(values.thoroughness)
     : config.thoroughness;
-  const mode = (values.mode ?? "full") as DebateMode;
+  if (isNaN(thoroughness) || thoroughness < 0 || thoroughness > 1) {
+    console.error(`Error: --thoroughness must be a number between 0 and 1 (got "${values.thoroughness}")`);
+    process.exit(1);
+  }
+
+  const mode = values.mode ?? "full";
+  if (mode !== "quick" && mode !== "full") {
+    console.error(`Error: --mode must be "quick" or "full" (got "${values.mode}")`);
+    process.exit(1);
+  }
+
   const maxRounds = values["max-rounds"]
     ? parseInt(values["max-rounds"], 10)
     : undefined;
+  if (maxRounds !== undefined && (isNaN(maxRounds) || maxRounds < 1)) {
+    console.error(`Error: --max-rounds must be a positive integer (got "${values["max-rounds"]}")`);
+    process.exit(1);
+  }
+
   const maxTokens = values["max-tokens"]
     ? parseInt(values["max-tokens"], 10)
     : undefined;
+  if (maxTokens !== undefined && (isNaN(maxTokens) || maxTokens < 1)) {
+    console.error(`Error: --max-tokens must be a positive integer (got "${values["max-tokens"]}")`);
+    process.exit(1);
+  }
 
   // Resolve agents
   const agentNames = values.agents
@@ -226,7 +245,7 @@ async function cmdDebate(args: string[]) {
   // Display config
   const resuming = values.continue;
   if (resuming) {
-    console.log(`\nResuming debate ${resuming}`);
+    console.log(`\nNote: --continue sets the debate ID to "${resuming}" but resume is not yet available (requires SQLite blackboard, v0.2). Starting a new debate with this ID.`);
   }
   console.log(`\nDebate: "${prompt}"`);
   console.log(`  Mode: ${mode} | Thoroughness: ${thoroughness}`);
@@ -298,8 +317,16 @@ async function cmdDebate(args: string[]) {
     console.log("");
   }
 
+  // Consensus + dissent
+  console.log("--- Consensus ---");
+  console.log(result.consensus);
+  if (result.dissent) {
+    console.log("\n--- Dissent ---");
+    console.log(result.dissent);
+  }
+
   // Summary
-  console.log("=".repeat(60));
+  console.log("\n" + "=".repeat(60));
   console.log(`\nDebate ${result.debateId}`);
   console.log(`Protocol: ${result.protocol} | Rounds: ${result.rounds.length} | Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
   console.log(`Average confidence: ${result.confidenceScore.toFixed(2)}`);

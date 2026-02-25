@@ -64,7 +64,7 @@ Add to your MCP client config:
 No API keys needed in Agorai itself. Agents are called through their local CLIs or HTTP APIs:
 
 - **Claude** — `claude -p --output-format json` (Claude Code CLI)
-- **Gemini** — `gemini -p --output-format json` (Gemini CLI)
+- **Gemini** — `gemini -p --output-format json` (Gemini CLI, untested)
 - **Ollama** — HTTP API at `localhost:11434` (any local model: qwen3, llama3, mistral, etc.)
 
 You configure which agents are available in `agorai.config.json`. CLI agents must be installed and authenticated on your system. Ollama agents need a running Ollama instance.

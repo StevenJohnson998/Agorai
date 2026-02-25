@@ -152,12 +152,23 @@ export interface DebateLog {
   readonly path: string;
 }
 
+/** Validate debateId is safe for use in file paths (UUID or alphanumeric+hyphens). */
+const SAFE_DEBATE_ID = /^[a-zA-Z0-9_-]+$/;
+
+export function isValidDebateId(debateId: string): boolean {
+  return SAFE_DEBATE_ID.test(debateId) && debateId.length <= 128;
+}
+
 /**
  * Create a per-debate log file: data/<user>/logs/debates/<debateId>.log
  * Captures full prompts, responses, and debug details for this debate.
  */
 export function createDebateLog(debateId: string): DebateLog | null {
   if (!cfg) return null;
+  if (!isValidDebateId(debateId)) {
+    log("warn", "[logger]", [`Invalid debateId for log file (rejected): ${debateId}`]);
+    return null;
+  }
 
   const path = join(cfg.debatesDir, `${debateId}.log`);
 

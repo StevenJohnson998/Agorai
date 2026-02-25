@@ -11,11 +11,13 @@
 
 import type { IAgentAdapter, TokenUsage } from "./adapters/base.js";
 import type { IBlackboard, RoundRecord, ParticipantResponse } from "./memory/base.js";
-import type { ConsensusProtocol } from "./consensus/base.js";
+import type { ConsensusProtocol, IConsensusProtocol } from "./consensus/base.js";
 import type { PersonaConfig, Config } from "./config.js";
+import { VoteConsensus } from "./consensus/vote.js";
+import { DebateConsensus } from "./consensus/debate.js";
 import { buildSystemPrompt } from "./personas.js";
 import { randomUUID } from "node:crypto";
-import { createLogger, createDebateLog } from "./logger.js";
+import { createLogger, createDebateLog, isValidDebateId } from "./logger.js";
 
 const log = createLogger("orchestrator");
 
@@ -114,14 +116,51 @@ export class DebateSession {
   static computeMaxRounds(mode: DebateMode, thoroughness: number, explicit?: number): number {
     if (explicit !== undefined) return explicit;
     if (mode === "quick") return 1;
-    if (thoroughness <= 0.3) return 1;
-    if (thoroughness <= 0.6) return 2;
-    return Math.min(Math.ceil(thoroughness * 5), 5);
+    // Smooth 1-5 range: 0.01-0.2→1, 0.21-0.4→2, 0.41-0.6→3, 0.61-0.8→4, 0.81-1.0→5
+    return Math.min(Math.max(1, Math.ceil(thoroughness * 5)), 5);
   }
 
-  private selectProtocol(_prompt: string, override?: ConsensusProtocol): ConsensusProtocol {
+  private static readonly QUORUM_KEYWORDS = [
+    "security", "vulnerability", "auth", "encryption", "credential",
+    "attack", "exploit", "compliance", "critical", "cve", "injection",
+  ];
+  private static readonly VOTE_KEYWORDS = [
+    "which", "compare", "vs", "benchmark", "best practice",
+    "what is", "difference between", "pros and cons", "choose",
+  ];
+
+  private selectProtocol(prompt: string, override?: ConsensusProtocol): ConsensusProtocol {
     if (override) return override;
+
+    const lower = prompt.toLowerCase();
+
+    // Check quorum first (security topics are highest priority)
+    const quorumScore = DebateSession.QUORUM_KEYWORDS.filter((kw) => lower.includes(kw)).length;
+    if (quorumScore >= 2) {
+      log.info("protocol selected: quorum (score:", quorumScore, "security keywords)");
+      return "quorum";
+    }
+
+    // Then vote (factual/comparison questions)
+    const voteScore = DebateSession.VOTE_KEYWORDS.filter((kw) => lower.includes(kw)).length;
+    if (voteScore >= 2) {
+      log.info("protocol selected: vote (score:", voteScore, "factual keywords)");
+      return "vote";
+    }
+
+    // Default to debate
+    log.info("protocol selected: debate (default, quorum:", quorumScore, "vote:", voteScore + ")");
     return "debate";
+  }
+
+  private getConsensusImpl(protocol: ConsensusProtocol): IConsensusProtocol {
+    switch (protocol) {
+      case "vote":
+      case "quorum":
+        return new VoteConsensus();
+      case "debate":
+        return new DebateConsensus();
+    }
   }
 
   private buildRoundPrompt(
@@ -196,14 +235,22 @@ export class DebateSession {
     let debateId: string;
     let previousRounds: RoundRecord[] = [];
 
-    if (options.debateId && this.blackboard) {
+    if (options.debateId) {
+      if (!isValidDebateId(options.debateId)) {
+        throw new Error(`Invalid debate ID: "${options.debateId}". Must be alphanumeric/hyphens/underscores, max 128 chars.`);
+      }
       debateId = options.debateId;
-      const existing = await this.blackboard.getDebate(debateId);
-      if (existing) {
-        previousRounds = existing.rounds;
+
+      if (this.blackboard) {
+        const existing = await this.blackboard.getDebate(debateId);
+        if (existing) {
+          previousRounds = existing.rounds;
+        }
+      } else {
+        log.warn(`--continue: blackboard not available, starting fresh debate with ID ${debateId}`);
       }
     } else {
-      debateId = options.debateId ?? randomUUID();
+      debateId = randomUUID();
     }
 
     // Per-debate log file (full prompts & responses)
@@ -217,6 +264,10 @@ export class DebateSession {
 
     // Active agents — may be reduced by budget pressure
     let activeAgents = [...options.agents];
+
+    if (activeAgents.length === 0) {
+      throw new Error("No agents provided. At least one agent is required for a debate.");
+    }
 
     for (let round = startRound; round <= previousRounds.length + maxNewRounds; round++) {
       // Budget check before each round
@@ -241,7 +292,7 @@ export class DebateSession {
             budgetActions.push(msg);
             log.warn(msg);
           } else if (usedPercent >= 90 && activeAgents.length > 1) {
-            // Drop to cheapest agent only
+            // Drop to first agent only (cost-per-agent not tracked yet)
             activeAgents = [activeAgents[0]];
             const msg = `Round ${round}: budget tight (${usedPercent.toFixed(0)}%). Reduced to 1 agent.`;
             budgetActions.push(msg);
@@ -317,6 +368,13 @@ export class DebateSession {
 
       const responsesWithTokens = await Promise.all(responsePromises);
 
+      // Check how many agents are alive
+      const allFailed = responsesWithTokens.every((r) => r.confidence === 0 && r.content.startsWith("[Error:"));
+      const aliveCount = responsesWithTokens.filter((r) => r.confidence > 0 || !r.content.startsWith("[Error:")).length;
+      if (aliveCount < responsesWithTokens.length && !allFailed) {
+        log.warn(`Round ${round}: ${responsesWithTokens.length - aliveCount}/${responsesWithTokens.length} agents failed, continuing with ${aliveCount}`);
+      }
+
       // Track costs
       let roundTokens = emptyTokens();
       const roundResponses: ParticipantResponse[] = [];
@@ -338,6 +396,15 @@ export class DebateSession {
       log.debug("round", round, "tokens:", totalTokenCount(roundTokens),
         "| running total:", totalTokenCount(runningTotal));
       dlog?.write("info", `round ${round} complete: ${totalTokenCount(roundTokens)} tokens (running total: ${totalTokenCount(runningTotal)})`);
+
+      // Abort if ALL agents failed this round (after recording it)
+      if (allFailed) {
+        const msg = `Round ${round}: all ${activeAgents.length} agents failed. Aborting debate.`;
+        budgetActions.push(msg);
+        log.error(msg);
+        dlog?.write("error", msg);
+        break;
+      }
     }
 
     const duration = Date.now() - start;
@@ -345,20 +412,30 @@ export class DebateSession {
       totalTokenCount(runningTotal), "tokens,", duration + "ms");
     dlog?.write("info", `debate end: ${rounds.length - previousRounds.length} new rounds, ${totalTokenCount(runningTotal)} tokens, ${duration}ms`);
 
-    // Build result
+    // Build consensus via protocol
+    if (rounds.length === 0) {
+      throw new Error("No rounds completed — cannot build consensus.");
+    }
     const lastRound = rounds[rounds.length - 1];
-    const allContent = lastRound.responses
-      .filter((r) => r.confidence > 0)
-      .map((r) => r.content);
+    const consensusImpl = this.getConsensusImpl(protocol);
 
-    const avgConfidence =
-      lastRound.responses.reduce((sum, r) => sum + r.confidence, 0) /
-      lastRound.responses.length;
+    // Build persona bonus map from agentPersonas
+    const personaBonuses = new Map<string, number>();
+    if (options.agentPersonas) {
+      for (const [agentName, personas] of options.agentPersonas) {
+        const maxBonus = Math.max(...personas.map((p) => p.consensusBonus), 1.0);
+        personaBonuses.set(agentName, maxBonus);
+      }
+    }
 
-    const consensus =
-      allContent.length === 1
-        ? allContent[0]
-        : allContent.join("\n\n---\n\n");
+    const consensusResult = consensusImpl.evaluate({
+      responses: lastRound.responses,
+      personaBonuses,
+      allRounds: rounds,
+    });
+
+    const consensus = consensusResult.consensus;
+    const avgConfidence = consensusResult.confidenceScore;
 
     // Cost report
     const cost: CostReport = {
@@ -384,19 +461,20 @@ export class DebateSession {
           thoroughness: options.thoroughness,
           participants: options.agents.map((a) => a.name),
           rounds,
-          result: { consensus, confidenceScore: avgConfidence, protocol },
+          result: { consensus, dissent: consensusResult.dissent, confidenceScore: avgConfidence, protocol },
           visibility: "private",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
-      } catch {
-        // Blackboard not implemented yet
+      } catch (err) {
+        log.warn("blackboard save failed:", err instanceof Error ? err.message : String(err));
       }
     }
 
     return {
       debateId,
       consensus,
+      dissent: consensusResult.dissent,
       confidenceScore: avgConfidence,
       protocol,
       rounds,

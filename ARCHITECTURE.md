@@ -145,6 +145,18 @@ Two adapter types:
 
 The adapter factory (`createAdapter()`) picks the right type based on config: if `model` is set, it's Ollama; if `command` is set, it's CLI.
 
+## System prompt handling
+
+Each adapter handles persona system prompts differently based on what the underlying agent supports:
+
+| Adapter | Method | System/User separation |
+|---------|--------|----------------------|
+| Claude | `--system-prompt` CLI flag | Yes — native separation |
+| Gemini | Concatenated in user prompt (`[Your role]...[Question]...`) | No (untested adapter) |
+| Ollama | `system` field in HTTP API body | Yes — native separation |
+
+When the agent supports native system prompts, the persona instructions are passed separately from the user question. This gives the LLM proper context framing and avoids polluting the user message.
+
 ## Personas (Roles)
 
 Personas shape how agents approach questions. They're configured at two levels:

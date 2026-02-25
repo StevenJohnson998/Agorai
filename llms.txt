@@ -16,7 +16,7 @@ Key concepts:
 
 Supported agents:
 - Claude (CLI: `claude -p --output-format json`)
-- Gemini (CLI: `gemini -p --output-format json`)
+- Gemini (CLI: `gemini -p --output-format json`) (untested)
 - Ollama (HTTP API: any local model — qwen3, llama3, mistral, etc.)
 - Roadmap: LM Studio, vLLM, llama.cpp, and other local inference runtimes
 
