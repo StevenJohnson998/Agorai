@@ -22,6 +22,42 @@
       "endpoint": "http://localhost:11434",
       "personas": ["critic"],
       "enabled": false
+    },
+
+    {
+      "name": "groq-llama",
+      "type": "openai-compat",
+      "model": "llama-3.3-70b-versatile",
+      "endpoint": "https://api.groq.com/openai",
+      "apiKey": "gsk_YOUR_GROQ_KEY",
+      "personas": ["pragmatist"],
+      "enabled": false
+    },
+    {
+      "name": "mistral",
+      "type": "openai-compat",
+      "model": "mistral-small-latest",
+      "endpoint": "https://api.mistral.ai",
+      "apiKey": "YOUR_MISTRAL_KEY",
+      "personas": [],
+      "enabled": false
+    },
+    {
+      "name": "deepseek",
+      "type": "openai-compat",
+      "model": "deepseek-chat",
+      "endpoint": "https://api.deepseek.com",
+      "apiKey": "YOUR_DEEPSEEK_KEY",
+      "personas": ["critic"],
+      "enabled": false
+    },
+    {
+      "name": "lmstudio",
+      "type": "openai-compat",
+      "model": "loaded-model",
+      "endpoint": "http://localhost:1234",
+      "personas": [],
+      "enabled": false
     }
   ],
   "personas": [

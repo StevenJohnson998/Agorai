@@ -4,13 +4,40 @@ Ideas and design notes for future versions. Not commitments — just thinking ah
 
 ---
 
-## v0.3 — Permissions & Threading
+## v0.3 — Permissions, Threading & Capabilities
 
 ### Per-project permissions
 Matrix of permissions per project. Example: "external agents can only see `public` data on this project". Lets you invite an agent to a project without giving it access to everything.
 
 ### Conversation threading
 Reply-to chains within conversations. Agents can branch off a sub-discussion without polluting the main thread.
+
+### Agent Capabilities (Milestone A — core)
+Agents declare capabilities using **standardized tags** from a built-in dictionary. The dictionary ships with Agorai and is evolvable (users can extend it, community can propose additions).
+
+**Tag dictionary** (initial set, organized by category):
+- **Code**: `code-execution`, `code-review`, `testing`, `debugging`, `refactoring`
+- **Analysis**: `analysis`, `research`, `fact-checking`, `data-analysis`
+- **Content**: `writing`, `translation`, `summarization`, `copywriting`
+- **Security**: `security-audit`, `vulnerability-scan`, `compliance`
+- **Search**: `web-search`, `document-search`, `knowledge-retrieval`
+- **Creative**: `brainstorming`, `design`, `ideation`
+- **Ops**: `deployment`, `monitoring`, `infrastructure`
+
+Tags follow a flat namespace (no hierarchy) with kebab-case convention. Custom tags are allowed but flagged as non-standard.
+
+**New MCP tools:**
+- `find_agents`: "who has capability X?" → returns matching agents with their tags
+- `request_help`: send a request to a capable agent, routed by tag match
+
+The `capabilities` field already exists in API key config. This milestone just exploits it with a standardized vocabulary and lookup tools.
+
+### OpenAI-compatible adapter
+Single adapter covering all OpenAI-compatible API endpoints: LM Studio, Ollama (`/v1/`), vLLM, llama.cpp, LocalAI, Groq, Mistral, Deepseek, Together AI, and OpenAI itself. Config example:
+```json
+{ "name": "local-mistral", "type": "openai-compat", "endpoint": "http://localhost:1234/v1", "model": "mistral-7b" }
+```
+One adapter, ten+ backends. Replaces the need for dedicated per-provider adapters.
 
 ### Project onboarding digests
 When a new agent joins a project, it gets an auto-generated summary (digest) of what happened so far — key decisions, current state, open questions. No need to read hundreds of messages.
@@ -23,49 +50,38 @@ The old debate engine Blackboard (`memory/base.ts`, `memory/sqlite.ts`) gets mig
 
 ---
 
-## v0.4 — Debate via Bridge & Smart Routing
+## v0.4 — Debate via Bridge & Optional Modules
 
 ### Debate as conversations
 Instead of a separate debate engine, debates happen as structured conversations in the bridge. Agents argue in rounds via messages, consensus is computed from the conversation. This unifies the two systems.
 
-### Capabilities-based routing
-Each agent declares capabilities (`code-execution`, `web-search`, `security-review`, `analysis`, etc.). When a task needs a specific capability, the bridge routes it to the right agent automatically.
+### Module: Smart Routing (optional)
+*Builds on the Agent Capabilities core from v0.3. This is an optional module — Agorai works fine without it.*
 
-Example: "I need a security review" → the bridge finds agents with `security-review` capability and dispatches to them.
+#### Capabilities-based routing
+Extends the v0.3 tag system with automatic dispatch. When a task needs a specific capability, the bridge routes it to the right agent automatically based on tag matching.
 
-### Passive agents
-**The problem**: some AI models are expensive or rate-limited (Perplexity, GPT-4, etc.) but have unique capabilities (web search, specific knowledge). You don't want them participating in every message — that burns tokens for nothing.
+#### Passive agents
+Agents can be `active` or `passive`.
 
-**The solution**: agents can be `active` or `passive`.
-
-- **Active**: participates in all conversations it's subscribed to. Gets notified of every message.
+- **Active**: participates in all conversations it's subscribed to (default)
 - **Passive**: idle by default. Only activated when:
-  1. A user mentions it: "@perplexity what do you think about this?"
-  2. Another agent requests its capability: "I need a web search for X"
-  3. The bridge routes a task to it based on capabilities
+  1. Mentioned: "@perplexity what do you think?"
+  2. Capability requested: `request_help("web-search", "find latest React docs")`
+  3. Bridge auto-routes a task based on tags
 
-**How it works**:
-- New field on agent registration: `mode: "active" | "passive"` (default: active)
-- Passive agents are subscribed to conversations but don't receive messages in real-time
-- When invoked (by mention or capability request), the bridge sends them the relevant context (recent messages, project memory) along with the specific question
-- The passive agent responds, its response is posted as a message in the conversation
-- Cost control: the invoker (or admin) can set a token/cost budget per invocation
+Config: `mode: "active" | "passive"` per agent. Passive agents receive only relevant context when invoked, not the full message stream. Cost budget per invocation.
 
-**Use cases**:
-- Perplexity for web search (expensive, limited tokens, but uniquely capable)
-- A specialized code review agent that only runs when asked
-- A translation agent invoked only when multi-language content is detected
-- Agents can call other passive agents: Claude says "I'm not sure about the latest React API, let me ask Perplexity" → automatic dispatch
+#### Specialist dispatch
+The bridge as a smart router: Agent A says "I need help with X" → bridge matches tags → finds best agent (possibly passive) → sends context + question → response posted in conversation.
 
-**Design note**: this ties directly into capabilities routing. The capability system decides *who* to call, the passive/active mode decides *when* they participate.
+#### Dynamic capabilities
+Agents can register/update capabilities at runtime via `register_capability` tool. Complements the static config tags from v0.3.
 
-### Specialist dispatch
-Combination of capabilities + passive mode. The bridge becomes a smart router:
-1. Agent A says "I need help with X"
-2. Bridge looks at registered capabilities
-3. Finds the best match (possibly a passive agent)
-4. Sends context + question
-5. Returns the response to the conversation
+### Module: Capability Catalog (optional)
+*Optional integration with external sources for the tag dictionary.*
+
+Could connect to the AI Registry project as a source of truth: standardized capability definitions, recommended tags per model type. But the system works standalone — the built-in dictionary from v0.3 is sufficient for most setups.
 
 ---
 
@@ -94,27 +110,26 @@ Sentinel flags suspicious patterns:
 
 ---
 
-## v0.6 — Distribution & Dashboard
+## v0.6 — Distribution, Dashboard & GUI
 
 ### npm publish
 Package on npm so anyone can `npx agorai serve` without cloning the repo.
 
-### Web dashboard
-Phase 1: Activity viewer — see projects, conversations, messages, agent status in a browser. Read-only.
-Phase 2: Chat interface — participate in conversations from the browser. Send messages, create projects.
+### Web dashboard (admin)
+Activity viewer for monitoring: projects, conversations, messages, agent status, capability registry. Read-only at first, then admin actions (manage agents, tags, permissions).
+
+### GUI (user-facing)
+Separate from the admin dashboard. A web interface for interacting with the Agorai workspace:
+- Browse and participate in conversations
+- View project memory and agent status
+- Send messages, create projects
+- Follow debates in real-time
+- Visualize agent capabilities and routing
+
+Could be a standalone web app or an Electron desktop app. The bridge HTTP API already provides everything needed — the GUI is a client.
 
 ### A2A protocol
 Support Google's Agent-to-Agent protocol alongside MCP. Lets Agorai interop with agents that don't speak MCP.
-
-### More AI model integrations
-Beyond Claude, Ollama, Gemini — support:
-- LM Studio (local models with OpenAI-compatible API)
-- vLLM (high-throughput local inference)
-- llama.cpp (lightweight local inference)
-- Any OpenAI-compatible API (broad compatibility)
-- Perplexity (web search capability)
-
-The adapter system is designed to make adding new models straightforward.
 
 ---
 

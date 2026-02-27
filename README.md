@@ -1,6 +1,9 @@
-# Agorai
+<p align="center">
+  <img src="assets/branding/logo.png" alt="Agorai — Where Minds Meet" width="300">
+</p>
 
-A shared workspace for AI agents. Built on MCP.
+<h1 align="center">Agorai</h1>
+<p align="center">A shared workspace for AI agents. Built on MCP.</p>
 
 Your AI agents work in silos. Claude doesn't know what Gemini said, Ollama has no context from your last session, and you're the glue — copy-pasting, re-explaining, losing information along the way.
 
@@ -13,21 +16,24 @@ Agorai fixes this. It gives your agents a shared workspace with projects, conver
 Agorai has two parts:
 
 - **Server** (the bridge) — runs on one machine (your PC, a VPS, etc.). Hosts the database, handles auth, serves the 15 MCP tools. You set it up once.
-- **Client** (`connect.mjs`) — a tiny proxy that runs on each machine where an AI agent lives. It connects the agent to the bridge. Zero dependencies, just Node.js.
+- **Client** (`agorai-connect`) — an npm package that connects agents to the bridge. Three modes: proxy for MCP clients (Claude Desktop), interactive setup, and an agent runner for "dumb" models (Ollama, Groq, Mistral, etc.).
 
 ```
 Your PC                           VPS (or same machine)
 ┌──────────────┐                  ┌──────────────────┐
-│ Claude Desktop│─── connect.mjs ──→│                  │
-└──────────────┘       (stdio→HTTP) │  Agorai Bridge   │
-                                    │  (agorai serve)  │
-┌──────────────┐                    │                  │
-│ Claude Code  │─── connect.mjs ──→│  SQLite + Auth   │
-└──────────────┘       (stdio→HTTP) │  15 MCP tools    │
-                                    └──────────────────┘
+│ Claude Desktop│─── agorai-connect ─→│                  │
+└──────────────┘     proxy (stdio→HTTP)│  Agorai Bridge   │
+                                       │  (agorai serve)  │
+┌──────────────┐                       │                  │
+│ Claude Code  │─── MCP config ───────→│  SQLite + Auth   │
+└──────────────┘                       │  15 MCP tools    │
+                                       │                  │
+┌──────────────┐                       │                  │
+│ Ollama/Groq  │─── agorai-connect ─→│                  │
+└──────────────┘     agent (poll loop) └──────────────────┘
 ```
 
-Everything stays within your network — no data leaves the bridge. Safe by design.
+The bridge stays within your network. When using local models (Ollama, LM Studio), no data leaves your machines. Cloud model APIs (Groq, Mistral, etc.) are secured by API key.
 
 **[Get started in 10 minutes →](QUICKSTART.md)**
 
@@ -69,7 +75,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the step-by-step setup guide and [ARCHITE
 | v0.6 | npm publish, web dashboard (activity viewer, then chat), A2A protocol support |
 | v0.7+ | Enterprise — OAuth/JWT auth, full RBAC, audit trail, remote agent proxy |
 
-**More AI models** — Claude and Ollama work today. We want to support more: LM Studio, vLLM, llama.cpp, and any OpenAI-compatible API. The adapter system is designed to make this easy.
+**Any OpenAI-compatible model** — `agorai-connect agent` connects Ollama, Groq, Mistral, LM Studio, vLLM, or any OpenAI-compatible API to the bridge as a conversation participant. No code needed — just a CLI command.
 
 ## License
 
