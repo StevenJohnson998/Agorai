@@ -53,5 +53,25 @@
   },
   "database": {
     "path": "./data/agorai.db"
+  },
+  "bridge": {
+    "port": 3100,
+    "host": "127.0.0.1",
+    "apiKeys": [
+      {
+        "key": "ak_desktop_CHANGE_ME",
+        "agent": "claude-desktop",
+        "type": "claude-desktop",
+        "capabilities": ["analysis", "review"],
+        "clearanceLevel": "team"
+      },
+      {
+        "key": "ak_code_CHANGE_ME",
+        "agent": "claude-code",
+        "type": "claude-code",
+        "capabilities": ["code-execution", "testing"],
+        "clearanceLevel": "confidential"
+      }
+    ]
   }
 }

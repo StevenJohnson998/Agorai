@@ -1,87 +1,116 @@
 # Agorai
 
-> Multi-agent AI debate server. Orchestrates structured debates between AI agents (Claude, Gemini, Ollama, etc.) via MCP protocol and CLI. Agents argue in rounds, challenge each other, and reach consensus. TypeScript, Node.js 18+, AGPLv3.
+> Multi-agent AI collaboration platform. Shared workspace where AI agents collaborate via projects, conversations, and memory — with 4-level visibility control. Built on MCP protocol. TypeScript, Node.js 18+, AGPLv3.
 
-Agorai has two interfaces: an MCP server (stdio) for use inside AI tools, and a standalone CLI. No API keys are managed by Agorai — agents are invoked through their local CLIs or HTTP APIs (Ollama).
+Agorai has two layers: a **Bridge** (HTTP, multi-agent collaboration) and a **Debate Engine** (stdio, structured debates). Both expose MCP tools.
 
-Architecture is 3 levels: ProjectManager (decomposes complex tasks into sub-questions), DebateSession (runs a debate with rounds and consensus protocol), Blackboard (persistent memory partitioned by project, private by default).
+## Bridge (v0.2)
+
+The bridge lets multiple AI agents share a workspace with visibility control. Agents connect via HTTP with API keys.
+
+**Transport:** Streamable HTTP on `127.0.0.1:3100` (configurable). Each agent gets its own MCP session.
+
+**Visibility model:** Every entity has a `visibility` field: `public < team < confidential < restricted`. Each agent has a `clearanceLevel`. The store filters automatically — agents never see data above their clearance.
+
+**Auth:** API keys in config, SHA-256 hashed. Auto-registers agents on first auth.
+
+**Store:** SQLite (better-sqlite3). Tables: agents, projects, project_memory, conversations, conversation_agents, messages, message_reads.
+
+### Bridge tools (15)
+
+- `register_agent {name, type, capabilities[]}`: Register/update the calling agent.
+- `list_agents {project_id?}`: List registered agents.
+- `create_project {name, description?, visibility?}`: Create a project (default visibility: team).
+- `list_projects {}`: List accessible projects (filtered by agent clearance).
+- `set_memory {project_id, type, title, tags[], content, priority?, visibility?}`: Add a memory entry.
+- `get_memory {project_id, type?, tags?, limit?}`: Get entries filtered by clearance.
+- `delete_memory {id}`: Delete a memory entry.
+- `create_conversation {project_id, title, default_visibility?}`: Create a conversation.
+- `list_conversations {project_id, status?}`: List conversations (filtered by clearance).
+- `subscribe {conversation_id, history_access?}`: Join a conversation (default: full history).
+- `unsubscribe {conversation_id}`: Leave a conversation.
+- `send_message {conversation_id, content, type?, visibility?, metadata?}`: Send a message (visibility capped at sender's clearance).
+- `get_messages {conversation_id, since?, unread_only?, limit?}`: Get messages filtered by clearance.
+- `get_status {}`: Summary: project count, online agents, unread messages.
+- `mark_read {conversation_id, up_to_message_id?}`: Mark messages as read.
+
+`from_agent` is injected from auth — agents can't impersonate each other.
+
+### Bridge CLI
+
+- `agorai serve`: Start the bridge HTTP server. Requires `bridge` section in config.
+
+## Debate Engine (v0.1)
+
+Architecture is 3 levels: ProjectManager (decomposes complex tasks), DebateSession (runs debates with rounds and consensus), Blackboard (persistent memory per project).
 
 Key concepts:
-- **Thoroughness** (0.0-1.0): controls depth vs cost. Low = 1 round, 1-2 agents. High = 3-5 rounds, all agents, rich context.
-- **Token budget**: configurable max tokens per debate and per project. Before a debate starts, the orchestrator estimates total token usage (agents × rounds × `estimatedTokensPerInvocation`). If the estimate exceeds `warnAtPercent`, the CLI warns and asks for confirmation (use `--force` to skip). At runtime, the orchestrator adapts when approaching the limit — summarizes context, reduces agents, cuts rounds. Tracks input/output tokens and USD cost per agent.
-- **Personas/Roles**: each agent can have one or more roles (architect, critic, pragmatist, security). Roles are set as defaults in config and can be overridden per debate. An agent can cumulate multiple roles — system prompts are merged.
-- **Debate continuity**: pass a debate_id to resume an existing debate. Previous rounds are loaded and new rounds are appended.
-- **Private by default**: all data stays local. Promotion to public space requires explicit user validation + sensitive data scan.
-- **Auto-persist projects**: project state is saved on every operation. Switch between projects freely, come back anytime.
+- **Thoroughness** (0.0-1.0): controls depth vs cost.
+- **Token budget**: configurable per debate/project, orchestrator adapts at runtime.
+- **Personas/Roles**: each agent has roles (architect, critic, pragmatist, security). Cumulative, merged system prompts.
+- **Debate continuity**: pass debate_id to resume.
 
-Supported agents:
-- Claude (CLI: `claude -p --output-format json`)
-- Gemini (CLI: `gemini -p --output-format json`) (untested)
-- Ollama (HTTP API: any local model — qwen3, llama3, mistral, etc.)
-- Roadmap: LM Studio, vLLM, llama.cpp, and other local inference runtimes
+Supported debate agents:
+- Claude (`claude -p --output-format json`)
+- Gemini (`gemini -p --output-format json`, untested)
+- Ollama (HTTP API, any local model)
 
-## CLI commands
+### Debate CLI commands
 
-- `agorai debate "<prompt>" [--agents a,b] [--roles "a=p1+p2,b=p3"] [--mode quick|full] [--thoroughness 0-1] [--max-rounds N] [--max-tokens N] [--continue <debate_id>] [--force]`: Start a debate or resume an existing one. Agents are invoked in parallel per round. In full mode, agents see previous round responses. Use --continue to add rounds to a previous debate. Use --max-tokens to set a token budget (orchestrator adapts when approaching limit). Before launching, the CLI estimates token usage and warns if the estimate exceeds the budget warning threshold. Use --force to skip this check.
-- `agorai analyze "<prompt>" [--thoroughness 0-1]`: Decompose a complex task via ProjectManager (v0.3).
-- `agorai agents`: List configured agents with availability status and assigned roles.
-- `agorai project create <name> [--description "..."]`: Create a new project.
-- `agorai project list [--archived]`: List projects sorted by last activity.
-- `agorai project switch <id>`: Switch active project.
-- `agorai project archive [id]`: Archive a project (preserves data, hides from default list).
-- `agorai context get [key]` / `agorai context set <key> <value>`: Read/write project memory.
-- `agorai init`: Generate agorai.config.json with defaults.
-- `agorai start [--http]`: Start MCP server (stdio; HTTP in v0.2+).
+- `agorai debate "<prompt>" [--agents a,b] [--roles "a=p1+p2,b=p3"] [--mode quick|full] [--thoroughness 0-1] [--max-rounds N] [--max-tokens N] [--continue <debate_id>] [--force]`
+- `agorai analyze "<prompt>" [--thoroughness 0-1]` (v0.3)
+- `agorai agents`: List configured debate agents.
+- `agorai project create/list/switch/archive`: Project management (stub).
+- `agorai context get/set`: Project memory (stub).
+- `agorai init`: Generate config.
+- `agorai start [--http]`: Start MCP server (stdio).
 
-Global CLI flags: `--verbose` (info-level logs on stderr), `--debug` (all logs on stderr). Environment variable: `AGORAI_LOG_LEVEL` (error/warn/info/debug, default: warn). All log output goes to stderr — safe for MCP stdio protocol. File logging is always active: `data/<user>/logs/info.log` for metrics, `data/<user>/logs/debates/<id>.log` for full debate transcripts (prompts + responses). Purge runs at startup per configurable strategy.
+### Debate MCP tools (11)
 
-## MCP tools
-
-- `debate`: Start or resume a multi-agent debate. Params: prompt, debate_id (optional — resume existing), agents (string[]), roles (record of agent to persona[]), mode (quick/full), max_rounds, thoroughness, estimate_only (boolean — return token estimate without running).
-- `analyze`: Submit a complex task to ProjectManager for decomposition. Params: prompt, project_id, thoroughness.
-- `list_agents`: List available agents and their status.
-- `project_create`: Create a persistent project. Params: name, description, thoroughness.
-- `project_list`: List projects. Params: include_archived.
-- `project_switch`: Switch active project. Params: project_id.
-- `project_archive`: Archive a project. Params: project_id.
-- `context_get`: Read from project private memory. Params: key.
-- `context_set`: Write to project private memory. Params: key, value.
-- `handoff`: Transfer a spec to an agent. Params: agent, spec, context.
-- `join_debate`: Join a public debate (external agents). Params: debate_id, agent.
+- `debate`: Start/resume a multi-agent debate. Params: prompt, debate_id, agents[], roles, mode, max_rounds, thoroughness, estimate_only.
+- `analyze`: Decompose via ProjectManager (v0.3). Params: prompt, project_id, thoroughness.
+- `list_agents`: List debate agents.
+- `project_create/list/switch/archive`: Project management (stubs).
+- `context_get/set`: Project memory (stubs).
+- `handoff`: Transfer a spec to an agent (stub).
+- `join_debate`: Join a public debate (stub).
 
 ## Configuration
 
-Config file: `agorai.config.json` (or `.agorairc.json`). Falls back to built-in defaults if absent.
+Config file: `agorai.config.json` (or `.agorairc.json`).
 
-- `thoroughness` (number 0-1): global default for depth vs cost balance.
-- `agents` (array): each agent has `name`, `enabled`, `personas` (default roles), and either `command`+`args` (CLI) or `model`+`endpoint` (Ollama).
-- `personas` (array): custom persona definitions extending built-ins. Each has `name`, `role`, `systemPrompt`, `consensusBonus`.
-- `budget.estimatedTokensPerInvocation` (number, default 1500): estimated tokens per agent invocation, used for pre-debate cost estimation.
-- `user` (string): user identifier for data scoping. All data is stored under `data/<user>/`.
-- `logging.info.purge` ("date"|"size"), `logging.info.maxDays` (30), `logging.info.maxBytes` (50MB): info.log purge strategy.
-- `logging.debates.purge` ("count"|"date"|"size"), `logging.debates.maxFiles` (50), `logging.debates.maxDays` (14), `logging.debates.maxBytes` (100MB): per-debate log purge strategy.
+Key settings:
+- `user` (string): user ID for data scoping.
+- `thoroughness` (0-1): default depth vs cost balance.
+- `agents[]`: debate agent configs (name, command/model, personas).
+- `personas[]`: custom persona definitions.
+- `budget`: token limits (per debate, per project, warning threshold).
 - `database.path`: SQLite database location.
-- `privacy.sensitivePatterns`: regex patterns for detecting sensitive data before public promotion.
-
-Built-in personas: architect (Software Architect), critic (Devil's Advocate), pragmatist (Pragmatic Engineer), security (Security Specialist, 1.3x consensus bonus).
+- `logging`: purge strategies for info.log and debate logs.
+- `bridge` (optional): HTTP server config.
+  - `bridge.port` (default: 3100), `bridge.host` (default: "127.0.0.1")
+  - `bridge.apiKeys[]`: each with key, agent name, type, capabilities, clearanceLevel.
 
 ## Consensus protocols
 
-- **Vote** (factual/technical questions): weighted majority, each vote scaled by confidence score.
-- **Debate** (architecture/design): iterative rounds, agents refine positions seeing each other's responses, synthesis on convergence.
-- **Quorum** (security/critical): confidence-weighted vote with persona bonus multipliers.
+- **Vote**: weighted majority (factual questions).
+- **Debate**: iterative rounds with synthesis (design questions).
+- **Quorum**: confidence-weighted with persona bonuses (security, planned).
 
 ## Documentation
 
-- [README.md](https://github.com/StevenJohnson998/Agorai/blob/main/README.md): Project overview and quick start
-- [ARCHITECTURE.md](https://github.com/StevenJohnson998/Agorai/blob/main/ARCHITECTURE.md): 3-level architecture, consensus protocols, data flow
-- [CONTRIBUTING.md](https://github.com/StevenJohnson998/Agorai/blob/main/CONTRIBUTING.md): How to contribute, CLA
+- [README.md](https://github.com/StevenJohnson998/Agorai/blob/main/README.md): Overview and quick start
+- [ARCHITECTURE.md](https://github.com/StevenJohnson998/Agorai/blob/main/ARCHITECTURE.md): Bridge + debate engine architecture
+- [FEATURES.md](https://github.com/StevenJohnson998/Agorai/blob/main/FEATURES.md): Feature tables with status
+- [CONTRIBUTING.md](https://github.com/StevenJohnson998/Agorai/blob/main/CONTRIBUTING.md): How to contribute
 - [agorai.config.json.example](https://github.com/StevenJohnson998/Agorai/blob/main/agorai.config.json.example): Full config example
 
 ## Optional
 
-- [src/adapters/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/adapters/base.ts): IAgentAdapter interface (for writing custom adapters)
-- [src/memory/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/memory/base.ts): IBlackboard and IMemoryBackend interfaces
+- [src/store/interfaces.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/store/interfaces.ts): IStore interface
+- [src/store/types.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/store/types.ts): Data types with visibility
+- [src/bridge/auth.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/bridge/auth.ts): IAuthProvider interface
+- [src/bridge/tools.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/bridge/tools.ts): Bridge tool Zod schemas
+- [src/adapters/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/adapters/base.ts): IAgentAdapter interface
+- [src/memory/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/memory/base.ts): IBlackboard interface
 - [src/consensus/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/consensus/base.ts): IConsensusProtocol interface
-- [src/logger.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/logger.ts): Logger module (stderr + file logging, per-debate logs, configurable purge)
-- [src/tools.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/tools.ts): Zod schemas for all MCP tools

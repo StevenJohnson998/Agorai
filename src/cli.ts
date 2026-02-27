@@ -15,6 +15,7 @@
  *   agorai context set <key> <value>
  *   agorai init
  *   agorai start [--http]
+ *   agorai connect <url> --key <api-key>
  */
 
 import { parseArgs } from "node:util";
@@ -40,6 +41,8 @@ Commands:
   context set <key> <val>  Write to private memory
   init                     Create agorai.config.json
   start [--http]           Start MCP server (stdio or HTTP)
+  serve                    Start bridge HTTP server (Streamable HTTP)
+  connect <url> --key <k>  Connect Claude Desktop to a remote bridge (stdio→HTTP proxy)
 
 Options:
   --agents <a,b>           Comma-separated agent names
@@ -82,15 +85,15 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai v0.1.0");
+    console.log("agorai v0.2.0");
     process.exit(0);
   }
 
   const command = args[0];
 
   // Initialize file logging (always active, independent of stderr level)
-  // Skip for "init" command (no config yet) and "start" (server inits its own)
-  if (command !== "init" && command !== "start") {
+  // Skip for "init" command (no config yet), "start" (server inits its own), "serve" (handles its own)
+  if (command !== "init" && command !== "start" && command !== "serve" && command !== "connect") {
     const cfg = loadConfig();
     initFileLogging(getUserDataDir(cfg), cfg.logging);
   }
@@ -116,6 +119,12 @@ async function main() {
       break;
     case "start":
       cmdStart(args.slice(1));
+      break;
+    case "serve":
+      await cmdServe();
+      break;
+    case "connect":
+      await cmdConnect(args.slice(1));
       break;
     default:
       console.error(`Unknown command: ${command}\n`);
@@ -531,6 +540,150 @@ function cmdStart(args: string[]) {
     console.error("Failed to start server:", err);
     process.exit(1);
   });
+}
+
+async function cmdServe() {
+  const config = loadConfig();
+  initFileLogging(getUserDataDir(config), config.logging);
+
+  if (!config.bridge) {
+    console.error('Error: bridge not configured. Add a "bridge" section to agorai.config.json.');
+    console.error("See agorai.config.json.example for reference.");
+    process.exit(1);
+  }
+
+  if (config.bridge.apiKeys.length === 0) {
+    console.error("Error: bridge.apiKeys is empty. At least one API key is required.");
+    process.exit(1);
+  }
+
+  // Dynamic imports to avoid loading bridge deps when not needed
+  const { SqliteStore } = await import("./store/sqlite.js");
+  const { ApiKeyAuthProvider } = await import("./bridge/auth.js");
+  const { startBridgeServer } = await import("./bridge/server.js");
+
+  const dbPath = config.database.path;
+  const store = new SqliteStore(dbPath);
+  await store.initialize();
+
+  const auth = new ApiKeyAuthProvider(config.bridge.apiKeys, store);
+
+  console.log(`Starting Agorai bridge server...`);
+  console.log(`  Endpoint: http://${config.bridge.host}:${config.bridge.port}/mcp`);
+  console.log(`  Health:   http://${config.bridge.host}:${config.bridge.port}/health`);
+  console.log(`  Agents:   ${config.bridge.apiKeys.map((k) => k.agent).join(", ")}`);
+  console.log(`  Database: ${dbPath}`);
+
+  const server = await startBridgeServer({ store, auth, config });
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    console.log("\nShutting down...");
+    await server.close();
+    await store.close();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+async function cmdConnect(args: string[]) {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      key: { type: "string" },
+    },
+    allowPositionals: true,
+  });
+
+  let url = positionals[0];
+  if (!url) {
+    console.error("Usage: agorai connect <bridge-url> --key <api-key>");
+    console.error("Example: agorai connect http://my-vps:3100 --key my-secret-key");
+    process.exit(1);
+  }
+
+  // Auto-append /mcp if not present
+  if (!url.endsWith("/mcp")) {
+    url = url.replace(/\/$/, "") + "/mcp";
+  }
+
+  const apiKey = values.key;
+  if (!apiKey) {
+    console.error("Error: --key is required");
+    process.exit(1);
+  }
+
+  let sessionId: string | undefined;
+
+  // stdio→HTTP proxy: read JSON-RPC from stdin, POST to bridge, write responses to stdout
+  const rl = createInterface({ input: process.stdin, terminal: false });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": `Bearer ${apiKey}`,
+      };
+      if (sessionId) {
+        headers["mcp-session-id"] = sessionId;
+      }
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: line,
+      });
+
+      // Capture session ID from response
+      const sid = resp.headers.get("mcp-session-id");
+      if (sid) sessionId = sid;
+
+      // 202 = notification accepted, no response body
+      if (resp.status === 202) continue;
+
+      if (!resp.ok) {
+        console.error(`[agorai connect] HTTP ${resp.status}: ${await resp.text()}`);
+        continue;
+      }
+
+      const contentType = resp.headers.get("content-type") ?? "";
+      if (contentType.includes("text/event-stream")) {
+        const text = await resp.text();
+        for (const sseLine of text.split("\n")) {
+          if (sseLine.startsWith("data: ")) {
+            process.stdout.write(sseLine.slice(6) + "\n");
+          }
+        }
+      } else {
+        const text = await resp.text();
+        if (text.trim()) {
+          process.stdout.write(text + "\n");
+        }
+      }
+    } catch (err) {
+      console.error(`[agorai connect] ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Stdin closed — clean up session
+  if (sessionId) {
+    try {
+      await fetch(url, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "mcp-session-id": sessionId,
+        },
+      });
+    } catch {
+      // Best effort cleanup
+    }
+  }
 }
 
 main().catch((err) => {
