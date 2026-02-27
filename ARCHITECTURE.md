@@ -1,37 +1,103 @@
 # Architecture
 
-Agorai uses a 3-level orchestration model inspired by Mixture-of-Agents (MoA), Blackboard systems, and CP-WBFT consensus.
+Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** (shared workspace for agent collaboration) and a **Debate Engine** (structured multi-agent debates).
 
 ## Overview
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    ProjectManager                         │
-│  Auto-persisted projects (create / switch / archive)      │
-│  Decomposes complex tasks into sub-questions              │
-│  Routes: vote (factual) vs debate (design) vs quorum (sec)│
-│  Respects thoroughness budget                             │
-│  Cross-debate synthesis                                   │
-└─────┬──────────────────┬──────────────────┬──────────────┘
-      │                  │                  │
- ┌────▼────┐       ┌────▼────┐       ┌────▼────┐
- │ Debate  │       │ Debate  │       │ Debate  │
- │Session 1│       │Session 2│       │Session 3│
- └────┬────┘       └────┬────┘       └────┬────┘
-      │                  │                  │
- ┌────▼──────────────────▼──────────────────▼────┐
- │             Blackboard (per project)           │
- │  ┌──────────┐  ┌────────────────────────┐     │
- │  │ Private  │  │ Public (opt-in,        │     │
- │  │ (default)│  │ user-validated,        │     │
- │  │          │  │ no sensitive data)     │     │
- │  └──────────┘  └────────────────────────┘     │
- │  ┌──────────┐  ┌────────────────────────┐     │
- │  │ Vector   │  │ SQLite (projects,      │     │
- │  │ Index    │  │ debates, context)      │     │
- │  └──────────┘  └────────────────────────┘     │
- └───────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Bridge (v0.2)                                │
+│  HTTP transport (Streamable HTTP) + Auth (API keys) + Visibility    │
+│  15 MCP tools: agents, projects, memory, conversations, messages    │
+│  SQLite store with 4-level visibility filtering                     │
+│                                                                      │
+│  ┌──────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
+│  │ Agent A  │  │  Agent B   │  │  Agent C    │  │  Agent D     │  │
+│  │ (team)   │  │(confident.)│  │  (public)   │  │ (restricted) │  │
+│  └──────┬───┘  └──────┬─────┘  └──────┬──────┘  └──────┬───────┘  │
+│         └──────────────┼───────────────┼────────────────┘          │
+│                        ▼               ▼                            │
+│  ┌──────────────────────────────────────────────────┐              │
+│  │              SQLite Store                         │              │
+│  │  agents · projects · memory · conversations      │              │
+│  │  messages · subscriptions · read tracking         │              │
+│  │  visibility filtering on every read operation     │              │
+│  └──────────────────────────────────────────────────┘              │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────────┐
+│                      Debate Engine (v0.1)                            │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────┐      │
+│  │                    ProjectManager                         │      │
+│  │  Task decomposition · Protocol routing · Cross-synthesis  │      │
+│  └─────┬──────────────────┬──────────────────┬──────────────┘      │
+│        │                  │                  │                      │
+│  ┌─────▼────┐       ┌────▼────┐       ┌────▼────┐                 │
+│  │ Debate   │       │ Debate  │       │ Debate  │                 │
+│  │Session 1 │       │Session 2│       │Session 3│                 │
+│  └──────────┘       └─────────┘       └─────────┘                 │
+│                                                                      │
+│  Consensus: Vote · Debate · Quorum (planned)                        │
+│  Agents: Claude CLI · Ollama HTTP · Gemini CLI                      │
+│  Personas: architect · critic · pragmatist · security               │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+## Bridge layer (v0.2)
+
+The Bridge is the collaboration layer — it lets multiple AI agents work together across multiple projects. Each project is an independent workspace with its own conversations, memory entries, and visibility settings. Agents can create as many projects as they need, switch between them, and collaborate with different agents on each one.
+
+### Transport
+
+The bridge uses MCP's Streamable HTTP transport. Each agent connects with an API key and gets an independent MCP session. The bridge runs on `127.0.0.1:3100` by default.
+
+Two transports coexist:
+- `agorai start` → stdio (debate tools, single-agent, backward compatible)
+- `agorai serve` → HTTP (bridge tools + future debate tools, multi-agent)
+
+### Store (SQLite)
+
+All bridge data lives in a single SQLite database (`data/agorai.db`). Seven tables:
+
+| Table | Purpose |
+|-------|---------|
+| `agents` | Registered agents with clearance levels |
+| `projects` | Independent workspaces — agents can create many, each with its own visibility |
+| `project_memory` | Persistent key-value entries scoped to a project |
+| `conversations` | Discussion threads within a project |
+| `conversation_agents` | Subscriptions (who's in which conversation) |
+| `messages` | Messages within conversations |
+| `message_reads` | Read tracking per agent |
+
+### Visibility model
+
+Every entity carries a `visibility` field from the ordered set: `public < team < confidential < restricted`.
+
+Each agent has a `clearanceLevel` (default: `team`). The store filters automatically on every read — agents never see data above their clearance, and don't know it exists.
+
+**Write rules:**
+- Default visibility is `team`
+- An agent can't write above its own clearance (automatically capped)
+- Visibility can be lowered but never raised by an agent (only admin/config can promote)
+
+### Auth
+
+v0.2 uses API key authentication. Keys are configured in `agorai.config.json` under `bridge.apiKeys`. Each key maps to an agent name, type, capabilities, and clearance level. Keys are compared via SHA-256 hash (never stored in cleartext). On first auth, the agent is auto-registered in the store.
+
+### Permissions (stub)
+
+v0.2 uses `AllowAllPermissions` — a passthrough. The interface is ready for v0.3 RBAC:
+
+```typescript
+interface IPermissionProvider {
+  canAccess(agentId: string, resource: string, action: string): Promise<boolean>;
+}
+```
+
+## Debate engine
+
+The debate engine uses a 3-level orchestration model inspired by Mixture-of-Agents (MoA), Blackboard systems, and CP-WBFT consensus.
 
 ## The three levels
 
@@ -299,14 +365,23 @@ Result returned to user
 
 ```
 src/
-├── cli.ts                 # CLI entry point
-├── server.ts              # MCP server (stdio)
+├── cli.ts                 # CLI entry point (+ serve command)
+├── server.ts              # MCP server (stdio, debate tools)
+├── config.ts              # Config loading + validation (+ BridgeConfigSchema)
 ├── project-manager.ts     # Top-level orchestrator
 ├── orchestrator.ts        # DebateSession
 ├── logger.ts              # Logger (stderr + file logging, per-debate logs)
-├── tools.ts               # MCP tool schemas (Zod)
-├── config.ts              # Config loading + validation
+├── tools.ts               # Debate MCP tool schemas (Zod)
 ├── personas.ts            # Built-in personas
+├── bridge/
+│   ├── server.ts          # HTTP bridge (Streamable HTTP transport)
+│   ├── auth.ts            # IAuthProvider + ApiKeyAuthProvider
+│   ├── permissions.ts     # IPermissionProvider + AllowAllPermissions (stub)
+│   └── tools.ts           # 15 bridge tool schemas (Zod)
+├── store/
+│   ├── types.ts           # Data types with visibility
+│   ├── interfaces.ts      # IStore interface
+│   └── sqlite.ts          # SQLite implementation (better-sqlite3)
 ├── adapters/
 │   ├── base.ts            # IAgentAdapter interface
 │   ├── index.ts           # Adapter factory
@@ -315,7 +390,7 @@ src/
 │   └── ollama.ts          # Ollama HTTP adapter
 ├── memory/
 │   ├── base.ts            # IMemoryBackend + IBlackboard interfaces
-│   └── sqlite.ts          # SQLite implementation
+│   └── sqlite.ts          # SQLite Blackboard (stub, migrating to store/)
 └── consensus/
     ├── base.ts            # IConsensusProtocol interface
     ├── vote.ts            # Majority vote

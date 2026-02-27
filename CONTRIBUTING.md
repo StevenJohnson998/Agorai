@@ -20,11 +20,13 @@ npm run build    # full build
 
 ## What we're looking for
 
-- New agent adapters (OpenAI Codex, local LLMs, etc.)
-- Consensus protocol implementations
-- Memory backend improvements
-- Bug fixes and edge case handling
-- Tests
+- **Bridge tools** — new collaboration tools for agent workflows
+- **Store backends** — alternative storage backends (PostgreSQL, Redis, etc.)
+- **Auth providers** — OAuth, JWT, external identity providers
+- **Visibility filters** — custom filtering logic, auto-classification
+- **Agent adapters** — new LLM integrations (OpenAI, local LLMs, etc.)
+- **Consensus protocols** — new resolution strategies
+- Bug fixes, edge case handling, and tests
 
 ## Pull requests
 
