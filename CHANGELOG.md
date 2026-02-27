@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-02-27 — agorai-connect v0.0.1
+
+### Added
+- **`agorai-connect` npm package** (`packages/agorai-connect/`): lightweight client to connect AI agents to an Agorai bridge. Zero runtime dependencies — Node.js built-ins only.
+- **3 CLI commands**:
+  - `agorai-connect proxy <url> <pass-key>` — stdio→HTTP proxy for MCP clients (Claude Desktop)
+  - `agorai-connect setup` — interactive Claude Desktop config injection (detects OS, finds config, tests health, merges mcpServers)
+  - `agorai-connect agent --bridge <url> --key <key> --model <model> --endpoint <endpoint>` — connects an OpenAI-compatible model (Ollama, Groq, Mistral, etc.) to the bridge as a participant
+- **Agent runner**: MCP session init, auto-discovery of projects/conversations, subscribe, poll loop (3s), passive mode (@mention) or active mode, context building (20 last messages), model call via `/v1/chat/completions`, graceful shutdown
+- **Lightweight MCP client** (`mcp-client.ts`): JSON-RPC over HTTP, ~150 lines, no SDK dependency — handles initialize, tools/call, tools/list, notifications, SSE responses, session management
+- **Model caller** (`model-caller.ts`): OpenAI-compatible chat completions with `node:http/https` for controllable timeouts
+- **Config paths** (`config-paths.ts`): OS detection (Windows/macOS/Linux), Claude Desktop config file discovery (4 known paths), node.exe path resolution for Windows
+- **Programmatic API**: all modules exported from `index.ts` for library usage
+- **Tests**: 34 tests (7 test files) — utils, config-paths, proxy, model-caller, mcp-client (with mock HTTP servers), setup (config merging), agent (helpers + mention detection)
+- **Monorepo**: root `package.json` now has `"workspaces": ["packages/*"]`
+
+### Tested
+- Proxy: initialize handshake against live bridge — OK
+- Agent: Ollama mistral:7b connected via agorai-connect, discovered conversations, responded to a message from Claude Code through the bridge — full round-trip confirmed
+
+---
+
+## 2026-02-27 — v0.2.1 (OpenAI-compat adapter)
+
+### Added
+- **OpenAI-compatible adapter** (`src/adapters/openai-compat.ts`): single adapter for all OpenAI-compatible APIs — Groq, Mistral, Deepseek, LM Studio, vLLM, llama.cpp, LocalAI, Together AI, OpenAI itself
+- **`type` field on agent config**: explicit adapter selection (`cli`, `ollama`, `openai-compat`). Backward compatible — auto-detects from `model`/`command` if omitted
+- **`apiKey` field on agent config**: for authenticated API endpoints (Groq, Mistral, Deepseek, etc.)
+- **HTTPS support**: adapter handles both HTTP and HTTPS endpoints natively
+- **Config examples**: Groq, Mistral, Deepseek, LM Studio examples in `agorai.config.json.example`
+- **Tests**: 4 new adapter factory tests (140 total, all passing)
+- **Competitive analysis**: Agorai vs OpenClaw vs LM Studio — saved in bridge project memory
+- **Roadmap updates**: Agent Capabilities with tag dictionary (v0.3), optional modules for passive agents/routing (v0.4), GUI as separate item (v0.6)
+
+### Changed
+- Adapter factory now checks explicit `type` first, then auto-detects (backward compat)
+- Error message for misconfigured agents updated to mention all three adapter types
+
+---
+
 ## 2026-02-27 — v0.2.0 (Bridge)
 
 ### Added
