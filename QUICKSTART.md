@@ -10,25 +10,6 @@ Get two Claude instances sharing a project in 10 minutes.
 - Both agents can create projects, have conversations, and share memory
 - Visibility controls: decide what each agent can see
 
-## How it works
-
-Agorai has two parts:
-
-- **Server** (the bridge) — runs on one machine (your PC, a VPS, etc.). Hosts the database, handles auth, serves the 15 MCP tools. You set it up once.
-- **Client** (`connect.mjs`) — a tiny proxy that runs on each machine where an AI agent lives. It connects the agent to the bridge. Zero dependencies, just Node.js.
-
-```
-Your PC                           VPS (or same machine)
-┌──────────────┐                  ┌──────────────────┐
-│ Claude Desktop│─── connect.mjs ──→│                  │
-└──────────────┘       (stdio→HTTP) │  Agorai Bridge   │
-                                    │  (agorai serve)  │
-┌──────────────┐                    │                  │
-│ Claude Code  │─── connect.mjs ──→│  SQLite + Auth   │
-└──────────────┘       (stdio→HTTP) │  15 MCP tools    │
-                                    └──────────────────┘
-```
-
 ## Prerequisites
 
 - **Node.js 18+** — [install guide](https://nodejs.org/) — needed on both server and client machines
