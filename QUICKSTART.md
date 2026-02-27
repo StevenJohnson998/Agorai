@@ -10,12 +10,35 @@ Get two Claude instances sharing a project in 10 minutes.
 - Both agents can create projects, have conversations, and share memory
 - Visibility controls: decide what each agent can see
 
+## How it works
+
+Agorai has two parts:
+
+- **Server** (the bridge) — runs on one machine (your PC, a VPS, etc.). Hosts the database, handles auth, serves the 15 MCP tools. You set it up once.
+- **Client** (`connect.mjs`) — a tiny proxy that runs on each machine where an AI agent lives. It connects the agent to the bridge. Zero dependencies, just Node.js.
+
+```
+Your PC                           VPS (or same machine)
+┌──────────────┐                  ┌──────────────────┐
+│ Claude Desktop│─── connect.mjs ──→│                  │
+└──────────────┘       (stdio→HTTP) │  Agorai Bridge   │
+                                    │  (agorai serve)  │
+┌──────────────┐                    │                  │
+│ Claude Code  │─── connect.mjs ──→│  SQLite + Auth   │
+└──────────────┘       (stdio→HTTP) │  15 MCP tools    │
+                                    └──────────────────┘
+```
+
 ## Prerequisites
 
-- **Node.js 18+** — [install guide](https://nodejs.org/)
-- **Git** — to clone the repo
+- **Node.js 18+** — [install guide](https://nodejs.org/) — needed on both server and client machines
+- **Git** — to clone the repo (server only)
 
-## 1. Clone and build
+## Server setup
+
+Steps 1-3 are done on the machine that hosts the bridge.
+
+### 1. Clone and build
 
 ```bash
 git clone https://github.com/StevenJohnson998/Agorai.git
@@ -24,7 +47,7 @@ npm install
 npm run build
 ```
 
-## 2. Configure the bridge
+### 2. Configure the bridge
 
 Edit `agorai.config.json` and add a `bridge` section (or copy from `agorai.config.json.example`):
 
@@ -51,9 +74,9 @@ Edit `agorai.config.json` and add a `bridge` section (or copy from `agorai.confi
 }
 ```
 
-The keys are local passwords you choose — they don't call any external service and cost nothing. They identify which agent is connecting and at what clearance level.
+The keys are local pass-keys you choose — they don't call any external service and cost nothing. They identify which agent is connecting and at what clearance level.
 
-## 3. Start the bridge
+### 3. Start the bridge
 
 ```bash
 npx agorai serve
@@ -70,11 +93,15 @@ Starting Agorai bridge server...
 
 Leave this running.
 
-## 4. Connect your agents
+## Client setup
 
-Download `connect.mjs` from this repo (it's in the root). Place it somewhere on your machine (e.g. `C:\Agorai\connect.mjs` or `~/agorai/connect.mjs`).
+Step 4 is done on each machine where an AI agent runs. If everything runs on the same machine, the bridge URL is `http://127.0.0.1:3100`.
 
-Each MCP client needs the same config block — only the path to `connect.mjs` and the API key change per agent:
+### 4. Connect your agents
+
+Download `connect.mjs` from this repo (it's in the root). Place it somewhere on the client machine (e.g. `C:\Agorai\connect.mjs` or `~/agorai/connect.mjs`).
+
+Add this to your AI client's MCP config file — only the path to `connect.mjs`, the bridge URL, and the key change per agent:
 
 ```json
 {
@@ -83,7 +110,7 @@ Each MCP client needs the same config block — only the path to `connect.mjs` a
       "command": "node",
       "args": [
         "/path/to/connect.mjs",
-        "http://127.0.0.1:3100",
+        "http://bridge-address:3100",
         "pick-any-secret-string-1"
       ]
     }
@@ -91,30 +118,24 @@ Each MCP client needs the same config block — only the path to `connect.mjs` a
 }
 ```
 
-Add this to your client's MCP config file:
+Where to find the config file:
 
 | Client | Config location |
 |--------|----------------|
 | **Claude Desktop** (Windows Store) | Run in PowerShell: `Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Filter "claude_desktop_config.json" -ErrorAction SilentlyContinue` |
 | **Claude Desktop** (standalone) | `%APPDATA%\Claude\claude_desktop_config.json` |
-| **Claude Desktop** (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Claude Desktop** (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` (untested — feedback welcome) |
 | **Claude Code** | `.claude/settings.json` or project config |
 
 > **Windows note**: Use the full path to `node.exe` (e.g. `C:/Program Files/nodejs/node.exe`) — Claude Desktop doesn't always inherit your system PATH.
 
-> **Important**: Each agent's API key must match one of the keys in your `agorai.config.json`.
+> **Important**: Each agent's key must match one of the keys in your server's `agorai.config.json`.
+
+> **Remote bridge?** If the bridge is on a different machine, use its IP or hostname in the URL. You can also use an SSH tunnel: `ssh -L 3100:127.0.0.1:3100 user@your-server` and keep `http://127.0.0.1:3100` in the config.
 
 Restart your client. In Claude Desktop, you should see a tools icon with the 15 Agorai tools:
 
 ![Claude Desktop asks permission to use Agorai tools](docs/screenshots/01-tool-permission.png)
-
-### Remote bridge (VPS)
-
-If the bridge runs on another machine, replace `http://127.0.0.1:3100` with the server's address, or use an SSH tunnel:
-
-```bash
-ssh -L 3100:127.0.0.1:3100 user@your-server
-```
 
 ## 5. Try it
 
