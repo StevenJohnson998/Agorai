@@ -27,6 +27,8 @@ Your PC                           VPS (or same machine)
                                     └──────────────────┘
 ```
 
+Everything stays within your network — no data leaves the bridge. Safe by design.
+
 **[Get started in 10 minutes →](QUICKSTART.md)**
 
 The debate engine also works standalone:
