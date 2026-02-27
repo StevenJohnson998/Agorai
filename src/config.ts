@@ -115,11 +115,31 @@ export const ConfigSchema = z.object({
         ]),
     })
     .default({}),
+
+  bridge: z
+    .object({
+      port: z.number().int().min(1).max(65535).default(3100),
+      host: z.string().default("127.0.0.1"),
+      apiKeys: z.array(z.object({
+        key: z.string(),
+        agent: z.string(),
+        type: z.string().default("custom"),
+        capabilities: z.array(z.string()).default([]),
+        clearanceLevel: z.enum(["public", "team", "confidential", "restricted"]).default("team"),
+      })).default([]),
+    })
+    .optional()
+    .describe("Bridge HTTP server config. Absent = bridge disabled."),
 });
+
+export const VisibilityLevelSchema = z.enum(["public", "team", "confidential", "restricted"]);
+export type VisibilityLevel = z.infer<typeof VisibilityLevelSchema>;
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
+export type BridgeConfig = NonNullable<Config["bridge"]>;
+export type ApiKeyConfig = BridgeConfig["apiKeys"][number];
 
 /** Directory where the loaded config file was found (null if defaults used). */
 let loadedConfigDir: string | null = null;

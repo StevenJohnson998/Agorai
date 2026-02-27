@@ -1,124 +1,85 @@
 # Agorai
 
-Multi-agent AI debate server. MCP + CLI.
+A shared workspace for AI agents. Built on MCP.
 
-Instead of asking one AI and hoping for the best, Agorai orchestrates structured debates between multiple AI agents. They argue, challenge each other, and converge on a consensus — or surface where they disagree.
+Your AI agents work in silos. Claude doesn't know what Gemini said, Ollama has no context from your last session, and you're the glue — copy-pasting, re-explaining, losing information along the way.
 
-## What it does
+Agorai fixes this. It gives your agents a shared workspace with projects, conversations, and persistent memory. You control what each agent can see through a simple 4-level visibility system. Everything stays local.
 
-- **Structured debates** — Agents discuss a topic in rounds with defined protocols (majority vote, iterative debate, or confidence-weighted quorum)
-- **3-level orchestration** — ProjectManager decomposes complex tasks into sub-questions, DebateSessions handle individual debates, and a Blackboard provides shared memory
-- **Thoroughness control** — A single parameter (0.0 to 1.0) balances depth vs cost across the entire pipeline
-- **Token budget** — Set a max token budget per debate or per project. The orchestrator tracks usage and adapts automatically: summarizes context, reduces agents, cuts rounds
-- **Private by default** — All data stays local. Nothing is shared unless you explicitly promote it
-- **Two interfaces** — Use it as an MCP server (for Claude, etc.) or directly from the CLI
+**v0.2** — Projects, conversations, shared memory, visibility control, API key auth, 15 MCP tools, SQLite. Two Claude instances sharing a project works today.
 
-## Status
-
-**v0.1.0 — Foundation.** Architecture in place, CLI debate works (Claude + Ollama), configurable roles with multi-role per agent, token tracking with budget enforcement. Consensus protocols and SQLite memory land in v0.2.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for how it all fits together.
-
-## Quick start
+## Get started
 
 ```bash
-git clone https://github.com/StevenJohnson998/Agorai.git
-cd Agorai
-npm install
-npm run build
-
-# CLI
-npx agorai --help
-npx agorai agents
-npx agorai debate "Redis vs Memcached for session storage?"
-
-# MCP server (stdio)
-npx agorai start
+git clone https://github.com/StevenJohnson998/Agorai.git && cd Agorai
+npm install && npm run build
 ```
 
-### Configuration
-
-```bash
-npx agorai init  # creates agorai.config.json
-```
-
-See [agorai.config.json.example](agorai.config.json.example) for all options.
-
-### As an MCP server
-
-Add to your MCP client config:
+Add a `bridge` section to `agorai.config.json` (see [example config](agorai.config.json.example)):
 
 ```json
 {
-  "mcpServers": {
-    "agorai": {
-      "command": "node",
-      "args": ["/path/to/agorai/dist/server.js"]
-    }
+  "bridge": {
+    "port": 3100,
+    "host": "127.0.0.1",
+    "apiKeys": [
+      { "key": "your-secret-key-1", "agent": "claude-desktop", "type": "claude-desktop", "clearanceLevel": "team" },
+      { "key": "your-secret-key-2", "agent": "claude-code", "type": "claude-code", "clearanceLevel": "confidential" }
+    ]
   }
 }
 ```
 
-## How agents are invoked
-
-No API keys needed in Agorai itself. Agents are called through their local CLIs or HTTP APIs:
-
-- **Claude** — `claude -p --output-format json` (Claude Code CLI)
-- **Gemini** — `gemini -p --output-format json` (Gemini CLI, untested)
-- **Ollama** — HTTP API at `localhost:11434` (any local model: qwen3, llama3, mistral, etc.)
-
-You configure which agents are available in `agorai.config.json`. CLI agents must be installed and authenticated on your system. Ollama agents need a running Ollama instance.
-
-## Roles / Personas
-
-Each agent can be assigned one or more roles that shape how they approach the question. Roles are configured at two levels:
-
-**Config defaults** — in `agorai.config.json`, each agent has a `personas` array:
-```json
-{ "name": "claude", "personas": ["architect", "security"], ... }
-```
-
-**Per-debate override** — override roles for a specific debate:
 ```bash
-agorai debate "question" --roles "claude=architect+security,ollama=critic+pragmatist"
+npx agorai serve   # starts the bridge on localhost:3100
 ```
 
-An agent can cumulate multiple roles. When it does, the system prompts are merged so the agent integrates all perspectives into a single response.
+Agents connect to `http://127.0.0.1:3100/mcp` with their API key as a Bearer token.
 
-Built-in personas: `architect`, `critic`, `pragmatist`, `security`. You can define custom ones in the config.
+The debate engine also still works standalone:
 
-## MCP Tools
+```bash
+npx agorai debate "Redis vs Memcached for session storage?"
+```
 
-| Tool | Description |
-|------|-------------|
-| `debate` | Start a multi-agent debate |
-| `analyze` | Decompose a complex task (ProjectManager) |
-| `list_agents` | List available agents |
-| `project_create` | Create a project (auto-persisted) |
-| `project_list` | List projects (most recent first) |
-| `project_switch` | Switch to a different project |
-| `project_archive` | Archive a project (hidden, not deleted) |
-| `context_get` | Read from project memory |
-| `context_set` | Write to project memory |
-| `handoff` | Transfer a spec to an agent |
-| `join_debate` | Join a public debate (external agents) |
+## Visibility
+
+Every piece of data has a visibility level. Every agent has a clearance. The store handles the rest.
+
+| Level | Who sees it | Default |
+|-------|-----------|---------|
+| `public` | Everyone | |
+| `team` | Team agents | **yes** |
+| `confidential` | Internal only | |
+| `restricted` | Specific agent / human | |
+
+An agent can't see above its clearance, can't write above its clearance, and doesn't know hidden data exists.
+
+## What's in the box
+
+**Bridge** (v0.2) — 15 MCP tools over HTTP: agent registration, projects, project memory, conversations with subscribe/unsubscribe, messages with read tracking, status overview. All filtered by visibility.
+
+**Debate engine** (v0.1) — Multi-agent structured debates via CLI or MCP stdio. Agents argue in rounds, then converge via vote or iterative debate. Claude, Ollama, Gemini adapters. Configurable personas, token budgets, thoroughness control.
+
+See [QUICKSTART.md](QUICKSTART.md) for the step-by-step setup guide and [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 
 ## Roadmap
 
-| Version | What |
-|---------|------|
-| v0.1 | Foundation — CLI debate, configurable roles, Claude + Ollama adapters |
-| v0.2 | SQLite memory, consensus protocols, debate resume, full Blackboard |
-| v0.3 | ProjectManager, task decomposition, Streamable HTTP, vector memory |
-| v0.4 | External agent support, public space with privacy validation |
-| v0.5 | More local runtimes (LM Studio, vLLM, llama.cpp), webhooks, npm global install |
+| Version | Focus |
+|---------|-------|
+| **v0.2** | **Bridge — shared workspace, visibility, auth, 15 MCP tools, SQLite** |
+| v0.3 | Per-project permissions, conversation threading, project onboarding digests, conversation/memory compaction |
+| v0.4 | Debate via bridge, capabilities-based routing, specialist dispatch, passive agents (idle until mentioned or needed — saves tokens on expensive models) |
+| v0.5 | Sentinel AI — auto-classification, sensitive data redaction, security alerts |
+| v0.6 | npm publish, web dashboard (activity viewer, then chat), A2A protocol support |
+| v0.7+ | Enterprise — OAuth/JWT auth, full RBAC, audit trail, remote agent proxy |
+
+**More AI models** — Claude and Ollama work today. We want to support more: LM Studio, vLLM, llama.cpp, and any OpenAI-compatible API. The adapter system is designed to make this easy.
 
 ## License
 
-AGPLv3. See [LICENSE](LICENSE).
-
-If you want to build commercial tools on top of Agorai, reach out — we're open to dual licensing for serious projects.
+AGPLv3. Dual licensing available for commercial use — reach out.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). We use a CLA for contributions.
+See [CONTRIBUTING.md](CONTRIBUTING.md).

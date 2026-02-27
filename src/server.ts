@@ -38,7 +38,7 @@ initFileLogging(getUserDataDir(config), config.logging);
 
 const server = new McpServer({
   name: "agorai",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 // --- Tool handlers ---
