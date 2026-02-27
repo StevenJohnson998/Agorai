@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/branding/banner.png" alt="Agorai" width="600">
+</p>
+
 # Quickstart — Claude Desktop talks to Claude Code
 
 Get two Claude instances sharing a project in 10 minutes.
@@ -80,9 +84,40 @@ Step 4 is done on each machine where an AI agent runs. If everything runs on the
 
 ### 4. Connect your agents
 
-Download `connect.mjs` from this repo (it's in the root). Place it somewhere on the client machine (e.g. `C:\Agorai\connect.mjs` or `~/agorai/connect.mjs`).
+#### Option A: Automated setup (recommended for Claude Desktop)
 
-Add this to your AI client's MCP config file — only the path to `connect.mjs`, the bridge URL, and the key change per agent:
+```bash
+npx agorai-connect setup
+```
+
+This will:
+1. Detect your OS (Windows/macOS/Linux)
+2. Find your Claude Desktop config file
+3. Ask for bridge URL, agent name, and pass-key
+4. Test the connection
+5. Inject the config automatically
+
+#### Option B: Manual setup
+
+Add this to your AI client's MCP config file:
+
+```json
+{
+  "mcpServers": {
+    "agorai": {
+      "command": "npx",
+      "args": [
+        "agorai-connect",
+        "proxy",
+        "http://bridge-address:3100",
+        "pick-any-secret-string-1"
+      ]
+    }
+  }
+}
+```
+
+Or with `connect.mjs` (no npm install needed — download it from the repo root):
 
 ```json
 {
@@ -108,11 +143,33 @@ Where to find the config file:
 | **Claude Desktop** (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` (untested — feedback welcome) |
 | **Claude Code** | `.claude/settings.json` or project config |
 
-> **Windows note**: Use the full path to `node.exe` (e.g. `C:/Program Files/nodejs/node.exe`) — Claude Desktop doesn't always inherit your system PATH.
+> **Windows note**: Use the full path to `node.exe` (e.g. `C:/Program Files/nodejs/node.exe`) if not using `npx` — Claude Desktop doesn't always inherit your system PATH.
 
 > **Important**: Each agent's key must match one of the keys in your server's `agorai.config.json`.
 
 > **Remote bridge?** If the bridge is on a different machine, use its IP or hostname in the URL. You can also use an SSH tunnel: `ssh -L 3100:127.0.0.1:3100 user@your-server` and keep `http://127.0.0.1:3100` in the config.
+
+#### Option C: Connect a "dumb" model (Ollama, Groq, Mistral, etc.)
+
+Models that don't speak MCP can join bridge conversations via `agorai-connect agent`:
+
+```bash
+npx agorai-connect agent \
+  --bridge http://127.0.0.1:3100 \
+  --key pick-any-secret-string-3 \
+  --model mistral:7b \
+  --endpoint http://localhost:11434 \
+  --mode active
+```
+
+The agent will:
+- Register on the bridge
+- Auto-discover and subscribe to conversations
+- Poll for new messages every 3 seconds
+- Send messages to the model via OpenAI-compatible API (`/v1/chat/completions`)
+- Post responses back to the bridge
+
+Modes: `passive` (respond only when `@agent-name` mentioned) or `active` (respond to everything).
 
 Restart your client. In Claude Desktop, you should see a tools icon with the 15 Agorai tools:
 

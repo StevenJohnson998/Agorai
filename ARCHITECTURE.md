@@ -198,16 +198,28 @@ Token counts come from the agents themselves: Claude reports `cost_usd`, Ollama 
 Agents are invoked via their local CLIs or HTTP APIs. No API keys are stored or managed by Agorai.
 
 ```
-IAgentAdapter
-├── ClaudeAdapter    → claude -p --output-format json (CLI)
-├── GeminiAdapter    → gemini -p --output-format json (CLI)
-├── OllamaAdapter    → HTTP POST /api/generate (any local model)
-└── (future adapters)
+IAgentAdapter (debate engine)
+├── ClaudeAdapter        → claude -p --output-format json (CLI)
+├── GeminiAdapter        → gemini -p --output-format json (CLI)
+├── OllamaAdapter        → HTTP POST /api/generate (any local model)
+└── OpenAICompatAdapter  → HTTP POST /v1/chat/completions (any OpenAI-compat API)
 ```
 
 Two adapter types:
 - **CLI adapters** (Claude, Gemini): invoke a command-line tool as a subprocess
-- **HTTP adapters** (Ollama): call a local API endpoint
+- **HTTP adapters** (Ollama, OpenAI-compat): call a local or remote API endpoint
+
+### agorai-connect (bridge client)
+
+Separate npm package (`packages/agorai-connect/`) for connecting agents to the bridge. Zero runtime dependencies.
+
+```
+agorai-connect
+├── proxy    → stdio→HTTP proxy for MCP clients (Claude Desktop)
+├── setup    → interactive Claude Desktop config injection
+└── agent    → poll-based agent runner for OpenAI-compat models
+                MCP session → discover conversations → poll → model call → post response
+```
 
 The adapter factory (`createAdapter()`) picks the right type based on config: if `model` is set, it's Ollama; if `command` is set, it's CLI.
 
@@ -395,4 +407,15 @@ src/
     ├── base.ts            # IConsensusProtocol interface
     ├── vote.ts            # Majority vote
     └── debate.ts          # Iterative debate
+
+packages/agorai-connect/src/   # Separate npm package (zero deps)
+├── cli.ts                     # Entry point: proxy | setup | agent
+├── proxy.ts                   # stdio→HTTP proxy (from connect.mjs)
+├── setup.ts                   # Interactive Claude Desktop config setup
+├── agent.ts                   # Agent runner (poll loop + model call)
+├── mcp-client.ts              # Lightweight MCP client (JSON-RPC, no SDK)
+├── model-caller.ts            # OpenAI-compat /v1/chat/completions
+├── config-paths.ts            # OS detection + Claude Desktop paths
+├── utils.ts                   # Logging, URL normalization, health check
+└── index.ts                   # Public API exports
 ```

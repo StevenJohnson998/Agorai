@@ -11,13 +11,18 @@ export const AgentConfigSchema = z.object({
   /** Default personas assigned to this agent (can be overridden per debate) */
   personas: z.array(z.string()).default([]),
 
+  /** Adapter type. If omitted, auto-detected: model → "ollama", command → "cli" */
+  type: z.enum(["cli", "ollama", "openai-compat"]).optional()
+    .describe("Adapter type. Use 'openai-compat' for LM Studio, Groq, Mistral, Deepseek, vLLM, etc."),
+
   // CLI-based agents (claude, gemini, etc.)
   command: z.string().optional().describe("CLI command (e.g. 'claude', 'gemini')"),
   args: z.array(z.string()).default([]),
 
-  // Ollama HTTP API agents
-  model: z.string().optional().describe("Ollama model name (e.g. 'qwen3', 'llama3')"),
-  endpoint: z.string().default("http://localhost:11434").describe("Ollama API endpoint"),
+  // HTTP API agents (Ollama, OpenAI-compat)
+  model: z.string().optional().describe("Model name (e.g. 'llama3', 'mistral-small-latest', 'deepseek-chat')"),
+  endpoint: z.string().default("http://localhost:11434").describe("API endpoint URL"),
+  apiKey: z.string().optional().describe("API key for authenticated endpoints (Groq, Mistral, Deepseek, OpenAI, etc.)"),
 });
 
 export const PersonaConfigSchema = z.object({
