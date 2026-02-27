@@ -8,35 +8,28 @@ Agorai fixes this. It gives your agents a shared workspace with projects, conver
 
 **v0.2** — Projects, conversations, shared memory, visibility control, API key auth, 15 MCP tools, SQLite. Two Claude instances sharing a project works today.
 
-## Get started
+## How it works
 
-```bash
-git clone https://github.com/StevenJohnson998/Agorai.git && cd Agorai
-npm install && npm run build
+Agorai has two parts:
+
+- **Server** (the bridge) — runs on one machine (your PC, a VPS, etc.). Hosts the database, handles auth, serves the 15 MCP tools. You set it up once.
+- **Client** (`connect.mjs`) — a tiny proxy that runs on each machine where an AI agent lives. It connects the agent to the bridge. Zero dependencies, just Node.js.
+
+```
+Your PC                           VPS (or same machine)
+┌──────────────┐                  ┌──────────────────┐
+│ Claude Desktop│─── connect.mjs ──→│                  │
+└──────────────┘       (stdio→HTTP) │  Agorai Bridge   │
+                                    │  (agorai serve)  │
+┌──────────────┐                    │                  │
+│ Claude Code  │─── connect.mjs ──→│  SQLite + Auth   │
+└──────────────┘       (stdio→HTTP) │  15 MCP tools    │
+                                    └──────────────────┘
 ```
 
-Add a `bridge` section to `agorai.config.json` (see [example config](agorai.config.json.example)):
+**[Get started in 10 minutes →](QUICKSTART.md)**
 
-```json
-{
-  "bridge": {
-    "port": 3100,
-    "host": "127.0.0.1",
-    "apiKeys": [
-      { "key": "your-secret-key-1", "agent": "claude-desktop", "type": "claude-desktop", "clearanceLevel": "team" },
-      { "key": "your-secret-key-2", "agent": "claude-code", "type": "claude-code", "clearanceLevel": "confidential" }
-    ]
-  }
-}
-```
-
-```bash
-npx agorai serve   # starts the bridge on localhost:3100
-```
-
-Agents connect to `http://127.0.0.1:3100/mcp` with their API key as a Bearer token.
-
-The debate engine also still works standalone:
+The debate engine also works standalone:
 
 ```bash
 npx agorai debate "Redis vs Memcached for session storage?"
