@@ -1,14 +1,23 @@
 # Changelog
 
-## 2026-02-28 — agorai-connect setup v2
+## 2026-02-28 — agorai-connect v0.0.5 (setup v2)
 
 ### Added (agorai-connect)
 - **Windows Store config path**: detects `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\...` — the most common Windows install location
 - **Filesystem search fallback**: `searchClaudeConfig()` walks OS-specific roots (max depth 5) when known candidates miss
-- **`findAllClaudeConfigs()`**: deduplicates known candidates + search results, handles multi-config selection
+- **Multi-config detection**: always checks all known candidates, prompts user to pick when multiple found
 - **CLI args for setup**: `--bridge`, `--key`, `--agent`, `--config-path` — all optional, prompts for missing values, fully scriptable when all provided
 - **`uninstall` command**: removes only `mcpServers.agorai` from Desktop config, cleans empty `mcpServers` key, preserves everything else
-- **New exports**: `runUninstall`, `UninstallOptions`, `UninstallResult`, `searchClaudeConfig`, `findAllClaudeConfigs`, `configCandidates`
+- **Install metadata**: saves config path to `~/.agorai-connect.json` during setup so uninstall finds the right file
+- **New exports**: `runUninstall`, `UninstallOptions`, `UninstallResult`, `searchClaudeConfig`, `findAllClaudeConfigs`, `configCandidates`, `saveInstallMeta`, `loadInstallMeta`, `removeInstallMeta`
+
+### Fixed (agorai-connect)
+- **Windows path double-drive bug**: `new URL(import.meta.url).pathname` → `fileURLToPath()` — fixes `C:\C:\...` in config
+- **Prompts UX**: show defaults inline, "Choose a pass-key (this stays within Agorai)" wording
+
+### Published
+- **agorai@0.2.2** — bridge + internal agent
+- **agorai-connect@0.0.5** — all setup v2 features + Windows fixes
 
 ### Tests
 - config-paths: 5 → 13 tests (Windows Store path, candidate counts, search function)
