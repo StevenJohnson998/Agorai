@@ -115,6 +115,40 @@ describe("callModel", () => {
     }
   });
 
+  it("uses endpoint as-is when it already contains /chat/completions", async () => {
+    let receivedUrl: string | undefined;
+
+    const server = http.createServer((_req, res) => {
+      receivedUrl = _req.url;
+      let body = "";
+      _req.on("data", (chunk) => (body += chunk));
+      _req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }));
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+
+    try {
+      await callModel(
+        [{ role: "user", content: "test" }],
+        {
+          endpoint: `http://127.0.0.1:${addr.port}/v1beta/openai/chat/completions`,
+          model: "gemini-2.0-flash",
+          timeoutMs: 5000,
+        },
+      );
+
+      expect(receivedUrl).toBe("/v1beta/openai/chat/completions");
+    } finally {
+      server.close();
+    }
+  });
+
   it("throws on HTTP error", async () => {
     const server = http.createServer((_req, res) => {
       let body = "";

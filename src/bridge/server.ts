@@ -1,7 +1,7 @@
 /**
  * Bridge HTTP server — Streamable HTTP transport for the MCP bridge.
  *
- * Exposes 15 bridge tools + debate tools over HTTP.
+ * Exposes 16 bridge tools + debate tools over HTTP.
  * Auth is handled via API key in Authorization header.
  * Each request is authenticated before being passed to the MCP handler.
  */
@@ -31,6 +31,7 @@ import {
   GetMessagesSchema,
   GetStatusSchema,
   MarkReadSchema,
+  ListSubscribersSchema,
 } from "./tools.js";
 
 const log = createLogger("bridge");
@@ -211,6 +212,32 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     async (args) => {
       await store.unsubscribe(args.conversation_id, agentId);
       return { content: [{ type: "text" as const, text: JSON.stringify({ unsubscribed: true, conversation_id: args.conversation_id }) }] };
+    },
+  );
+
+  server.tool(
+    "list_subscribers",
+    "List agents subscribed to a conversation (with name, type, online status — useful for @mention suggestions)",
+    ListSubscribersSchema.shape,
+    async (args) => {
+      const [subscriptions, allAgents] = await Promise.all([
+        store.getSubscribers(args.conversation_id),
+        store.listAgents(),
+      ]);
+      const agentMap = new Map(allAgents.map((a) => [a.id, a]));
+      const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+
+      const subscribers = subscriptions.map((sub) => {
+        const agent = agentMap.get(sub.agentId);
+        return {
+          id: sub.agentId,
+          name: agent?.name ?? sub.agentId,
+          type: agent?.type ?? "unknown",
+          online: agent ? agent.lastSeenAt > fiveMinAgo : false,
+          joinedAt: sub.joinedAt,
+        };
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(subscribers, null, 2) }] };
     },
   );
 

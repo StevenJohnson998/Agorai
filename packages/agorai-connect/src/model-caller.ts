@@ -36,7 +36,10 @@ export async function callModel(
   options: ModelCallerOptions,
 ): Promise<ModelResponse> {
   const { endpoint, model, apiKey, timeoutMs = 120_000 } = options;
-  const url = `${endpoint.replace(/\/+$/, "")}/v1/chat/completions`;
+  const base = endpoint.replace(/\/+$/, "");
+  const url = base.includes("/chat/completions")
+    ? base
+    : `${base}/v1/chat/completions`;
   const start = Date.now();
 
   log("debug", `callModel → ${url} model=${model}`);

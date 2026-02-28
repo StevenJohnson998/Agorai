@@ -8,7 +8,7 @@ Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Bridge (v0.2)                                │
 │  HTTP transport (Streamable HTTP) + Auth (API keys) + Visibility    │
-│  15 MCP tools: agents, projects, memory, conversations, messages    │
+│  16 MCP tools: agents, projects, memory, conversations, messages    │
 │  SQLite store with 4-level visibility filtering                     │
 │                                                                      │
 │  ┌──────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │

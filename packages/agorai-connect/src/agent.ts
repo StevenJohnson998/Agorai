@@ -68,7 +68,7 @@ export async function runAgent(options: AgentOptions): Promise<void> {
 
   // Register agent
   const regResult = await client.callTool("register_agent", {
-    name: `${model}-agent`,
+    name: model,
     type: "openai-compat",
     capabilities: ["chat"],
   });
@@ -241,19 +241,20 @@ async function processConversation(
   // Resolve sender field (bridge may use fromAgent or sender)
   const getSender = (m: typeof messages[0]) => m.sender ?? m.fromAgent ?? "unknown";
 
-  // Filter out our own messages (match on agent name in the registered info)
-  // agentName is the raw JSON from register_agent, parse the actual name
+  // Filter out our own messages (match on agent id and name)
   let myName = "unknown";
+  let myId = "unknown";
   try {
     const reg = JSON.parse(agentName);
-    myName = reg.name ?? reg.id ?? "unknown";
+    myName = reg.name ?? "unknown";
+    myId = reg.id ?? "unknown";
   } catch {
     myName = agentName;
   }
 
   const otherMessages = messages.filter((m) => {
     const sender = getSender(m);
-    return sender !== myName && !sender.includes(myName);
+    return sender !== myName && sender !== myId && !sender.includes(myName);
   });
   if (otherMessages.length === 0) return;
 
