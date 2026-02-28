@@ -11,12 +11,13 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectPlatform,
-  findClaudeConfig,
   findAllClaudeConfigs,
   defaultConfigPath,
   resolveNodePath,
+  saveInstallMeta,
   type Platform,
 } from "./config-paths.js";
 import {
@@ -42,6 +43,7 @@ export interface SetupResult {
 
 /**
  * Resolve the config path — explicit override, single match, or interactive pick.
+ * Always checks ALL known candidates + search fallback to detect multiple configs.
  */
 async function resolveConfigPath(os: Platform, explicit?: string): Promise<string> {
   // Explicit path override — use as-is
@@ -50,24 +52,11 @@ async function resolveConfigPath(os: Platform, explicit?: string): Promise<strin
     return explicit;
   }
 
-  // Try known candidates first
-  const found = findClaudeConfig(os);
-  if (found) {
-    console.log(`Found Claude Desktop config: ${found}`);
-    return found;
-  }
-
-  // Fall back to filesystem search
-  console.log("Config not found at known paths, searching filesystem...");
+  // Check all known candidates + search fallback
   const all = findAllClaudeConfigs(os);
 
   if (all.length === 1) {
-    console.log(`Found config: ${all[0]}`);
-    const confirm = await prompt("Use this path? [Y/n]: ");
-    if (confirm.trim().toLowerCase() === "n") {
-      const custom = await prompt("Enter config path: ");
-      if (custom.trim()) return custom.trim();
-    }
+    console.log(`Found Claude Desktop config: ${all[0]}`);
     return all[0];
   }
 
@@ -76,7 +65,7 @@ async function resolveConfigPath(os: Platform, explicit?: string): Promise<strin
     for (let i = 0; i < all.length; i++) {
       console.log(`  ${i + 1}. ${all[i]}`);
     }
-    const choice = await prompt(`Pick one (1-${all.length}): `);
+    const choice = await prompt(`Which one does Claude Desktop use? (1-${all.length}): `);
     const idx = parseInt(choice.trim(), 10) - 1;
     if (idx >= 0 && idx < all.length) {
       return all[idx];
@@ -101,14 +90,14 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
   const configPath = await resolveConfigPath(os, options.configPath);
 
   // Prompt for bridge details (use CLI args if provided)
-  const bridgeUrl = options.bridge ?? await promptDefault("Bridge URL", "http://localhost:3100");
-  const agentName = options.agent ?? await promptDefault("Agent name", "claude-desktop");
+  const bridgeUrl = options.bridge ?? await promptDefault("Bridge URL (default: http://localhost:3100)", "http://localhost:3100");
+  const agentName = options.agent ?? await promptDefault("Agent name (default: claude-desktop)", "claude-desktop");
 
   let passKey: string;
   if (options.key) {
     passKey = options.key;
   } else {
-    passKey = await prompt("Pass-key: ");
+    passKey = await prompt("Choose a pass-key (this stays within Agorai): ");
     if (!passKey) {
       console.error("Error: pass-key is required.");
       closePrompt();
@@ -138,7 +127,8 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
   closePrompt();
 
   // Resolve the path to the connect proxy script
-  const cliPath = pathResolve(dirname(new URL(import.meta.url).pathname), "cli.js");
+  // fileURLToPath handles Windows drive letters correctly (no double C:\C:\)
+  const cliPath = pathResolve(dirname(fileURLToPath(import.meta.url)), "cli.js");
   const nodePath = resolveNodePath(os);
 
   // Build the mcpServers entry
@@ -168,6 +158,9 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+
+  // Save install metadata so uninstall knows which config to modify
+  saveInstallMeta(configPath);
 
   console.log(`\nConfig written to: ${configPath}`);
   console.log(`Agent "${agentName}" configured with bridge at ${bridgeUrl}`);

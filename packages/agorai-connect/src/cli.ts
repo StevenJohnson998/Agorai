@@ -87,7 +87,7 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai-connect v0.0.3");
+    console.log("agorai-connect v0.0.5");
     process.exit(0);
   }
 
