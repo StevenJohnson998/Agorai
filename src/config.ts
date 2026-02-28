@@ -23,6 +23,7 @@ export const AgentConfigSchema = z.object({
   model: z.string().optional().describe("Model name (e.g. 'llama3', 'mistral-small-latest', 'deepseek-chat')"),
   endpoint: z.string().default("http://localhost:11434").describe("API endpoint URL"),
   apiKey: z.string().optional().describe("API key for authenticated endpoints (Groq, Mistral, Deepseek, OpenAI, etc.)"),
+  apiKeyEnv: z.string().optional().describe("Read API key from this environment variable (recommended over apiKey)"),
 });
 
 export const PersonaConfigSchema = z.object({
