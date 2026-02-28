@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-02-28 — agorai-connect setup v2
+
+### Added (agorai-connect)
+- **Windows Store config path**: detects `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\...` — the most common Windows install location
+- **Filesystem search fallback**: `searchClaudeConfig()` walks OS-specific roots (max depth 5) when known candidates miss
+- **`findAllClaudeConfigs()`**: deduplicates known candidates + search results, handles multi-config selection
+- **CLI args for setup**: `--bridge`, `--key`, `--agent`, `--config-path` — all optional, prompts for missing values, fully scriptable when all provided
+- **`uninstall` command**: removes only `mcpServers.agorai` from Desktop config, cleans empty `mcpServers` key, preserves everything else
+- **New exports**: `runUninstall`, `UninstallOptions`, `UninstallResult`, `searchClaudeConfig`, `findAllClaudeConfigs`, `configCandidates`
+
+### Tests
+- config-paths: 5 → 13 tests (Windows Store path, candidate counts, search function)
+- setup: 3 → 6 tests (uninstall: removes only agorai, cleans empty mcpServers, handles missing entry)
+- Total: 55 tests passing
+
+---
+
+## 2026-02-28 — v0.2.3 (NPM Package Split + Internal Agent)
+
+### Added
+- **npm publishability** for both packages:
+  - Root `agorai` package: added `main`, `types`, `exports`, `files`, `repository`, `homepage`, `keywords`, `publishConfig`
+  - `agorai-connect` package: added `homepage`, `publishConfig`
+- **Public API barrel export** (`src/index.ts`): re-exports Store, Bridge, Adapters, Debate, Config, and Internal Agent for programmatic library usage
+- **Internal agent runner** (`src/agent/internal-agent.ts`): runs an AI agent inside the bridge process using `IStore` directly — no HTTP round-trip, no auth overhead. Mirrors the `agorai-connect` agent pattern:
+  - Poll loop: discover projects → list conversations → subscribe → get unread → filter own → @mention check → build context (20 msgs) → adapter.invoke() → sendMessage → markRead
+  - Mark read only after successful send (retry on failure)
+  - Graceful shutdown via AbortSignal
+  - Heartbeat log every ~30s
+- **`agorai agent` CLI command**: `--adapter <name> [--mode passive|active] [--poll 3000] [--system "prompt"]` — run an internal agent standalone with its own SqliteStore instance (WAL handles concurrency)
+- **`agorai serve --with-agent <name>` flag**: spawn internal agent(s) in the same process, sharing the bridge's store instance. Repeatable. Uses AbortController for coordinated shutdown
+- **8 new tests** (`internal-agent.test.ts`): discovery/subscription, active mode response, passive mode @mention filtering, self-message filtering, mark-read-after-success, no-mark-read-on-failure, graceful shutdown
+
+### Fixed
+- CLI version string: `v0.2.0` → `v0.2.2`
+
+### Tests
+- 170 tests passing (was 162)
+
+---
+
 ## 2026-02-28 — v0.2.2 (Bridge Data Isolation)
 
 ### Added
