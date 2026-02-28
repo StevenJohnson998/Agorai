@@ -9,12 +9,16 @@
  *    - Mode passive: respond only if @agent-name mentioned
  *    - Mode active: respond to everything
  *    - Build context (20 last messages) → callModel() → send_message
- * 4. Graceful shutdown on SIGINT/SIGTERM
+ * 4. Session recovery on bridge restart (SessionExpiredError → re-init)
+ * 5. Health check monitor (exit after 10 consecutive failures)
+ * 6. Graceful shutdown on SIGINT/SIGTERM
  */
 
 import { McpClient, type ToolCallResult } from "./mcp-client.js";
 import { callModel, type ChatMessage, type ModelCallerOptions } from "./model-caller.js";
-import { log } from "./utils.js";
+import { log, checkHealth, baseUrl } from "./utils.js";
+import { SessionExpiredError, BridgeUnreachableError } from "./errors.js";
+import { Backoff } from "./backoff.js";
 
 export interface AgentOptions {
   bridgeUrl: string;
@@ -47,6 +51,7 @@ export async function runAgent(options: AgentOptions): Promise<void> {
   } = options;
 
   const client = new McpClient({ bridgeUrl, passKey });
+  const backoff = new Backoff();
   let running = true;
 
   // Graceful shutdown
@@ -61,50 +66,87 @@ export async function runAgent(options: AgentOptions): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Initialize MCP session
-  log("info", `Connecting to bridge at ${bridgeUrl}...`);
-  const initResult = await client.initialize();
-  log("info", `Connected. Server: ${JSON.stringify(initResult.serverInfo)}`);
-
-  // Register agent
-  const regResult = await client.callTool("register_agent", {
-    name: model,
-    type: "openai-compat",
-    capabilities: ["chat"],
-  });
-  const agentName = extractText(regResult);
-  log("info", `Registered as: ${agentName}`);
-
-  // Subscribe to all conversations
-  const convResult = await client.callTool("list_conversations", {});
-  const convText = extractText(convResult);
-  let conversations: Array<{ id: string; title: string }> = [];
-  try {
-    const parsed = JSON.parse(convText);
-    conversations = Array.isArray(parsed) ? parsed : parsed.conversations ?? [];
-  } catch {
-    log("debug", "No existing conversations to subscribe to");
-  }
-
   const conversationState = new Map<string, ConversationState>();
-
-  for (const conv of conversations) {
-    try {
-      await client.callTool("subscribe", { conversation_id: conv.id });
-      conversationState.set(conv.id, {});
-      log("info", `Subscribed to: ${conv.title} (${conv.id})`);
-    } catch (err) {
-      log("error", `Failed to subscribe to ${conv.id}: ${err}`);
-    }
-  }
+  let agentName = "";
+  let myName = "unknown";
+  let myId = "unknown";
 
   const modelOpts: ModelCallerOptions = { endpoint, model, apiKey };
   const defaultSystem = systemPrompt ??
     `You are ${model}, an AI agent participating in a multi-agent conversation on Agorai. ` +
     `Be concise and helpful. When replying, focus on your area of expertise.`;
 
+  /**
+   * Initialize (or re-initialize) the MCP session: init + register + subscribe.
+   * Called at startup and after session recovery.
+   */
+  async function initializeSession(): Promise<void> {
+    log("info", `Connecting to bridge at ${bridgeUrl}...`);
+    const initResult = await client.initialize();
+    log("info", `Connected. Server: ${JSON.stringify(initResult.serverInfo)}`);
+
+    // Register agent
+    const regResult = await client.callTool("register_agent", {
+      name: model,
+      type: "openai-compat",
+      capabilities: ["chat"],
+    });
+    agentName = extractText(regResult);
+    log("info", `Registered as: ${agentName}`);
+
+    // Parse agent identity
+    try {
+      const reg = JSON.parse(agentName);
+      myName = reg.name ?? "unknown";
+      myId = reg.id ?? "unknown";
+    } catch {
+      myName = agentName;
+    }
+
+    // Re-subscribe to all known conversations + discover new ones
+    for (const [convId] of conversationState) {
+      try {
+        await client.callTool("subscribe", { conversation_id: convId });
+        log("debug", `Re-subscribed to ${convId}`);
+      } catch {
+        // May no longer exist
+      }
+    }
+
+    // Initial discovery
+    const newCount = await discoverConversations(client, conversationState);
+    if (newCount > 0) {
+      log("info", `Discovery: found ${newCount} new conversation(s)`);
+    }
+  }
+
+  // Initial connection with backoff
+  while (running) {
+    try {
+      await initializeSession();
+      backoff.succeed();
+      break;
+    } catch (err) {
+      if (err instanceof BridgeUnreachableError) {
+        log("error", `${err.message} — retrying...`);
+        await backoff.wait();
+      } else {
+        throw err; // Unexpected error at startup — fail fast
+      }
+    }
+  }
+
+  if (!running) return;
+
   console.log(`Agent running (mode: ${mode}, model: ${model})`);
   console.log(`Polling every ${pollIntervalMs / 1000}s. Press Ctrl+C to stop.\n`);
+
+  // Health check state
+  let consecutiveHealthFailures = 0;
+  let lastHealthCheck = Date.now();
+  let lastHeartbeat = Date.now();
+  const healthIntervalMs = 30_000;
+  const maxHealthFailures = 10;
 
   // Poll loop
   let pollCount = 0;
@@ -113,10 +155,38 @@ export async function runAgent(options: AgentOptions): Promise<void> {
   while (running) {
     try {
       pollCount++;
+      const now = Date.now();
+
+      // Heartbeat (~30s)
+      if (now - lastHeartbeat >= healthIntervalMs) {
+        log("info", `Heartbeat: agent alive, ${conversationState.size} conversation(s) tracked`);
+        lastHeartbeat = now;
+      }
+
+      // Health check (~30s)
+      if (now - lastHealthCheck >= healthIntervalMs) {
+        lastHealthCheck = now;
+        const health = await checkHealth(baseUrl(bridgeUrl));
+        if (health.ok) {
+          consecutiveHealthFailures = 0;
+        } else {
+          consecutiveHealthFailures++;
+          log("error", `Health check failed (${consecutiveHealthFailures}/${maxHealthFailures}): ${health.error}`);
+          if (consecutiveHealthFailures >= maxHealthFailures) {
+            log("error", `${maxHealthFailures} consecutive health failures (~${Math.round(maxHealthFailures * healthIntervalMs / 60_000)}min) — exiting for process manager restart`);
+            running = false;
+            await client.close();
+            process.exit(1);
+          }
+        }
+      }
 
       // Periodically discover and subscribe to new conversations
       if (pollCount % discoveryInterval === 1 || conversationState.size === 0) {
-        await discoverConversations(client, conversationState);
+        const newCount = await discoverConversations(client, conversationState);
+        if (newCount > 0) {
+          log("info", `Discovery: found ${newCount} new conversation(s)`);
+        }
       }
 
       // Check each subscribed conversation for new messages
@@ -146,22 +216,52 @@ export async function runAgent(options: AgentOptions): Promise<void> {
           conversationState,
           modelOpts,
           defaultSystem,
-          agentName,
+          myName,
+          myId,
           mode,
         );
       }
+
+      // Successful poll — reset backoff
+      backoff.succeed();
     } catch (err) {
-      log("error", `Poll error: ${err instanceof Error ? err.message : String(err)}`);
+      if (err instanceof SessionExpiredError) {
+        log("info", "Session expired — reconnecting...");
+        client.resetSession();
+        try {
+          await initializeSession();
+          backoff.succeed();
+          log("info", "Reconnected successfully");
+        } catch (initErr) {
+          if (initErr instanceof BridgeUnreachableError) {
+            log("error", `${initErr.message} — backing off...`);
+            await backoff.wait();
+          } else {
+            log("error", `Reconnect failed: ${initErr instanceof Error ? initErr.message : String(initErr)}`);
+            await backoff.wait();
+          }
+        }
+      } else if (err instanceof BridgeUnreachableError) {
+        log("error", `${err.message} — backing off...`);
+        await backoff.wait();
+      } else {
+        log("error", `Poll error: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     await sleep(pollIntervalMs);
   }
 }
 
+/**
+ * Discover new conversations across all projects. Returns count of newly found ones.
+ */
 async function discoverConversations(
   client: McpClient,
   states: Map<string, ConversationState>,
-): Promise<void> {
+): Promise<number> {
+  let newCount = 0;
+
   // List all projects first
   const projResult = await client.callTool("list_projects", {});
   const projText = extractText(projResult);
@@ -170,7 +270,7 @@ async function discoverConversations(
     const parsed = JSON.parse(projText);
     projects = Array.isArray(parsed) ? parsed : parsed.projects ?? [];
   } catch {
-    return;
+    return 0;
   }
 
   // For each project, list conversations and subscribe to new ones
@@ -191,12 +291,15 @@ async function discoverConversations(
           await client.callTool("subscribe", { conversation_id: conv.id });
           states.set(conv.id, {});
           log("info", `Subscribed to: ${conv.title ?? conv.id}`);
+          newCount++;
         } catch {
           // Already subscribed or other issue
         }
       }
     }
   }
+
+  return newCount;
 }
 
 async function processConversation(
@@ -205,7 +308,8 @@ async function processConversation(
   states: Map<string, ConversationState>,
   modelOpts: ModelCallerOptions,
   systemPrompt: string,
-  agentName: string,
+  myName: string,
+  myId: string,
   mode: "passive" | "active",
 ): Promise<void> {
   const state = states.get(conversationId) ?? {};
@@ -242,16 +346,6 @@ async function processConversation(
   const getSender = (m: typeof messages[0]) => m.sender ?? m.fromAgent ?? "unknown";
 
   // Filter out our own messages (match on agent id and name)
-  let myName = "unknown";
-  let myId = "unknown";
-  try {
-    const reg = JSON.parse(agentName);
-    myName = reg.name ?? "unknown";
-    myId = reg.id ?? "unknown";
-  } catch {
-    myName = agentName;
-  }
-
   const otherMessages = messages.filter((m) => {
     const sender = getSender(m);
     return sender !== myName && sender !== myId && !sender.includes(myName);
@@ -263,6 +357,7 @@ async function processConversation(
     const mentionPattern = new RegExp(`@${myName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
     const hasMention = otherMessages.some((m) => mentionPattern.test(m.content));
     if (!hasMention) {
+      log("info", `Skipping ${otherMessages.length} message(s) in ${conversationId} (no @mention)`);
       await client.callTool("mark_read", { conversation_id: conversationId });
       return;
     }
@@ -282,7 +377,7 @@ async function processConversation(
     });
   }
 
-  // Call the model
+  // Call the model — mark_read ONLY after successful send
   try {
     log("info", `Generating response for conversation ${conversationId}...`);
     const response = await callModel(chatMessages, modelOpts);
@@ -295,15 +390,17 @@ async function processConversation(
     });
 
     log("info", `Replied in ${conversationId} (${response.durationMs}ms, ${response.completionTokens} tokens)`);
-  } catch (err) {
-    log("error", `Model call failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
 
-  // Mark messages as read
-  await client.callTool("mark_read", { conversation_id: conversationId });
+    // Mark as read AFTER successful send — on failure, messages stay unread for retry
+    await client.callTool("mark_read", { conversation_id: conversationId });
+    log("debug", `Marked messages read in ${conversationId}`);
+  } catch (err) {
+    log("error", `Model/send failed in ${conversationId}: ${err instanceof Error ? err.message : String(err)}`);
+    // Messages NOT marked read — they will be retried on next poll
+  }
 }
 
-function extractText(result: ToolCallResult): string {
+export function extractText(result: ToolCallResult): string {
   if (result.content.length === 0) return "";
   return result.content.map((c) => c.text).join("\n");
 }

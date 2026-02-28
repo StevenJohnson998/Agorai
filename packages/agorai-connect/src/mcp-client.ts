@@ -8,7 +8,7 @@
  */
 
 import { log } from "./utils.js";
-import { randomUUID } from "node:crypto";
+import { SessionExpiredError, BridgeUnreachableError } from "./errors.js";
 
 export interface McpClientOptions {
   bridgeUrl: string;
@@ -33,6 +33,16 @@ export class McpClient {
   }
 
   /**
+   * Reset session state — used for recovery after bridge restart.
+   * Clears sessionId and resets message counter.
+   */
+  resetSession(): void {
+    this.sessionId = undefined;
+    this.nextId = 1;
+    log("debug", "Session state reset");
+  }
+
+  /**
    * Initialize MCP session with the bridge.
    * Returns server capabilities and info.
    */
@@ -40,7 +50,7 @@ export class McpClient {
     const result = await this.request("initialize", {
       protocolVersion: "2025-03-26",
       capabilities: {},
-      clientInfo: { name: "agorai-connect", version: "0.0.1" },
+      clientInfo: { name: "agorai-connect", version: "0.0.3" },
     });
 
     // Send initialized notification
@@ -66,7 +76,7 @@ export class McpClient {
   }
 
   /**
-   * Close the MCP session (DELETE).
+   * Close the MCP session (DELETE). Fire-and-forget — errors are swallowed.
    */
   async close(): Promise<void> {
     if (!this.sessionId) return;
@@ -81,7 +91,7 @@ export class McpClient {
       });
       log("debug", "Session closed");
     } catch {
-      // Best effort
+      // Best effort — bridge may already be down
     }
   }
 
@@ -109,11 +119,18 @@ export class McpClient {
       headers["mcp-session-id"] = this.sessionId;
     }
 
-    const resp = await fetch(this.endpoint, {
-      method: "POST",
-      headers,
-      body,
-    });
+    let resp: Response;
+    try {
+      resp = await fetch(this.endpoint, {
+        method: "POST",
+        headers,
+        body,
+      });
+    } catch (err: unknown) {
+      // Network-level errors: ECONNREFUSED, DNS, timeout, etc.
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new BridgeUnreachableError(`Bridge unreachable: ${msg}`);
+    }
 
     // Capture session ID
     const sid = resp.headers.get("mcp-session-id");
@@ -121,6 +138,12 @@ export class McpClient {
 
     if (!resp.ok) {
       const text = await resp.text();
+
+      // 404 with "Session not found" → bridge restarted, session is gone
+      if (resp.status === 404 && text.toLowerCase().includes("session not found")) {
+        throw new SessionExpiredError();
+      }
+
       throw new Error(`MCP request ${method} failed: HTTP ${resp.status} — ${text}`);
     }
 
@@ -170,19 +193,23 @@ export class McpClient {
       headers["mcp-session-id"] = this.sessionId;
     }
 
-    const resp = await fetch(this.endpoint, {
-      method: "POST",
-      headers,
-      body,
-    });
+    try {
+      const resp = await fetch(this.endpoint, {
+        method: "POST",
+        headers,
+        body,
+      });
 
-    // Capture session ID
-    const sid = resp.headers.get("mcp-session-id");
-    if (sid) this.sessionId = sid;
+      // Capture session ID
+      const sid = resp.headers.get("mcp-session-id");
+      if (sid) this.sessionId = sid;
 
-    // Notifications return 202 or 200 — both are fine
-    if (!resp.ok && resp.status !== 202) {
-      log("error", `Notification ${method} failed: HTTP ${resp.status}`);
+      // Notifications return 202 or 200 — both are fine
+      if (!resp.ok && resp.status !== 202) {
+        log("error", `Notification ${method} failed: HTTP ${resp.status}`);
+      }
+    } catch {
+      // Fire-and-forget — bridge may be down during notification
     }
   }
 }

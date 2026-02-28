@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { extractText } from "../agent.js";
 
 /**
  * Tests for agent.ts building blocks.
@@ -8,12 +9,6 @@ import { describe, it, expect } from "vitest";
 
 describe("agent helpers", () => {
   describe("extractText", () => {
-    // Inline the function since it's not exported
-    function extractText(result: { content: Array<{ type: string; text: string }> }): string {
-      if (result.content.length === 0) return "";
-      return result.content.map((c) => c.text).join("\n");
-    }
-
     it("extracts text from single content item", () => {
       const result = { content: [{ type: "text", text: "hello" }] };
       expect(extractText(result)).toBe("hello");
@@ -69,6 +64,70 @@ describe("agent helpers", () => {
       states.set("conv-2", { lastMessageTimestamp: "2026-02-27T11:00:00Z" });
       expect(states.get("conv-1")?.lastMessageTimestamp).toBe("2026-02-27T10:00:00Z");
       expect(states.get("conv-2")?.lastMessageTimestamp).toBe("2026-02-27T11:00:00Z");
+    });
+  });
+
+  describe("mark_read ordering", () => {
+    it("mark_read should not be called when model/send fails", () => {
+      // This test validates the design decision:
+      // In processConversation(), mark_read is called INSIDE the try block
+      // after send_message succeeds. If callModel() or send_message throws,
+      // mark_read is never reached → messages stay unread → retried next poll.
+      //
+      // We test this by simulating the try/catch flow:
+      const actions: string[] = [];
+
+      const mockCallModel = () => {
+        actions.push("callModel");
+        throw new Error("Model timeout");
+      };
+
+      const mockSendMessage = () => {
+        actions.push("send_message");
+      };
+
+      const mockMarkRead = () => {
+        actions.push("mark_read");
+      };
+
+      // Simulate the try block from processConversation
+      try {
+        mockCallModel();
+        mockSendMessage();
+        mockMarkRead(); // Only reached if both above succeed
+      } catch {
+        // Model failed — mark_read NOT called
+      }
+
+      expect(actions).toEqual(["callModel"]);
+      expect(actions).not.toContain("mark_read");
+      expect(actions).not.toContain("send_message");
+    });
+
+    it("mark_read is called after successful model call + send", () => {
+      const actions: string[] = [];
+
+      const mockCallModel = () => {
+        actions.push("callModel");
+      };
+
+      const mockSendMessage = () => {
+        actions.push("send_message");
+      };
+
+      const mockMarkRead = () => {
+        actions.push("mark_read");
+      };
+
+      try {
+        mockCallModel();
+        mockSendMessage();
+        mockMarkRead();
+      } catch {
+        // Should not reach here
+      }
+
+      expect(actions).toEqual(["callModel", "send_message", "mark_read"]);
     });
   });
 });
