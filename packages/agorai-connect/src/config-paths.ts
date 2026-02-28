@@ -5,7 +5,7 @@
 
 import { platform, homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 
 export type Platform = "windows" | "macos" | "linux";
 
@@ -171,4 +171,51 @@ export function resolveNodePath(os?: Platform): string {
     return process.execPath; // Full path like C:\Program Files\nodejs\node.exe
   }
   return "node";
+}
+
+// ---------------------------------------------------------------------------
+// Install metadata — remembers which config path was used during setup
+// ---------------------------------------------------------------------------
+
+const INSTALL_META_FILE = ".agorai-connect.json";
+
+function installMetaPath(): string {
+  return join(homedir(), INSTALL_META_FILE);
+}
+
+/**
+ * Save the config path used during setup so uninstall can find it.
+ */
+export function saveInstallMeta(configPath: string): void {
+  try {
+    writeFileSync(installMetaPath(), JSON.stringify({ configPath }, null, 2) + "\n");
+  } catch {
+    // Non-critical — uninstall will fall back to detection
+  }
+}
+
+/**
+ * Load the config path saved during setup. Returns null if not found.
+ */
+export function loadInstallMeta(): { configPath: string } | null {
+  try {
+    const data = JSON.parse(readFileSync(installMetaPath(), "utf-8"));
+    if (data.configPath && typeof data.configPath === "string") {
+      return { configPath: data.configPath };
+    }
+  } catch {
+    // File doesn't exist or is corrupted
+  }
+  return null;
+}
+
+/**
+ * Remove the install metadata file (called after uninstall).
+ */
+export function removeInstallMeta(): void {
+  try {
+    unlinkSync(installMetaPath());
+  } catch {
+    // Already gone or inaccessible
+  }
 }

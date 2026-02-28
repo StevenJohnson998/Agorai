@@ -26,5 +26,8 @@ export {
   configCandidates,
   defaultConfigPath,
   resolveNodePath,
+  saveInstallMeta,
+  loadInstallMeta,
+  removeInstallMeta,
   type Platform,
 } from "./config-paths.js";

@@ -8,8 +8,9 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import {
   detectPlatform,
-  findClaudeConfig,
   findAllClaudeConfigs,
+  loadInstallMeta,
+  removeInstallMeta,
 } from "./config-paths.js";
 import { prompt, closePrompt } from "./utils.js";
 
@@ -28,31 +29,35 @@ export interface UninstallResult {
 export async function runUninstall(options: UninstallOptions = {}): Promise<UninstallResult> {
   const os = detectPlatform();
 
-  // Resolve config path
+  // Resolve config path: explicit arg → saved from setup → detection
   let configPath: string | null = options.configPath ?? null;
 
   if (!configPath) {
-    configPath = findClaudeConfig(os);
+    const meta = loadInstallMeta();
+    if (meta && existsSync(meta.configPath)) {
+      configPath = meta.configPath;
+      console.log(`Found install record: ${configPath}`);
+    }
+  }
 
-    if (!configPath) {
-      // Search fallback
-      const all = findAllClaudeConfigs(os);
-      if (all.length === 1) {
-        configPath = all[0];
-      } else if (all.length > 1) {
-        console.log("Multiple Claude Desktop configs found:");
-        for (let i = 0; i < all.length; i++) {
-          console.log(`  ${i + 1}. ${all[i]}`);
-        }
-        const choice = await prompt(`Pick one (1-${all.length}): `);
-        closePrompt();
-        const idx = parseInt(choice.trim(), 10) - 1;
-        if (idx >= 0 && idx < all.length) {
-          configPath = all[idx];
-        } else {
-          console.error("Invalid choice.");
-          return { configPath: "", removed: false };
-        }
+  if (!configPath) {
+    const all = findAllClaudeConfigs(os);
+
+    if (all.length === 1) {
+      configPath = all[0];
+    } else if (all.length > 1) {
+      console.log("Multiple Claude Desktop configs found:");
+      for (let i = 0; i < all.length; i++) {
+        console.log(`  ${i + 1}. ${all[i]}`);
+      }
+      const choice = await prompt(`Which one? (1-${all.length}): `);
+      closePrompt();
+      const idx = parseInt(choice.trim(), 10) - 1;
+      if (idx >= 0 && idx < all.length) {
+        configPath = all[idx];
+      } else {
+        console.error("Invalid choice.");
+        return { configPath: "", removed: false };
       }
     }
   }
@@ -91,6 +96,9 @@ export async function runUninstall(options: UninstallOptions = {}): Promise<Unin
 
   // Write back
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+
+  // Clean up install metadata
+  removeInstallMeta();
 
   console.log(`Removed agorai from: ${configPath}`);
   console.log("Restart Claude Desktop to apply.");

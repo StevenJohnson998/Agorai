@@ -1,6 +1,6 @@
 {
   "name": "agorai-connect",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "description": "Lightweight client to connect AI agents to an Agorai bridge",
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -40,6 +40,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/StevenJohnson998/Agorai"
+  },
+  "homepage": "https://github.com/StevenJohnson998/Agorai/tree/main/packages/agorai-connect#readme",
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
