@@ -40,6 +40,7 @@ export interface IStore {
   // --- Project Memory (filtered by agent clearance) ---
   setMemory(entry: CreateMemoryEntry): Promise<MemoryEntry>;
   getMemory(projectId: string, agentId: string, filters?: MemoryFilters): Promise<MemoryEntry[]>;
+  getMemoryEntry(id: string): Promise<MemoryEntry | null>;
   deleteMemory(id: string): Promise<boolean>;
 
   // --- Conversations ---
@@ -51,6 +52,7 @@ export interface IStore {
   subscribe(conversationId: string, agentId: string, opts?: SubscribeOptions): Promise<void>;
   unsubscribe(conversationId: string, agentId: string): Promise<void>;
   getSubscribers(conversationId: string): Promise<Subscription[]>;
+  isSubscribed(conversationId: string, agentId: string): Promise<boolean>;
 
   // --- Messages (filtered by agent clearance) ---
   sendMessage(msg: CreateMessage): Promise<Message>;

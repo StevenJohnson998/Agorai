@@ -367,6 +367,13 @@ export class SqliteStore implements IStore {
     return results;
   }
 
+  async getMemoryEntry(id: string): Promise<MemoryEntry | null> {
+    const row = this.db.prepare("SELECT * FROM project_memory WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToMemoryEntry(row) : null;
+  }
+
   async deleteMemory(id: string): Promise<boolean> {
     const result = this.db.prepare("DELETE FROM project_memory WHERE id = ?").run(id);
     return result.changes > 0;
@@ -467,6 +474,13 @@ export class SqliteStore implements IStore {
       historyAccess: r.history_access as string,
       joinedAt: r.joined_at as string,
     }));
+  }
+
+  async isSubscribed(conversationId: string, agentId: string): Promise<boolean> {
+    const row = this.db.prepare(
+      "SELECT 1 FROM conversation_agents WHERE conversation_id = ? AND agent_id = ?",
+    ).get(conversationId, agentId);
+    return row !== undefined;
   }
 
   // --- Messages ---

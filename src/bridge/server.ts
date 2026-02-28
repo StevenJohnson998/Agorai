@@ -93,10 +93,12 @@ export interface BridgeServerOptions {
   config: Config;
 }
 
+const ACCESS_DENIED = { content: [{ type: "text" as const, text: JSON.stringify({ error: "Not found or access denied" }) }] };
+
 function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
   const server = new McpServer({
     name: "agorai-bridge",
-    version: "0.2.0",
+    version: "0.2.2",
   });
 
   // --- Agent tools ---
@@ -126,10 +128,26 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "list_agents",
     "List registered agents",
     ListBridgeAgentsSchema.shape,
-    async (_args) => {
+    async (args) => {
       const agents = await store.listAgents();
-      // Strip apiKeyHash from response
-      const safe = agents.map(({ apiKeyHash: _, ...rest }) => rest);
+
+      let filtered = agents;
+      if (args.project_id) {
+        // Verify caller can access the project
+        const project = await store.getProject(args.project_id, agentId);
+        if (!project) return ACCESS_DENIED;
+
+        // Collect agent IDs from all conversation subscriptions in the project
+        const conversations = await store.listConversations(args.project_id, agentId);
+        const subscribedIds = new Set<string>();
+        for (const conv of conversations) {
+          const subs = await store.getSubscribers(conv.id);
+          for (const sub of subs) subscribedIds.add(sub.agentId);
+        }
+        filtered = agents.filter((a) => subscribedIds.has(a.id));
+      }
+
+      const safe = filtered.map(({ apiKeyHash: _, ...rest }) => rest);
       return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
     },
   );
@@ -168,6 +186,10 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Add or update a project memory entry",
     SetMemorySchema.shape,
     async (args) => {
+      // Verify caller can access the target project
+      const project = await store.getProject(args.project_id, agentId);
+      if (!project) return ACCESS_DENIED;
+
       const entry = await store.setMemory({
         projectId: args.project_id,
         type: args.type,
@@ -201,6 +223,13 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Delete a memory entry",
     DeleteMemorySchema.shape,
     async (args) => {
+      // Verify the entry exists, caller owns it, and can access its project
+      const entry = await store.getMemoryEntry(args.id);
+      if (!entry) return ACCESS_DENIED;
+      if (entry.createdBy !== agentId) return ACCESS_DENIED;
+      const project = await store.getProject(entry.projectId, agentId);
+      if (!project) return ACCESS_DENIED;
+
       const deleted = await store.deleteMemory(args.id);
       return { content: [{ type: "text" as const, text: JSON.stringify({ deleted }) }] };
     },
@@ -213,6 +242,10 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Create a conversation in a project",
     CreateConversationSchema.shape,
     async (args) => {
+      // Verify caller can access the target project
+      const project = await store.getProject(args.project_id, agentId);
+      if (!project) return ACCESS_DENIED;
+
       const conv = await store.createConversation({
         projectId: args.project_id,
         title: args.title,
@@ -243,6 +276,12 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Subscribe to a conversation",
     SubscribeSchema.shape,
     async (args) => {
+      // Verify conversation exists and caller can access its project
+      const conv = await store.getConversation(args.conversation_id);
+      if (!conv) return ACCESS_DENIED;
+      const project = await store.getProject(conv.projectId, agentId);
+      if (!project) return ACCESS_DENIED;
+
       await store.subscribe(args.conversation_id, agentId, {
         historyAccess: args.history_access,
       });
@@ -265,6 +304,10 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "List agents subscribed to a conversation (with name, type, online status — useful for @mention suggestions)",
     ListSubscribersSchema.shape,
     async (args) => {
+      // Verify caller is subscribed to the conversation
+      const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
       const [subscriptions, allAgents] = await Promise.all([
         store.getSubscribers(args.conversation_id),
         store.listAgents(),
@@ -293,6 +336,10 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Send a message in a conversation (visibility capped at your clearance)",
     SendMessageSchema.shape,
     async (args) => {
+      // Verify caller is subscribed to the conversation
+      const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
       const message = await store.sendMessage({
         conversationId: args.conversation_id,
         fromAgent: agentId,
@@ -310,6 +357,10 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Get messages from a conversation (filtered by your clearance)",
     GetMessagesSchema.shape,
     async (args) => {
+      // Verify caller is subscribed to the conversation
+      const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
       const messages = await store.getMessages(args.conversation_id, agentId, {
         since: args.since,
         unreadOnly: args.unread_only,
@@ -393,7 +444,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       // Health endpoint
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", version: "0.2.0" }));
+        res.end(JSON.stringify({ status: "ok", version: "0.2.2" }));
         return;
       }
 
