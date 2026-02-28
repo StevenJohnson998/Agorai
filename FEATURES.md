@@ -30,6 +30,11 @@
 | Transparent filtering | Agents don't know hidden data exists | Done |
 | Per-project visibility | Projects carry default visibility | Done |
 | Per-conversation defaults | Conversations carry default visibility for new messages | Done |
+| **Memory ownership** | `delete_memory` verifies `created_by === agentId` before deleting | Done (v0.2.2) |
+| **Project access checks** | `set_memory`, `create_conversation`, `subscribe` verify project access | Done (v0.2.2) |
+| **Subscription enforcement** | `get_messages`, `send_message`, `list_subscribers` require subscription | Done (v0.2.2) |
+| **list_agents project filter** | `project_id` parameter filters to agents in that project's conversations | Done (v0.2.2) |
+| **Opaque error responses** | Access failures return "Not found or access denied" (no resource leak) | Done (v0.2.2) |
 | Permission matrix | Per-project agent × resource × action | Planned (v0.3) |
 | Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.5) |
 | Redaction | Replace sensitive data with tokens instead of blocking | Planned (v0.6+) |
@@ -132,7 +137,7 @@
 |---------|-------|
 | v0.1 | Foundation — debate engine, CLI, MCP stdio, 3 adapters, consensus |
 | **v0.2** | **Bridge — shared workspace, projects, conversations, memory, visibility, auth, 16 tools** |
-| v0.2.x | Reliability — session recovery, heartbeat/keepalive, agent logging, API key security |
+| v0.2.x | Reliability & isolation — session recovery, heartbeat/keepalive, agent logging, API key security, data isolation (ownership + project access + subscription enforcement) |
 | v0.3 | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary), OpenAI-compat adapter, onboarding digests |
 | v0.4 | Debate via bridge — consensus by messages, optional modules: smart routing, bridge-level passive agents (server-side routing + @mention), capability catalog |
 | v0.5 | Sentinel AI + Classification — auto-tagger, redaction, security alerts |
