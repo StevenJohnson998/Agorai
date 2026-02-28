@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-02-28 — Agent Management CLI
+
+### Added
+- **`agorai agent add`**: add an agent to config — creates `bridge.apiKeys[]` entry (always) + `agents[]` entry (for openai-compat/ollama types), generates pass-key, validates env vars at add-time
+- **`agorai agent list`**: unified view merging `bridge.apiKeys[]` and `agents[]` — shows name, type, model, clearance, API key status
+- **`agorai agent update`**: modify agent fields (model, endpoint, apiKeyEnv, clearance, enabled) with change tracking
+- **`agorai agent remove`**: removes from both `bridge.apiKeys[]` and `agents[]`
+- **`agorai agent run`**: replaces old `agorai agent --adapter` (which still works via backward compat redirect)
+- **Config manager module** (`src/config-manager.ts`): raw JSON read/write (preserves user fields, no Zod), `generatePassKey()` using `crypto.randomBytes(24)`
+- **Startup validation**: `agorai serve` now warns about missing env vars for agents with `apiKeyEnv`
+- **Agent type system**: 5 types (`claude-desktop`, `claude-code`, `openai-compat`, `ollama`, `custom`) — MCP types create only auth entry, adapter types create both auth + adapter config
+
+### Tests
+- 22 new tests (`config-manager.test.ts`): CRUD operations, pass-key generation, duplicate detection, orphan agent handling, edge cases
+- Total: 192 tests passing (was 170)
+
+---
+
 ## 2026-02-28 — agorai-connect v0.0.5 (setup v2)
 
 ### Added (agorai-connect)
@@ -26,9 +44,16 @@
 
 ---
 
-## 2026-02-28 — v0.2.3 (NPM Package Split + Internal Agent)
+## 2026-02-28 — v0.2.3 (NPM Package Split + Internal Agent + Docs Restructure)
 
 ### Added
+- **Documentation restructured**: QUICKSTART.md → INSTALL.md (full reference), 3 new focused quickstart guides:
+  - `docs/quickstart-claude-desktop.md` — golden path for Claude Desktop setup
+  - `docs/quickstart-ollama.md` — golden path for local Ollama models
+  - `docs/quickstart-api.md` — examples for DeepSeek, Groq, Mistral, OpenAI + any provider
+- **README "Connect your AI" table**: lists 15 compatible AIs (Claude Desktop, Claude Code, Ollama, LM Studio, DeepSeek, Groq, Mistral, OpenAI, Gemini, Together AI, Fireworks, Perplexity, OpenRouter, vLLM, any OpenAI-compatible)
+- **Demo transcript**: `docs/demo-transcript.md` — copy-paste-ready multi-agent architecture review scenario
+- **`apiKeyEnv` config field**: read API keys from environment variables instead of hardcoding in config (bridge + openai-compat adapter)
 - **npm publishability** for both packages:
   - Root `agorai` package: added `main`, `types`, `exports`, `files`, `repository`, `homepage`, `keywords`, `publishConfig`
   - `agorai-connect` package: added `homepage`, `publishConfig`

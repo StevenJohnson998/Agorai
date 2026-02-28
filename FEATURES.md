@@ -22,6 +22,9 @@
 | **Internal agent** | Run an agent inside the bridge process (store-direct, no HTTP) | Done (v0.2.3) |
 | **`--with-agent`** | `agorai serve --with-agent <name>` spawns internal agents in bridge process | Done (v0.2.3) |
 | **`agorai agent`** | Standalone CLI command to run an internal agent | Done (v0.2.3) |
+| **Agent management CLI** | `agorai agent add/list/update/remove` — full CRUD for agents in config | Done |
+| **Config manager** | Raw JSON config read/write, pass-key generation, env var validation | Done |
+| **Startup env validation** | `agorai serve` warns about missing env vars for agents with `apiKeyEnv` | Done |
 
 ## npm Packages (v0.2.3)
 

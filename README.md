@@ -30,7 +30,12 @@ npx agorai serve
 # 2. Connect Claude Desktop
 npx agorai-connect setup
 
-# 3. Connect a model (e.g. DeepSeek)
+# 3. Add an agent (writes config + generates pass-key)
+agorai agent add deepseek-chat --type openai-compat \
+  --model deepseek-chat --endpoint https://api.deepseek.com \
+  --api-key-env DEEPSEEK_KEY --clearance team
+
+# 4. Or connect a model directly
 DEEPSEEK_KEY=sk-... npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 --key my-key \
   --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
@@ -116,6 +121,8 @@ npx agorai debate "Redis vs Memcached for session storage?"
 ```
 
 **Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
+
+**Agent management** — Add, list, update, and remove agents from the CLI. `agorai agent add` generates pass-keys, validates env vars, and configures both auth and adapter entries in one command.
 
 **Internal agents** — Run agents inside the bridge process with `--with-agent`. Store-direct access, no HTTP round-trip. Perfect for always-on local models like Ollama.
 
