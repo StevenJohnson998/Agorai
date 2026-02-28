@@ -6,7 +6,7 @@
  * Commands:
  *   agorai-connect proxy <bridge-url> <pass-key>
  *   agorai-connect setup
- *   agorai-connect agent --bridge <url> --key <key> --model <model> --endpoint <endpoint> [--api-key <key>] [--mode passive|active]
+ *   agorai-connect agent --bridge <url> --key <key> --model <model> --endpoint <endpoint> [--api-key <key>] [--api-key-env <VAR>] [--mode passive|active]
  */
 
 import { parseArgs } from "node:util";
@@ -24,7 +24,8 @@ Agent options:
   --key <pass-key>       Pass-key for authentication (required)
   --model <model>        Model name, e.g. mistral:7b (required)
   --endpoint <url>       OpenAI-compatible endpoint (required)
-  --api-key <key>        API key for the model endpoint (optional)
+  --api-key <key>        API key for the model endpoint (optional, visible in ps)
+  --api-key-env <VAR>    Read API key from environment variable (recommended)
   --mode <passive|active> passive = respond only when @mentioned (default: passive)
   --system <prompt>      Custom system prompt (optional)
   --poll <ms>            Poll interval in ms (default: 3000)
@@ -39,16 +40,20 @@ Examples:
   agorai-connect proxy http://my-vps:3100 my-pass-key
   agorai-connect setup
   agorai-connect agent --bridge http://my-vps:3100 --key my-pass-key --model mistral:7b --endpoint http://localhost:11434
+  DEEPSEEK_KEY=sk-... agorai-connect agent --bridge http://my-vps:3100 --key pk --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
 `;
 
 async function main() {
   const rawArgs = process.argv.slice(2);
 
-  // Global flags
+  // Global flags (processed before command dispatch)
+  let explicitLogLevel = false;
   if (rawArgs.includes("--debug")) {
     setLogLevel("debug");
+    explicitLogLevel = true;
   } else if (rawArgs.includes("--verbose")) {
     setLogLevel("info");
+    explicitLogLevel = true;
   }
   const args = rawArgs.filter((a) => a !== "--verbose" && a !== "--debug");
 
@@ -58,7 +63,7 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai-connect v0.0.1");
+    console.log("agorai-connect v0.0.3");
     process.exit(0);
   }
 
@@ -72,6 +77,10 @@ async function main() {
       await cmdSetup();
       break;
     case "agent":
+      // Default to info-level logging for agent (unless user specified --verbose/--debug)
+      if (!explicitLogLevel) {
+        setLogLevel("info");
+      }
       await cmdAgent(args.slice(1));
       break;
     default:
@@ -109,6 +118,7 @@ async function cmdAgent(args: string[]) {
       model: { type: "string" },
       endpoint: { type: "string" },
       "api-key": { type: "string" },
+      "api-key-env": { type: "string" },
       mode: { type: "string" },
       system: { type: "string" },
       poll: { type: "string" },
@@ -134,13 +144,24 @@ async function cmdAgent(args: string[]) {
     process.exit(1);
   }
 
+  // Resolve API key: --api-key-env takes precedence over --api-key
+  let apiKey = values["api-key"];
+  if (values["api-key-env"]) {
+    const envVal = process.env[values["api-key-env"]];
+    if (!envVal) {
+      console.error(`Error: environment variable ${values["api-key-env"]} is not set or empty`);
+      process.exit(1);
+    }
+    apiKey = envVal;
+  }
+
   const { runAgent } = await import("./agent.js");
   await runAgent({
     bridgeUrl: values.bridge,
     passKey: values.key,
     model: values.model,
     endpoint: values.endpoint,
-    apiKey: values["api-key"],
+    apiKey,
     mode,
     pollIntervalMs,
     systemPrompt: values.system,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import { McpClient } from "../mcp-client.js";
+import { SessionExpiredError, BridgeUnreachableError } from "../errors.js";
 
 /**
  * Tests for the lightweight MCP client.
@@ -216,6 +217,115 @@ describe("McpClient", () => {
       });
 
       await expect(client.callTool("bad_tool")).rejects.toThrow("MCP error -32600: Invalid request");
+      await client.close();
+    } finally {
+      server.close();
+    }
+  }, 10000);
+
+  // --- New tests for error detection ---
+
+  it("throws SessionExpiredError on 404 with 'Session not found'", async () => {
+    const server = http.createServer((req, res) => {
+      if (req.method === "DELETE") {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        if (!body.trim()) {
+          res.writeHead(202);
+          res.end();
+          return;
+        }
+
+        let rpc: { id?: number };
+        try {
+          rpc = JSON.parse(body);
+        } catch {
+          res.writeHead(400);
+          res.end();
+          return;
+        }
+
+        // Notifications — accept silently
+        if (rpc.id === undefined) {
+          res.writeHead(202, { "mcp-session-id": "old-session" });
+          res.end();
+          return;
+        }
+
+        // Simulate bridge restart: 404 with "Session not found"
+        res.writeHead(404);
+        res.end("Session not found");
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+
+    try {
+      const client = new McpClient({
+        bridgeUrl: `http://127.0.0.1:${addr.port}`,
+        passKey: "key",
+      });
+
+      await expect(client.callTool("any_tool")).rejects.toThrow(SessionExpiredError);
+      await client.close();
+    } finally {
+      server.close();
+    }
+  }, 10000);
+
+  it("throws BridgeUnreachableError on connection refused", async () => {
+    // Use a port that nothing is listening on
+    const client = new McpClient({
+      bridgeUrl: "http://127.0.0.1:19999",
+      passKey: "key",
+    });
+
+    await expect(client.callTool("any_tool")).rejects.toThrow(BridgeUnreachableError);
+  }, 10000);
+
+  it("resetSession() clears session state", async () => {
+    let requestCount = 0;
+
+    const server = createMockBridge((_method, _req, body) => {
+      requestCount++;
+      const rpc = JSON.parse(body);
+      return {
+        jsonrpc: "2.0",
+        id: rpc.id,
+        result: {
+          serverInfo: { name: "test", version: "1.0" },
+          capabilities: {},
+        },
+      };
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+
+    try {
+      const client = new McpClient({
+        bridgeUrl: `http://127.0.0.1:${addr.port}`,
+        passKey: "key",
+      });
+
+      // Initialize to get session
+      await client.initialize();
+      const countAfterInit = requestCount;
+
+      // Reset session
+      client.resetSession();
+
+      // Next initialize should work (fresh session)
+      await client.initialize();
+      expect(requestCount).toBeGreaterThan(countAfterInit);
+
       await client.close();
     } finally {
       server.close();

@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-02-28 — agorai-connect v0.0.3 (Reliability)
+
+### Added
+- **Typed error classes** (`errors.ts`): `SessionExpiredError` and `BridgeUnreachableError` for agent recovery logic
+- **Backoff utility** (`backoff.ts`): exponential backoff with jitter (base 1s, max 60s, factor 2x, 25% jitter)
+- **Session recovery**: agent auto-reconnects when bridge restarts (detects 404 "Session not found", resets session, re-initializes)
+- **Health check monitor**: polls `/health` every ~30s, exits cleanly after 10 consecutive failures (~5min) for process manager restart
+- **Heartbeat logging**: `"Heartbeat: agent alive, N conversation(s) tracked"` every ~30s at info level
+- **`--api-key-env <VAR>` CLI flag**: reads model API key from environment variable (not visible in `ps aux`)
+- **Discovery logging**: `"Discovery: found N new conversation(s)"` on new subscriptions
+- **Passive mode skip logging**: `"Skipping N message(s) in convId (no @mention)"` at info level
+
+### Fixed
+- **mark_read ordering**: moved inside try block after successful `send_message` — on model failure, messages stay unread and are retried on next poll (was marking read even on failure)
+- **Silent agent death**: agents no longer loop forever on 404 when bridge restarts — they detect `SessionExpiredError` and reconnect
+- **Bridge unreachable handling**: network errors (ECONNREFUSED, timeout) now throw `BridgeUnreachableError` instead of generic Error, with exponential backoff retry
+
+### Changed
+- Default log level for `agent` command set to `info` (was `error`) — agents now show useful output without `--verbose`
+- `extractText` exported from `agent.ts` for testing
+- MCP client version string updated to `0.0.3`
+- `close()` and `notify()` in MCP client now swallow fetch errors silently (fire-and-forget)
+- `discoverConversations()` now returns count of newly found conversations
+
+### Tests
+- New: `backoff.test.ts` — 5 tests (exponential growth, cap at max, jitter range, reset on succeed, wait increments failures)
+- New: `mcp-client.test.ts` — 3 new tests (SessionExpiredError on 404, BridgeUnreachableError on ECONNREFUSED, resetSession clears state)
+- Updated: `agent.test.ts` — 3 new tests (mark_read not called on model failure, mark_read called after success, extractText via export)
+- Total: 45 agorai-connect tests passing, 140 server tests passing (185 total)
+
+---
+
 ## 2026-02-27 — agorai-connect v0.0.1
 
 ### Added
