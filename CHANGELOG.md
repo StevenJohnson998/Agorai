@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-02-28 — v0.2.2 (Bridge Data Isolation)
+
+### Added
+- **`getMemoryEntry(id)` store method**: fetches a single memory entry by ID (needed for ownership verification before delete)
+- **`isSubscribed(conversationId, agentId)` store method**: checks if an agent is subscribed to a conversation
+- **`list_agents` project_id filter**: the schema already declared a `project_id` parameter but the handler ignored it — now returns only agents subscribed to conversations in that project
+
+### Fixed
+- **CRITICAL — `delete_memory` ownership bypass**: any authenticated agent could delete any memory entry by UUID. Now verifies `created_by === agentId` and project access before deleting
+- **`set_memory` project access**: any agent could write memory to any project regardless of clearance. Now checks project access via `getProject(projectId, agentId)` before writing
+- **`create_conversation` project access**: any agent could create conversations in any project. Now checks project access first
+- **`subscribe` project access**: any agent could subscribe to any conversation if they knew the UUID. Now verifies the conversation exists and the agent can access its parent project
+- **`get_messages` subscription enforcement**: any agent could read messages from any conversation. Now requires subscription (via `isSubscribed`) before reading
+- **`send_message` subscription enforcement**: any agent could send messages to any conversation. Now requires subscription before sending
+- **`list_subscribers` subscription enforcement**: any agent could enumerate subscribers of any conversation. Now requires the caller to be subscribed
+
+### Security
+- All access check failures return a deliberately vague `{ error: "Not found or access denied" }` to avoid leaking whether a resource exists
+- No new DB tables or schema changes — leverages existing columns (`created_by`, `project_id`, `conversation_agents` table)
+
+### Tests
+- 8 new tests in "Data isolation" group: ownership check on delete, project access on set_memory/create_conversation/subscribe, subscription enforcement on get_messages/send_message/list_subscribers, list_agents project_id filter
+- Total: 162 tests passing (was 154)
+
+### Not changed
+- `list_projects`, `list_conversations`, `get_memory` — already have clearance-based filtering (acceptable for v0.2)
+- `AllowAllPermissions` stub — stays as-is until v0.3 RBAC
+- `get_status`, `mark_read` — no changes needed
+
+---
+
 ## 2026-02-28 — agorai-connect v0.0.3 (Reliability)
 
 ### Added
