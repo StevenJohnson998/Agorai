@@ -26,6 +26,14 @@ import { createAdapter } from "./adapters/index.js";
 import { DebateSession, type DebateMode } from "./orchestrator.js";
 import { writeFileSync, existsSync } from "node:fs";
 import { setLogLevel, initFileLogging } from "./logger.js";
+import {
+  addAgent,
+  listAgents,
+  updateAgent,
+  removeAgent,
+  type AgentType,
+  type ClearanceLevel,
+} from "./config-manager.js";
 
 const USAGE = `Usage: agorai <command> [options]
 
@@ -33,6 +41,11 @@ Commands:
   debate <prompt>          Start a multi-agent debate
   analyze <prompt>         Decompose a complex task (ProjectManager)
   agents                   List available agents and check availability
+  agent add <name>         Add an agent to config
+  agent list               List configured agents (bridge + adapters)
+  agent update <name>      Update an agent's configuration
+  agent remove <name>      Remove an agent from config
+  agent run --adapter <n>  Run an internal agent (uses store directly)
   project create <name>    Create a new project
   project list [--archived] List projects (most recent first)
   project switch <id>      Switch to a project
@@ -42,7 +55,6 @@ Commands:
   init                     Create agorai.config.json
   start [--http]           Start MCP server (stdio or HTTP)
   serve                    Start bridge HTTP server (Streamable HTTP)
-  agent                    Run an internal agent (uses store directly, no HTTP)
   connect <url> --key <k>  Connect Claude Desktop to a remote bridge (stdio→HTTP proxy)
 
 Options:
@@ -55,10 +67,15 @@ Options:
   --continue <debate_id>   Resume an existing debate (add more rounds)
   --force                  Skip pre-estimation budget warning
   --with-agent <name>      (serve) Spawn an internal agent in the same process (repeatable)
-  --adapter <name>         (agent) Agent adapter name from config
-  --mode <passive|active>  (agent) Response mode (default: passive)
-  --poll <ms>              (agent) Poll interval in milliseconds (default: 3000)
-  --system <prompt>        (agent) Custom system prompt
+  --type <type>            (agent add) claude-desktop|claude-code|openai-compat|ollama|custom
+  --model <model>          (agent add/update) Model name
+  --endpoint <url>         (agent add/update) API endpoint URL
+  --api-key-env <VAR>      (agent add/update) Env var containing the API key
+  --clearance <level>      (agent add/update) public|team|confidential|restricted
+  --adapter <name>         (agent run) Agent adapter name from config
+  --mode <passive|active>  (agent run) Response mode (default: passive)
+  --poll <ms>              (agent run) Poll interval in milliseconds (default: 3000)
+  --system <prompt>        (agent run) Custom system prompt
   --verbose                Show info-level logs on stderr
   --debug                  Show all logs (debug level) on stderr
   --help                   Show this help
@@ -69,9 +86,9 @@ Environment:
 
 Examples:
   agorai debate "Redis vs Memcached for sessions?"
-  agorai debate "Auth: JWT vs sessions?" --agents claude,ollama --roles "claude=architect+security,ollama=critic"
-  agorai debate "Quick take on Rust vs Go" --mode quick --thoroughness 0.2
-  agorai debate "Dig deeper" --continue abc123 --max-rounds 2
+  agorai agent add groq --type openai-compat --model llama-3.3-70b-versatile --endpoint https://api.groq.com/openai --api-key-env GROQ_API_KEY
+  agorai agent list
+  agorai agent run --adapter groq --mode active
 `;
 
 async function main() {
@@ -99,6 +116,7 @@ async function main() {
 
   // Initialize file logging (always active, independent of stderr level)
   // Skip for "init" command (no config yet), "start" (server inits its own), "serve" (handles its own)
+  // Skip for "agent" (subcommands handle their own, "run" inits logging)
   if (command !== "init" && command !== "start" && command !== "serve" && command !== "connect" && command !== "agent") {
     const cfg = loadConfig();
     initFileLogging(getUserDataDir(cfg), cfg.logging);
@@ -594,6 +612,13 @@ async function cmdServe(args: string[]) {
   console.log(`  Salt:     ${config.bridge.salt ? "configured" : "NOT SET (unsalted hashes — add bridge.salt)"}`);
   console.log(`  Rate limit: ${config.bridge.rateLimit.maxRequests} req/${config.bridge.rateLimit.windowSeconds}s`);
 
+  // Validate env vars for agents with apiKeyEnv
+  for (const agentConfig of config.agents) {
+    if (agentConfig.apiKeyEnv && !process.env[agentConfig.apiKeyEnv]) {
+      console.log(`  ⚠ Warning: ${agentConfig.name}: env var ${agentConfig.apiKeyEnv} is not set`);
+    }
+  }
+
   const server = await startBridgeServer({ store, auth, config });
 
   // Spawn internal agents if --with-agent was specified
@@ -641,7 +666,236 @@ async function cmdServe(args: string[]) {
   process.on("SIGTERM", shutdown);
 }
 
+/**
+ * Agent subcommand group.
+ * Routes to: add, list, update, remove, run
+ * Backward compat: `agorai agent --adapter <name>` → redirects to run.
+ */
 async function cmdAgent(args: string[]) {
+  const subcommand = args[0];
+
+  // Backward compat: `agorai agent --adapter <name>` → run
+  if (subcommand === "--adapter" || subcommand === "-a") {
+    return cmdAgentRun(args);
+  }
+
+  switch (subcommand) {
+    case "add":
+      cmdAgentAdd(args.slice(1));
+      break;
+    case "list":
+    case "ls":
+      cmdAgentList();
+      break;
+    case "update":
+      cmdAgentUpdate(args.slice(1));
+      break;
+    case "remove":
+    case "rm":
+      cmdAgentRemove(args.slice(1));
+      break;
+    case "run":
+      await cmdAgentRun(args.slice(1));
+      break;
+    default:
+      console.error("Usage: agorai agent <add|list|update|remove|run> [args]");
+      console.error("\nSubcommands:");
+      console.error("  add <name> --type <t> [--model <m>] [--endpoint <e>] [--api-key-env <VAR>] [--clearance <level>]");
+      console.error("  list                     List all configured agents");
+      console.error("  update <name>            Update agent config fields");
+      console.error("  remove <name>            Remove an agent");
+      console.error("  run --adapter <name>     Run an internal agent");
+      process.exit(1);
+  }
+}
+
+const VALID_AGENT_TYPES = ["claude-desktop", "claude-code", "openai-compat", "ollama", "custom"] as const;
+const VALID_CLEARANCE_LEVELS = ["public", "team", "confidential", "restricted"] as const;
+
+function cmdAgentAdd(args: string[]) {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      type: { type: "string" },
+      model: { type: "string" },
+      endpoint: { type: "string" },
+      "api-key-env": { type: "string" },
+      clearance: { type: "string" },
+    },
+    allowPositionals: true,
+  });
+
+  const name = positionals[0];
+  if (!name) {
+    console.error("Usage: agorai agent add <name> --type <type> [--model <m>] [--endpoint <e>] [--api-key-env <VAR>] [--clearance <level>]");
+    process.exit(1);
+  }
+
+  if (!values.type) {
+    console.error("Error: --type is required");
+    console.error(`Valid types: ${VALID_AGENT_TYPES.join(", ")}`);
+    process.exit(1);
+  }
+
+  const agentType = values.type as AgentType;
+  if (!VALID_AGENT_TYPES.includes(agentType as typeof VALID_AGENT_TYPES[number])) {
+    console.error(`Error: invalid type "${values.type}"`);
+    console.error(`Valid types: ${VALID_AGENT_TYPES.join(", ")}`);
+    process.exit(1);
+  }
+
+  const clearance = values.clearance as ClearanceLevel | undefined;
+  if (clearance && !VALID_CLEARANCE_LEVELS.includes(clearance as typeof VALID_CLEARANCE_LEVELS[number])) {
+    console.error(`Error: invalid clearance "${values.clearance}"`);
+    console.error(`Valid levels: ${VALID_CLEARANCE_LEVELS.join(", ")}`);
+    process.exit(1);
+  }
+
+  try {
+    const { passKey } = addAgent({
+      name,
+      type: agentType,
+      model: values.model,
+      endpoint: values.endpoint,
+      apiKeyEnv: values["api-key-env"],
+      clearance,
+    });
+
+    const apiKeyEnv = values["api-key-env"];
+    const envStatus = apiKeyEnv
+      ? process.env[apiKeyEnv]
+        ? `$${apiKeyEnv} ✓`
+        : `$${apiKeyEnv} ✗ (not set)`
+      : "—";
+
+    console.log(`✅ Agent "${name}" added`);
+    console.log(`   Type:       ${agentType}`);
+    if (values.model) console.log(`   Model:      ${values.model}`);
+    if (values.endpoint) console.log(`   Endpoint:   ${values.endpoint}`);
+    console.log(`   API key:    ${envStatus}`);
+    console.log(`   Clearance:  ${clearance ?? "team"}`);
+    console.log(`   Pass-key:   ${passKey} (save this — needed to connect externally)`);
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
+function cmdAgentList() {
+  try {
+    const agents = listAgents();
+
+    if (agents.length === 0) {
+      console.log("No agents configured. Use 'agorai agent add' to add one.");
+      return;
+    }
+
+    // Column headers
+    const nameW = Math.max(4, ...agents.map((a) => a.name.length)) + 2;
+    const typeW = Math.max(4, ...agents.map((a) => a.type.length)) + 2;
+    const modelW = Math.max(5, ...agents.map((a) => (a.model ?? "—").length)) + 2;
+    const clearW = 14;
+    const apiKeyW = 20;
+
+    const pad = (s: string, w: number) => s.padEnd(w);
+
+    console.log("");
+    console.log(
+      `  ${pad("Name", nameW)}${pad("Type", typeW)}${pad("Model", modelW)}${pad("Clearance", clearW)}API Key`
+    );
+    console.log(
+      `  ${pad("────", nameW)}${pad("────", typeW)}${pad("─────", modelW)}${pad("─────────", clearW)}───────`
+    );
+
+    for (const a of agents) {
+      const envStr = a.apiKeyEnv
+        ? a.apiKeySet
+          ? `$${a.apiKeyEnv} ✓`
+          : `$${a.apiKeyEnv} ✗`
+        : "—";
+      console.log(
+        `  ${pad(a.name, nameW)}${pad(a.type, typeW)}${pad(a.model ?? "—", modelW)}${pad(a.clearance, clearW)}${envStr}`
+      );
+    }
+
+    console.log(`\n  ${agents.length} agent${agents.length !== 1 ? "s" : ""} configured`);
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
+function cmdAgentUpdate(args: string[]) {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      model: { type: "string" },
+      endpoint: { type: "string" },
+      "api-key-env": { type: "string" },
+      clearance: { type: "string" },
+      enabled: { type: "string" },
+    },
+    allowPositionals: true,
+  });
+
+  const name = positionals[0];
+  if (!name) {
+    console.error("Usage: agorai agent update <name> [--model <m>] [--endpoint <e>] [--api-key-env <VAR>] [--clearance <level>] [--enabled true|false]");
+    process.exit(1);
+  }
+
+  const clearance = values.clearance as ClearanceLevel | undefined;
+  if (clearance && !VALID_CLEARANCE_LEVELS.includes(clearance as typeof VALID_CLEARANCE_LEVELS[number])) {
+    console.error(`Error: invalid clearance "${values.clearance}"`);
+    console.error(`Valid levels: ${VALID_CLEARANCE_LEVELS.join(", ")}`);
+    process.exit(1);
+  }
+
+  let enabled: boolean | undefined;
+  if (values.enabled !== undefined) {
+    if (values.enabled !== "true" && values.enabled !== "false") {
+      console.error('Error: --enabled must be "true" or "false"');
+      process.exit(1);
+    }
+    enabled = values.enabled === "true";
+  }
+
+  try {
+    const { changes } = updateAgent(name, {
+      model: values.model,
+      endpoint: values.endpoint,
+      apiKeyEnv: values["api-key-env"],
+      clearance,
+      enabled,
+    });
+
+    console.log(`✅ Agent "${name}" updated`);
+    for (const change of changes) {
+      console.log(`   ${change}`);
+    }
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
+function cmdAgentRemove(args: string[]) {
+  const name = args[0];
+  if (!name) {
+    console.error("Usage: agorai agent remove <name>");
+    process.exit(1);
+  }
+
+  try {
+    removeAgent(name);
+    console.log(`✅ Agent "${name}" removed`);
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
+async function cmdAgentRun(args: string[]) {
   const { values } = parseArgs({
     args,
     options: {
@@ -654,7 +908,7 @@ async function cmdAgent(args: string[]) {
 
   if (!values.adapter) {
     console.error("Error: --adapter is required\n");
-    console.log("Usage: agorai agent --adapter <name> [--mode passive|active] [--poll 3000] [--system \"prompt\"]");
+    console.log("Usage: agorai agent run --adapter <name> [--mode passive|active] [--poll 3000] [--system \"prompt\"]");
     process.exit(1);
   }
 
