@@ -42,6 +42,7 @@ Commands:
   init                     Create agorai.config.json
   start [--http]           Start MCP server (stdio or HTTP)
   serve                    Start bridge HTTP server (Streamable HTTP)
+  agent                    Run an internal agent (uses store directly, no HTTP)
   connect <url> --key <k>  Connect Claude Desktop to a remote bridge (stdio→HTTP proxy)
 
 Options:
@@ -53,6 +54,11 @@ Options:
   --max-tokens <n>         Token budget for this debate (overrides config)
   --continue <debate_id>   Resume an existing debate (add more rounds)
   --force                  Skip pre-estimation budget warning
+  --with-agent <name>      (serve) Spawn an internal agent in the same process (repeatable)
+  --adapter <name>         (agent) Agent adapter name from config
+  --mode <passive|active>  (agent) Response mode (default: passive)
+  --poll <ms>              (agent) Poll interval in milliseconds (default: 3000)
+  --system <prompt>        (agent) Custom system prompt
   --verbose                Show info-level logs on stderr
   --debug                  Show all logs (debug level) on stderr
   --help                   Show this help
@@ -85,7 +91,7 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai v0.2.0");
+    console.log("agorai v0.2.2");
     process.exit(0);
   }
 
@@ -93,7 +99,7 @@ async function main() {
 
   // Initialize file logging (always active, independent of stderr level)
   // Skip for "init" command (no config yet), "start" (server inits its own), "serve" (handles its own)
-  if (command !== "init" && command !== "start" && command !== "serve" && command !== "connect") {
+  if (command !== "init" && command !== "start" && command !== "serve" && command !== "connect" && command !== "agent") {
     const cfg = loadConfig();
     initFileLogging(getUserDataDir(cfg), cfg.logging);
   }
@@ -121,7 +127,10 @@ async function main() {
       cmdStart(args.slice(1));
       break;
     case "serve":
-      await cmdServe();
+      await cmdServe(args.slice(1));
+      break;
+    case "agent":
+      await cmdAgent(args.slice(1));
       break;
     case "connect":
       await cmdConnect(args.slice(1));
@@ -542,7 +551,16 @@ function cmdStart(args: string[]) {
   });
 }
 
-async function cmdServe() {
+async function cmdServe(args: string[]) {
+  // Parse --with-agent flags (can be repeated)
+  const withAgents: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--with-agent" && args[i + 1]) {
+      withAgents.push(args[i + 1]);
+      i++; // skip value
+    }
+  }
+
   const config = loadConfig();
   initFileLogging(getUserDataDir(config), config.logging);
 
@@ -578,9 +596,42 @@ async function cmdServe() {
 
   const server = await startBridgeServer({ store, auth, config });
 
+  // Spawn internal agents if --with-agent was specified
+  const ac = new AbortController();
+  const agentPromises: Promise<void>[] = [];
+
+  if (withAgents.length > 0) {
+    const { runInternalAgent } = await import("./agent/internal-agent.js");
+
+    for (const agentName of withAgents) {
+      const agentConfig = config.agents.find((a) => a.name === agentName);
+      if (!agentConfig) {
+        console.error(`Unknown agent: "${agentName}". Available: ${config.agents.map((a) => a.name).join(", ")}`);
+        process.exit(1);
+      }
+
+      const adapter = createAdapter(agentConfig);
+      console.log(`  Internal agent: ${agentName} (${agentConfig.type ?? "auto"})`);
+
+      agentPromises.push(
+        runInternalAgent({
+          store,
+          adapter,
+          agentId: `internal:${agentName}`,
+          agentName,
+          mode: "passive",
+          signal: ac.signal,
+        }),
+      );
+    }
+  }
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\nShutting down...");
+    ac.abort();
+    // Wait a bit for agents to stop gracefully
+    await Promise.allSettled(agentPromises);
     await server.close();
     await store.close();
     process.exit(0);
@@ -588,6 +639,81 @@ async function cmdServe() {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+}
+
+async function cmdAgent(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      adapter: { type: "string" },
+      mode: { type: "string" },
+      poll: { type: "string" },
+      system: { type: "string" },
+    },
+  });
+
+  if (!values.adapter) {
+    console.error("Error: --adapter is required\n");
+    console.log("Usage: agorai agent --adapter <name> [--mode passive|active] [--poll 3000] [--system \"prompt\"]");
+    process.exit(1);
+  }
+
+  const mode = (values.mode as "passive" | "active") ?? "passive";
+  if (mode !== "passive" && mode !== "active") {
+    console.error(`Error: --mode must be "passive" or "active" (got "${values.mode}")`);
+    process.exit(1);
+  }
+
+  const pollIntervalMs = values.poll ? parseInt(values.poll, 10) : 3000;
+  if (isNaN(pollIntervalMs) || pollIntervalMs < 100) {
+    console.error(`Error: --poll must be a number >= 100 (got "${values.poll}")`);
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+  initFileLogging(getUserDataDir(config), config.logging);
+
+  const agentConfig = config.agents.find((a) => a.name === values.adapter);
+  if (!agentConfig) {
+    console.error(`Unknown agent: "${values.adapter}". Available: ${config.agents.map((a) => a.name).join(", ")}`);
+    process.exit(1);
+  }
+
+  const { SqliteStore } = await import("./store/sqlite.js");
+  const { runInternalAgent } = await import("./agent/internal-agent.js");
+
+  const dbPath = config.database.path;
+  const store = new SqliteStore(dbPath);
+  await store.initialize();
+
+  const adapter = createAdapter(agentConfig);
+
+  console.log(`Starting internal agent "${values.adapter}"...`);
+  console.log(`  Mode: ${mode}`);
+  console.log(`  Poll: ${pollIntervalMs}ms`);
+  console.log(`  Database: ${dbPath}`);
+
+  const ac = new AbortController();
+
+  const shutdown = async () => {
+    console.log("\nShutting down agent...");
+    ac.abort();
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  await runInternalAgent({
+    store,
+    adapter,
+    agentId: `internal:${values.adapter}`,
+    agentName: values.adapter,
+    mode,
+    pollIntervalMs,
+    systemPrompt: values.system,
+    signal: ac.signal,
+  });
+
+  await store.close();
 }
 
 async function cmdConnect(args: string[]) {
@@ -618,28 +744,108 @@ async function cmdConnect(args: string[]) {
   }
 
   let sessionId: string | undefined;
+  const FETCH_TIMEOUT_MS = 30_000;
 
   // stdio→HTTP proxy: read JSON-RPC from stdin, POST to bridge, write responses to stdout
   const rl = createInterface({ input: process.stdin, terminal: false });
 
+  const sendRequest = (body: string, sid?: string) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream",
+      "Authorization": `Bearer ${apiKey}`,
+    };
+    const s = sid !== undefined ? sid : sessionId;
+    if (s) {
+      headers["mcp-session-id"] = s;
+    }
+    return fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  };
+
+  const extractRequestId = (line: string): string | number | undefined => {
+    try { return JSON.parse(line).id ?? undefined; } catch { return undefined; }
+  };
+
+  const isInitializeRequest = (line: string): boolean => {
+    try { return JSON.parse(line).method === "initialize"; } catch { return false; }
+  };
+
+  const writeJsonRpcError = (id: string | number | undefined, code: number, message: string) => {
+    if (id === undefined) return;
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
+  };
+
+  /**
+   * Perform a transparent MCP initialize handshake to establish a new session.
+   */
+  const reinitializeSession = async (): Promise<string | undefined> => {
+    const initBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "__proxy_reinit__",
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "agorai-connect-proxy", version: "1.0.0" },
+      },
+    });
+
+    const initResp = await sendRequest(initBody, "");  // empty string = no session header
+    const newSid = initResp.headers.get("mcp-session-id") ?? undefined;
+    await initResp.text(); // drain
+
+    if (!initResp.ok || !newSid) {
+      console.error(`[agorai connect] Re-initialize failed: HTTP ${initResp.status}`);
+      return undefined;
+    }
+
+    // Complete handshake with notifications/initialized
+    const notifBody = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    const notifResp = await sendRequest(notifBody, newSid);
+    await notifResp.text(); // drain
+
+    console.error(`[agorai connect] Re-initialized with new session: ${newSid}`);
+    return newSid;
+  };
+
   for await (const line of rl) {
     if (!line.trim()) continue;
 
+    const requestId = extractRequestId(line);
+    const isInit = isInitializeRequest(line);
+
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "Authorization": `Bearer ${apiKey}`,
-      };
-      if (sessionId) {
-        headers["mcp-session-id"] = sessionId;
+      let resp: Response;
+
+      if (isInit) {
+        // Initialize requests always go without sessionId — they create a new session.
+        console.error("[agorai connect] Forwarding initialize request (no sessionId)");
+        sessionId = undefined;
+        resp = await sendRequest(line, ""); // no session header
+      } else {
+        resp = await sendRequest(line);
       }
 
-      const resp = await fetch(url, {
-        method: "POST",
-        headers,
-        body: line,
-      });
+      // Session recovery: bridge restarted → old sessionId is invalid (404).
+      // The MCP SDK requires an "initialize" handshake before any other request,
+      // so we transparently re-initialize to get a new session, then retry.
+      if (resp.status === 404 && sessionId && !isInit) {
+        await resp.text(); // drain body
+        console.error("[agorai connect] Session expired (404) — re-initializing");
+
+        const newSid = await reinitializeSession();
+        if (newSid) {
+          sessionId = newSid;
+          resp = await sendRequest(line);
+        } else {
+          sessionId = undefined;
+          writeJsonRpcError(requestId, -32000, "Bridge session expired and re-initialization failed");
+          continue;
+        }
+      }
 
       // Capture session ID from response
       const sid = resp.headers.get("mcp-session-id");
@@ -649,7 +855,9 @@ async function cmdConnect(args: string[]) {
       if (resp.status === 202) continue;
 
       if (!resp.ok) {
-        console.error(`[agorai connect] HTTP ${resp.status}: ${await resp.text()}`);
+        const body = await resp.text();
+        console.error(`[agorai connect] HTTP ${resp.status}: ${body}`);
+        writeJsonRpcError(requestId, -32000, `Bridge error: HTTP ${resp.status}`);
         continue;
       }
 
@@ -668,7 +876,9 @@ async function cmdConnect(args: string[]) {
         }
       }
     } catch (err) {
-      console.error(`[agorai connect] ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[agorai connect] ${msg}`);
+      writeJsonRpcError(requestId, -32000, `Proxy error: ${msg}`);
     }
   }
 

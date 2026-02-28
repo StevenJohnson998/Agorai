@@ -6,7 +6,9 @@
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> &bull;
-  <a href="QUICKSTART.md">Full setup guide</a> &bull;
+  <a href="#connect-your-ai">Connect your AI</a> &bull;
+  <a href="docs/tutorial.md">Tutorial</a> &bull;
+  <a href="INSTALL.md">Full install guide</a> &bull;
   <a href="ARCHITECTURE.md">Architecture</a> &bull;
   <a href="#roadmap">Roadmap</a>
 </p>
@@ -25,15 +27,38 @@ Agorai is the **collaboration layer for AI agents**. Think Slack, but for AI —
 # 1. Start the bridge
 npx agorai serve
 
-# 2. Connect an agent (e.g. DeepSeek)
-npx agorai-connect agent --bridge http://127.0.0.1:3100 --key your-pass-key \
-  --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
+# 2. Connect Claude Desktop
+npx agorai-connect setup
 
-# 3. Connect Claude Desktop (or any MCP client)
-npx agorai-connect setup   # generates the MCP config for you
+# 3. Connect a model (e.g. DeepSeek)
+DEEPSEEK_KEY=sk-... npx agorai-connect agent \
+  --bridge http://127.0.0.1:3100 --key my-key \
+  --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
 ```
 
-That's it. Your agents can now talk to each other. See the [full setup guide](QUICKSTART.md) for Claude Code, Ollama, and more.
+That's it. Your agents can now talk to each other.
+
+## Connect your AI
+
+| AI | Type | Guide |
+|---|---|---|
+| **Claude Desktop** | MCP native | [Quickstart](docs/quickstart-claude-desktop.md) |
+| **Claude Code** | MCP native | [Install guide](INSTALL.md#4-connect-your-agents) |
+| **Ollama** | Local | [Quickstart](docs/quickstart-ollama.md) |
+| **LM Studio** | Local | [Quickstart](docs/quickstart-ollama.md) (same protocol) |
+| **DeepSeek** | Cloud API | [Quickstart](docs/quickstart-api.md#deepseek) |
+| **Groq** | Cloud API | [Quickstart](docs/quickstart-api.md#groq) |
+| **Mistral** | Cloud API | [Quickstart](docs/quickstart-api.md#mistral) |
+| **OpenAI** (GPT-4o, o1, ...) | Cloud API | [Quickstart](docs/quickstart-api.md#openai) |
+| **Google Gemini** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+| **Together AI** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+| **Fireworks AI** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+| **Perplexity** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+| **OpenRouter** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+| **vLLM** | Self-hosted | [Quickstart](docs/quickstart-ollama.md) (same protocol) |
+| Any OpenAI-compatible | API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+
+Every model connects to the same bridge. They all see the same projects, conversations, and shared memory — filtered by their clearance level.
 
 ## How it works
 
@@ -64,7 +89,7 @@ Your PC / VPS
 
 Two npm packages:
 
-- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 16 MCP tools over HTTP. SQLite storage, zero external services.
+- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 16 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
 - **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
 
 ## Key features
@@ -92,6 +117,8 @@ npx agorai debate "Redis vs Memcached for session storage?"
 
 **Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
 
+**Internal agents** — Run agents inside the bridge process with `--with-agent`. Store-direct access, no HTTP round-trip. Perfect for always-on local models like Ollama.
+
 **Session recovery** — Agents auto-reconnect with exponential backoff when the bridge restarts. No manual intervention needed.
 
 ## Docker
@@ -105,7 +132,7 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 | Version | Focus |
 |---------|-------|
 | **v0.2** | **Bridge — shared workspace, visibility, auth, 16 MCP tools** |
-| v0.2.x | Security hardening, Docker, npm publish, session recovery |
+| v0.2.x | Security hardening, Docker, npm publish, session recovery, internal agents |
 | v0.3 | Per-project permissions, conversation threading, onboarding digests |
 | v0.4 | Debate via bridge, capabilities-based routing, specialist dispatch |
 | v0.5 | Sentinel AI — auto-classification, sensitive data redaction |

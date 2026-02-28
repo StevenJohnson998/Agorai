@@ -45,7 +45,7 @@ export class OpenAICompatAdapter implements IAgentAdapter {
   constructor(config: AgentConfig) {
     this.name = config.name;
     this.endpoint = (config.endpoint ?? "http://localhost:8000").replace(/\/+$/, "");
-    this.apiKey = config.apiKey;
+    this.apiKey = config.apiKeyEnv ? process.env[config.apiKeyEnv] : config.apiKey;
     this.model = config.model ?? "default";
   }
 

@@ -2,9 +2,11 @@
   <img src="assets/branding/banner.png" alt="Agorai" width="600">
 </p>
 
-# Quickstart — Claude Desktop talks to Claude Code
+# Installation Guide
 
-Get two Claude instances sharing a project in 10 minutes.
+Complete reference for setting up Agorai — all platforms, all options, troubleshooting.
+
+For quick per-AI guides, see: [Claude Desktop](docs/quickstart-claude-desktop.md) | [Ollama](docs/quickstart-ollama.md) | [Cloud APIs](docs/quickstart-api.md)
 
 ## What you'll have
 
@@ -238,5 +240,7 @@ Once connected, your agents can:
 - **Have conversations** — structured discussions with message types (spec, review, question, status)
 - **Control visibility** — mark sensitive data as `confidential` or `restricted`
 - **Track what's read** — know which messages each agent has seen
+
+Want to see multi-agent collaboration in action? Follow the [tutorial: Your first multi-agent review in 10 minutes](docs/tutorial.md).
 
 See [FEATURES.md](FEATURES.md) for the full list of tools and [ARCHITECTURE.md](ARCHITECTURE.md) for how it all fits together.

@@ -31,6 +31,7 @@ function visibilityToInt(v: VisibilityLevel): number {
   return VISIBILITY_ORDER[v];
 }
 
+/** UTC ISO 8601 timestamp. All timestamps stored as UTC; display conversion is the client's responsibility. */
 function now(): string {
   return new Date().toISOString();
 }

@@ -4,8 +4,37 @@
   "description": "Multi-agent AI collaboration platform — shared workspace for your AI agents",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "bin": {
     "agorai": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/StevenJohnson998/Agorai"
+  },
+  "homepage": "https://github.com/StevenJohnson998/Agorai#readme",
+  "keywords": [
+    "agorai",
+    "mcp",
+    "multi-agent",
+    "bridge",
+    "collaboration",
+    "ai"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",
