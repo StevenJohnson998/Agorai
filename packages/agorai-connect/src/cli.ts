@@ -5,8 +5,10 @@
  *
  * Commands:
  *   agorai-connect proxy <bridge-url> <pass-key>
- *   agorai-connect setup
+ *   agorai-connect setup [--bridge <url>] [--key <pass-key>] [--agent <name>] [--config-path <path>]
+ *   agorai-connect uninstall [--config-path <path>]
  *   agorai-connect agent --bridge <url> --key <key> --model <model> --endpoint <endpoint> [--api-key <key>] [--api-key-env <VAR>] [--mode passive|active]
+ *   agorai-connect doctor --bridge <url> --key <key> [--model <model>] [--endpoint <url>]
  */
 
 import { parseArgs } from "node:util";
@@ -16,9 +18,19 @@ const USAGE = `Usage: agorai-connect <command> [options]
 
 Commands:
   proxy <bridge-url> <pass-key>     stdio→HTTP proxy for MCP clients (e.g. Claude Desktop)
-  setup                              Interactive setup for Claude Desktop
+  setup [options]                    Configure Claude Desktop to connect to an Agorai bridge
+  uninstall [options]                Remove agorai from Claude Desktop config
   agent [options]                    Run an AI model as a bridge agent
   doctor [options]                   Check bridge and model connectivity
+
+Setup options:
+  --bridge <url>         Bridge URL (default: prompt or http://localhost:3100)
+  --key <pass-key>       Pass-key for authentication (default: prompt)
+  --agent <name>         Agent name (default: prompt or claude-desktop)
+  --config-path <path>   Claude Desktop config path (default: auto-detect)
+
+Uninstall options:
+  --config-path <path>   Claude Desktop config path (default: auto-detect)
 
 Agent options:
   --bridge <url>         Bridge URL (required)
@@ -48,6 +60,8 @@ Global options:
 Examples:
   agorai-connect proxy http://my-vps:3100 my-pass-key
   agorai-connect setup
+  agorai-connect setup --bridge http://my-vps:3100 --key my-pass-key --agent my-agent
+  agorai-connect uninstall
   agorai-connect agent --bridge http://my-vps:3100 --key my-pass-key --model mistral:7b --endpoint http://localhost:11434
   agorai-connect doctor --bridge http://my-vps:3100 --key my-pass-key
   DEEPSEEK_KEY=sk-... agorai-connect agent --bridge http://my-vps:3100 --key pk --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
@@ -81,10 +95,17 @@ async function main() {
 
   switch (command) {
     case "proxy":
+      // Default to info-level logging for proxy (session recovery, startup, etc.)
+      if (!explicitLogLevel) {
+        setLogLevel("info");
+      }
       await cmdProxy(args.slice(1));
       break;
     case "setup":
-      await cmdSetup();
+      await cmdSetup(args.slice(1));
+      break;
+    case "uninstall":
+      await cmdUninstall(args.slice(1));
       break;
     case "agent":
       // Default to info-level logging for agent (unless user specified --verbose/--debug)
@@ -120,9 +141,38 @@ async function cmdProxy(args: string[]) {
   await runProxy({ bridgeUrl, passKey });
 }
 
-async function cmdSetup() {
+async function cmdSetup(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      bridge: { type: "string" },
+      key: { type: "string" },
+      agent: { type: "string" },
+      "config-path": { type: "string" },
+    },
+  });
+
   const { runSetup } = await import("./setup.js");
-  await runSetup();
+  await runSetup({
+    bridge: values.bridge,
+    key: values.key,
+    agent: values.agent,
+    configPath: values["config-path"],
+  });
+}
+
+async function cmdUninstall(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      "config-path": { type: "string" },
+    },
+  });
+
+  const { runUninstall } = await import("./uninstall.js");
+  await runUninstall({
+    configPath: values["config-path"],
+  });
 }
 
 async function cmdAgent(args: string[]) {
