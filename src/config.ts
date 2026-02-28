@@ -125,6 +125,17 @@ export const ConfigSchema = z.object({
     .object({
       port: z.number().int().min(1).max(65535).default(3100),
       host: z.string().default("127.0.0.1"),
+      /** Salt for HMAC-SHA-256 API key hashing. Set to a random string for security. */
+      salt: z.string().optional().describe("Salt for API key hashing. Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""),
+      /** Per-agent rate limiting on /mcp endpoint. */
+      rateLimit: z.object({
+        /** Max requests per window per agent. Default 120. */
+        maxRequests: z.number().int().min(1).default(120),
+        /** Window size in seconds. Default 60. */
+        windowSeconds: z.number().int().min(1).default(60),
+      }).default({}),
+      /** Max HTTP request body size in bytes. Default 512KB. */
+      maxBodySize: z.number().int().min(1024).default(512 * 1024),
       apiKeys: z.array(z.object({
         key: z.string(),
         agent: z.string(),

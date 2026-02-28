@@ -1,5 +1,5 @@
 /**
- * Auth layer tests — API key validation, auto-registration, clearance levels.
+ * Auth layer tests — API key validation, auto-registration, clearance levels, salted hashing.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -42,7 +42,7 @@ const testKeys: ApiKeyConfig[] = [
 ];
 
 describe("hashApiKey", () => {
-  it("produces consistent SHA-256 hashes", () => {
+  it("produces consistent SHA-256 hashes (no salt)", () => {
     const h1 = hashApiKey("test-key");
     const h2 = hashApiKey("test-key");
     expect(h1).toBe(h2);
@@ -52,10 +52,29 @@ describe("hashApiKey", () => {
   it("produces different hashes for different keys", () => {
     expect(hashApiKey("key-a")).not.toBe(hashApiKey("key-b"));
   });
+
+  it("produces different hashes with vs without salt", () => {
+    const unsalted = hashApiKey("test-key");
+    const salted = hashApiKey("test-key", "my-salt");
+    expect(unsalted).not.toBe(salted);
+    expect(salted).toHaveLength(64);
+  });
+
+  it("produces consistent HMAC hashes with same salt", () => {
+    const h1 = hashApiKey("test-key", "salt-abc");
+    const h2 = hashApiKey("test-key", "salt-abc");
+    expect(h1).toBe(h2);
+  });
+
+  it("produces different hashes with different salts", () => {
+    const h1 = hashApiKey("test-key", "salt-1");
+    const h2 = hashApiKey("test-key", "salt-2");
+    expect(h1).not.toBe(h2);
+  });
 });
 
 describe("ApiKeyAuthProvider", () => {
-  it("authenticates with valid key", async () => {
+  it("authenticates with valid key (no salt)", async () => {
     const auth = new ApiKeyAuthProvider(testKeys, store);
     const result = await auth.authenticate("ak_test_desktop_123");
 
@@ -63,6 +82,14 @@ describe("ApiKeyAuthProvider", () => {
     expect(result.agentName).toBe("claude-desktop");
     expect(result.clearanceLevel).toBe("team");
     expect(result.agentId).toBeTruthy();
+  });
+
+  it("authenticates with valid key (salted)", async () => {
+    const auth = new ApiKeyAuthProvider(testKeys, store, "test-salt-42");
+    const result = await auth.authenticate("ak_test_desktop_123");
+
+    expect(result.authenticated).toBe(true);
+    expect(result.agentName).toBe("claude-desktop");
   });
 
   it("rejects invalid key", async () => {
@@ -94,6 +121,16 @@ describe("ApiKeyAuthProvider", () => {
     expect(agent!.type).toBe("claude-code");
     expect(agent!.clearanceLevel).toBe("confidential");
     expect(agent!.capabilities).toEqual(["code-execution"]);
+  });
+
+  it("stores salted hash in DB when salt is set", async () => {
+    const salt = "unique-salt-123";
+    const auth = new ApiKeyAuthProvider(testKeys, store, salt);
+    const result = await auth.authenticate("ak_test_desktop_123");
+
+    const agent = await store.getAgent(result.agentId!);
+    const expectedHash = hashApiKey("ak_test_desktop_123", salt);
+    expect(agent!.apiKeyHash).toBe(expectedHash);
   });
 
   it("updates lastSeenAt on each auth", async () => {

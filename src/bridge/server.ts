@@ -42,6 +42,51 @@ const sessionAuth = new Map<string, AuthResult>();
 /** Active transports keyed by sessionId. */
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
+// --- Rate limiter (sliding window per agent) ---
+
+interface RateBucket {
+  tokens: number;
+  lastRefill: number;
+}
+
+class RateLimiter {
+  private buckets = new Map<string, RateBucket>();
+  private maxRequests: number;
+  private windowMs: number;
+
+  constructor(maxRequests: number, windowSeconds: number) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowSeconds * 1000;
+  }
+
+  /** Returns true if the request is allowed, false if rate-limited. */
+  allow(agentId: string): boolean {
+    const now = Date.now();
+    let bucket = this.buckets.get(agentId);
+
+    if (!bucket) {
+      bucket = { tokens: this.maxRequests - 1, lastRefill: now };
+      this.buckets.set(agentId, bucket);
+      return true;
+    }
+
+    // Refill tokens based on elapsed time
+    const elapsed = now - bucket.lastRefill;
+    const refill = Math.floor((elapsed / this.windowMs) * this.maxRequests);
+    if (refill > 0) {
+      bucket.tokens = Math.min(this.maxRequests, bucket.tokens + refill);
+      bucket.lastRefill = now;
+    }
+
+    if (bucket.tokens > 0) {
+      bucket.tokens--;
+      return true;
+    }
+
+    return false;
+  }
+}
+
 export interface BridgeServerOptions {
   store: IStore;
   auth: IAuthProvider;
@@ -335,6 +380,12 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   const { store, auth, config } = opts;
   const bridgeConfig = config.bridge!;
 
+  const rateLimiter = new RateLimiter(
+    bridgeConfig.rateLimit.maxRequests,
+    bridgeConfig.rateLimit.windowSeconds,
+  );
+  const maxBodySize = bridgeConfig.maxBodySize;
+
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -368,6 +419,24 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         res.writeHead(403, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: authResult.error ?? "Authentication failed" }));
         return;
+      }
+
+      // Rate limiting — per agent
+      if (!rateLimiter.allow(authResult.agentId!)) {
+        log.warn(`rate limited: agent ${authResult.agentName} (${authResult.agentId})`);
+        res.writeHead(429, { "Content-Type": "application/json", "Retry-After": String(bridgeConfig.rateLimit.windowSeconds) });
+        res.end(JSON.stringify({ error: "Too many requests" }));
+        return;
+      }
+
+      // Body size check (for POST/PUT)
+      if (req.method === "POST" || req.method === "PUT") {
+        const contentLength = parseInt(req.headers["content-length"] ?? "0", 10);
+        if (contentLength > maxBodySize) {
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `Request body too large (max ${maxBodySize} bytes)` }));
+          return;
+        }
       }
 
       // Handle DELETE for session termination

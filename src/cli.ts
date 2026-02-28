@@ -566,13 +566,15 @@ async function cmdServe() {
   const store = new SqliteStore(dbPath);
   await store.initialize();
 
-  const auth = new ApiKeyAuthProvider(config.bridge.apiKeys, store);
+  const auth = new ApiKeyAuthProvider(config.bridge.apiKeys, store, config.bridge.salt);
 
   console.log(`Starting Agorai bridge server...`);
   console.log(`  Endpoint: http://${config.bridge.host}:${config.bridge.port}/mcp`);
   console.log(`  Health:   http://${config.bridge.host}:${config.bridge.port}/health`);
   console.log(`  Agents:   ${config.bridge.apiKeys.map((k) => k.agent).join(", ")}`);
   console.log(`  Database: ${dbPath}`);
+  console.log(`  Salt:     ${config.bridge.salt ? "configured" : "NOT SET (unsalted hashes — add bridge.salt)"}`);
+  console.log(`  Rate limit: ${config.bridge.rateLimit.maxRequests} req/${config.bridge.rateLimit.windowSeconds}s`);
 
   const server = await startBridgeServer({ store, auth, config });
 
