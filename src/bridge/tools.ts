@@ -1,7 +1,7 @@
 /**
  * Bridge MCP tool schemas (Zod).
  *
- * 15 tools in 5 groups: agents, projects, memory, conversations, messages.
+ * 16 tools in 5 groups: agents, projects, memory, conversations, messages.
  * All tool handlers are registered in bridge/server.ts.
  */
 
@@ -76,6 +76,10 @@ export const SubscribeSchema = z.object({
 });
 
 export const UnsubscribeSchema = z.object({
+  conversation_id: z.string().describe("Conversation ID"),
+});
+
+export const ListSubscribersSchema = z.object({
   conversation_id: z.string().describe("Conversation ID"),
 });
 

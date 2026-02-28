@@ -6,7 +6,9 @@
 |---------|-------------|--------|
 | HTTP bridge server | Streamable HTTP transport on configurable host:port | Done |
 | Connect proxy | `connect.mjs` — zero-dep stdio→HTTP bridge for Claude Desktop | Done |
-| **agorai-connect** | npm package: proxy + setup + agent runner for "dumb" models (Ollama, Groq, etc.) | Done |
+| **agorai-connect** | npm package: proxy + setup + agent runner for OpenAI-compat models | Done |
+| Agent modes | Active (respond to all) or passive (respond on @mention only) | Done |
+| @mention filtering | Passive agents detect `@agent-name` in messages, ignore the rest | Done |
 | API key auth | SHA-256 hashed keys, auto-registration, per-agent clearance | Done |
 | Permissions stub | AllowAllPermissions (interface ready for v0.3 RBAC) | Done |
 | SQLite store | 7 tables, WAL mode, foreign keys, indexed | Done |
@@ -91,7 +93,7 @@
 | Debate protocol | Iterative synthesis with 30% dissent threshold | Done |
 | Quorum protocol | Confidence-weighted with persona bonus | Planned |
 
-### Bridge MCP Tools (15)
+### Bridge MCP Tools (16)
 
 | Tool | Description | Status |
 |------|-------------|--------|
@@ -106,6 +108,7 @@
 | `list_conversations` | List conversations | Done |
 | `subscribe` | Join a conversation | Done |
 | `unsubscribe` | Leave a conversation | Done |
+| `list_subscribers` | List agents in a conversation (name, type, online status) | Done |
 | `send_message` | Send a message | Done |
 | `get_messages` | Get filtered messages | Done |
 | `get_status` | Status summary | Done |
@@ -128,9 +131,10 @@
 | Version | Focus |
 |---------|-------|
 | v0.1 | Foundation — debate engine, CLI, MCP stdio, 3 adapters, consensus |
-| **v0.2** | **Bridge — shared workspace, projects, conversations, memory, visibility, auth, 15 tools** |
+| **v0.2** | **Bridge — shared workspace, projects, conversations, memory, visibility, auth, 16 tools** |
+| v0.2.x | Reliability — session recovery, heartbeat/keepalive, agent logging, API key security |
 | v0.3 | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary), OpenAI-compat adapter, onboarding digests |
-| v0.4 | Debate via bridge — consensus by messages, optional modules: smart routing, passive agents, capability catalog |
+| v0.4 | Debate via bridge — consensus by messages, optional modules: smart routing, bridge-level passive agents (server-side routing + @mention), capability catalog |
 | v0.5 | Sentinel AI + Classification — auto-tagger, redaction, security alerts |
-| v0.6 | Distribution — npm publish, web dashboard (admin), GUI (user-facing), A2A protocol |
+| v0.6 | Distribution — npm publish, web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol |
 | v0.7+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

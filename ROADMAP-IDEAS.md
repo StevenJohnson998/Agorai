@@ -4,6 +4,41 @@ Ideas and design notes for future versions. Not commitments — just thinking ah
 
 ---
 
+## v0.2.x — Connection Reliability & Agent Security
+
+Lessons from running 5 agents simultaneously (Claude Code, Claude Desktop, DeepSeek, Gemini, Ollama). These are patch-level priorities before v0.3.
+
+### Session recovery
+Agents lose their MCP session when the bridge restarts. Currently they loop on "Session not found" errors forever. Fix: detect stale session errors and automatically re-initialize (drop session ID, call `initialize` again, re-subscribe).
+
+### Heartbeat / keepalive
+No mechanism to detect a dead bridge or a dead agent. Options:
+- Bridge-side: track `lastSeenAt` via poll activity (already exists), expose a health status per agent
+- Agent-side: ping the bridge periodically, reconnect on failure
+- Consider WebSocket upgrade for push-based messaging (eliminates polling entirely)
+
+### Agent logging
+The poll loop is silent — no output unless something goes wrong. Add:
+- Periodic "alive" log (every N polls, e.g. every 30s)
+- Log when messages are found but filtered (passive mode, no @mention)
+- Log when mark_read is called
+- Configurable log level via `--verbose` / `--debug` flags
+
+### API key security for model endpoints
+Model API keys (DeepSeek, Gemini, etc.) are currently passed as CLI args — visible in `ps aux` output, shell history, and process listings. This is a real security issue. Options:
+1. **Environment variables**: `--api-key-env DEEPSEEK_API_KEY` reads from env instead of CLI arg
+2. **Config file**: read keys from `agorai.config.json` (already has examples), never expose on command line
+3. **Bridge-side key vault**: store model API keys in the bridge, agents reference them by name — keys never leave the server. The agent runner would request the key via an authenticated MCP tool
+4. **Pass-key ≠ model key**: clarify the distinction — pass-keys authenticate to the bridge (local, low-risk), model API keys authenticate to external services (high-risk, billable). Different security posture for each
+
+### Bridge pass-key storage
+Bridge pass-keys in `agorai.config.json` are plaintext. Currently hashed (SHA-256) at runtime before DB comparison, which is good — but the config file itself is the weak point. Options:
+- Document clearly that `agorai.config.json` should be `chmod 600`
+- Support environment variable references in config: `"key": "$AGORAI_KEY_DESKTOP"`
+- Consider a separate secrets file with restricted permissions
+
+---
+
 ## v0.3 — Permissions, Threading & Capabilities
 
 ### Per-project permissions
@@ -61,16 +96,18 @@ Instead of a separate debate engine, debates happen as structured conversations 
 #### Capabilities-based routing
 Extends the v0.3 tag system with automatic dispatch. When a task needs a specific capability, the bridge routes it to the right agent automatically based on tag matching.
 
-#### Passive agents
+#### Passive agents (bridge-level)
+> **Note:** Basic client-side @mention already works in `agorai-connect agent` (v0.2) — passive agents filter messages locally using regex. This v0.4 milestone is about moving that logic into the bridge for server-side routing, richer activation triggers, and context-aware invocation.
+
 Agents can be `active` or `passive`.
 
 - **Active**: participates in all conversations it's subscribed to (default)
 - **Passive**: idle by default. Only activated when:
-  1. Mentioned: "@perplexity what do you think?"
+  1. Mentioned: "@perplexity what do you think?" *(already works client-side in v0.2)*
   2. Capability requested: `request_help("web-search", "find latest React docs")`
   3. Bridge auto-routes a task based on tags
 
-Config: `mode: "active" | "passive"` per agent. Passive agents receive only relevant context when invoked, not the full message stream. Cost budget per invocation.
+Config: `mode: "active" | "passive"` per agent. Bridge-level passive agents receive only relevant context when invoked, not the full message stream. Cost budget per invocation.
 
 #### Specialist dispatch
 The bridge as a smart router: Agent A says "I need help with X" → bridge matches tags → finds best agent (possibly passive) → sends context + question → response posted in conversation.
@@ -121,6 +158,7 @@ Activity viewer for monitoring: projects, conversations, messages, agent status,
 ### GUI (user-facing)
 Separate from the admin dashboard. A web interface for interacting with the Agorai workspace:
 - Browse and participate in conversations
+- **@mention autocomplete** — type `@` in the message input and get a dropdown of agents in the conversation (name, type, online status), powered by the `list_subscribers` tool. Online agents shown first, with visual indicators.
 - View project memory and agent status
 - Send messages, create projects
 - Follow debates in real-time
