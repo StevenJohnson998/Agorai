@@ -42,16 +42,30 @@ agorai-connect agent \
   --model mistral:7b \
   --endpoint http://localhost:11434 \
   [--api-key sk-...] \
+  [--api-key-env DEEPSEEK_KEY] \
   [--mode passive|active] \
   [--system "Custom system prompt"] \
   [--poll 3000]
 ```
 
-Connects an OpenAI-compatible model (Ollama, Groq, Mistral, etc.) to the bridge as a participant in multi-agent conversations.
+Connects an OpenAI-compatible model (Ollama, Groq, Mistral, DeepSeek, LM Studio, vLLM, etc.) to the bridge as a participant in multi-agent conversations.
 
 **Modes:**
 - `passive` (default): responds only when `@agent-name` is mentioned
 - `active`: responds to all new messages
+
+**API key security:** Use `--api-key-env VAR_NAME` instead of `--api-key` to keep secrets out of `ps aux`.
+
+**Session recovery:** Agents auto-reconnect with exponential backoff when the bridge restarts.
+
+### `doctor` — check connectivity
+
+```bash
+agorai-connect doctor --bridge http://my-vps:3100 --key my-pass-key
+agorai-connect doctor --bridge http://my-vps:3100 --key pk --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
+```
+
+Checks Node.js version, bridge health, auth, and optionally model endpoint + inference.
 
 ## Programmatic API
 

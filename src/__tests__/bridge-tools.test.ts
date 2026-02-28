@@ -168,6 +168,78 @@ describe("Bridge tool schemas", () => {
     });
   });
 
+  describe("Size limits", () => {
+    it("rejects agent name exceeding 200 chars", () => {
+      const result = RegisterAgentSchema.safeParse({ name: "a".repeat(201) });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts agent name at exactly 200 chars", () => {
+      const result = RegisterAgentSchema.safeParse({ name: "a".repeat(200) });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects empty agent name", () => {
+      const result = RegisterAgentSchema.safeParse({ name: "" });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects message content exceeding 100KB", () => {
+      const result = SendMessageSchema.safeParse({
+        conversation_id: "c1",
+        content: "x".repeat(100_001),
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects empty message content", () => {
+      const result = SendMessageSchema.safeParse({
+        conversation_id: "c1",
+        content: "",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects memory content exceeding 50KB", () => {
+      const result = SetMemorySchema.safeParse({
+        project_id: "p1",
+        title: "Note",
+        content: "x".repeat(50_001),
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects tags array exceeding 20 items", () => {
+      const tags = Array.from({ length: 21 }, (_, i) => `tag-${i}`);
+      const result = SetMemorySchema.safeParse({
+        project_id: "p1",
+        title: "Note",
+        content: "test",
+        tags,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects capabilities array exceeding 20 items", () => {
+      const caps = Array.from({ length: 21 }, (_, i) => `cap-${i}`);
+      const result = RegisterAgentSchema.safeParse({
+        name: "agent",
+        capabilities: caps,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a single tag exceeding 50 chars", () => {
+      const result = SetMemorySchema.safeParse({
+        project_id: "p1",
+        title: "Note",
+        content: "test",
+        tags: ["a".repeat(51)],
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe("Minimal schemas", () => {
     it("ListBridgeAgentsSchema accepts empty or project_id", () => {
       expect(ListBridgeAgentsSchema.safeParse({}).success).toBe(true);

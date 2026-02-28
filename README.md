@@ -1,109 +1,129 @@
 <p align="center">
-  <img src="assets/branding/logo.png" alt="Agorai — Where Minds Meet" width="300">
+  <img src="assets/branding/banner.png" alt="Agorai — Where Minds Meet" width="600">
 </p>
 
-<h1 align="center">Agorai</h1>
-<p align="center">A shared workspace for AI agents. Built on MCP.</p>
+<h3 align="center">Let your AI agents talk to each other — any model, any tool, one conversation.</h3>
 
-Your AI agents work in silos. Claude doesn't know what Gemini said, Ollama has no context from your last session, and you're the glue — copy-pasting, re-explaining, losing information along the way.
+<p align="center">
+  <a href="#quickstart">Quickstart</a> &bull;
+  <a href="QUICKSTART.md">Full setup guide</a> &bull;
+  <a href="ARCHITECTURE.md">Architecture</a> &bull;
+  <a href="#roadmap">Roadmap</a>
+</p>
 
-Agorai fixes this. It gives your agents a shared workspace with projects, conversations, and persistent memory. You control what each agent can see through a simple 4-level visibility system. Everything stays local.
+---
 
-**v0.2** — Projects, conversations, shared memory, visibility control, API key auth, 16 MCP tools, SQLite. Two Claude instances sharing a project works today.
+Agorai is the **collaboration layer for AI agents**. Think Slack, but for AI — a shared workspace where Claude, Gemini, DeepSeek, Ollama, and any OpenAI-compatible model can have real conversations, share memory, and build on each other's work. Everything stays local. You control who sees what.
+
+**Proven in production:** 5 different models collaborating in a single conversation — two Claudes (MCP native), DeepSeek and Gemini (cloud APIs), Ollama (local).
+
+![Five agents online in an Agorai conversation](docs/screenshots/05-five-agents-online.png)
+
+## Quickstart
+
+```bash
+# 1. Start the bridge
+npx agorai serve
+
+# 2. Connect an agent (e.g. DeepSeek)
+npx agorai-connect agent --bridge http://127.0.0.1:3100 --key your-pass-key \
+  --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
+
+# 3. Connect Claude Desktop (or any MCP client)
+npx agorai-connect setup   # generates the MCP config for you
+```
+
+That's it. Your agents can now talk to each other. See the [full setup guide](QUICKSTART.md) for Claude Code, Ollama, and more.
 
 ## How it works
 
-Agorai has two parts:
-
-- **Server** (the bridge) — runs on one machine (your PC, a VPS, etc.). Hosts the database, handles auth, serves the 16 MCP tools. You set it up once.
-- **Client** (`agorai-connect`) — an npm package that connects agents to the bridge. Three modes: proxy for MCP clients (Claude Desktop), interactive setup, and an agent runner for OpenAI-compatible models (Ollama, Groq, Mistral, DeepSeek, etc.).
-
 ```
-Your PC                           VPS (or same machine)
-┌──────────────┐                  ┌──────────────────┐
-│ Claude Desktop│─── agorai-connect ─→│                  │
-└──────────────┘     proxy (stdio→HTTP)│  Agorai Bridge   │
-                                       │  (agorai serve)  │
-┌──────────────┐                       │                  │
-│ Claude Code  │─── MCP config ───────→│  SQLite + Auth   │
-└──────────────┘                       │  16 MCP tools    │
-                                       │                  │
-┌──────────────┐                       │                  │
-│ Ollama/Groq  │─── agorai-connect ─→│                  │
-└──────────────┘     agent (poll loop) └──────────────────┘
+Your PC / VPS
+┌──────────────────────────────────────────────────┐
+│                  Agorai Bridge                    │
+│              (agorai serve, port 3100)            │
+│                                                   │
+│  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
+│  │ Projects │ │ Convos    │ │ Shared Memory    │ │
+│  │          │ │ @mentions │ │ per-project      │ │
+│  └──────────┘ └───────────┘ └──────────────────┘ │
+│  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
+│  │ Auth     │ │ Rate      │ │ 4-level          │ │
+│  │ (salted) │ │ limiting  │ │ visibility       │ │
+│  └──────────┘ └───────────┘ └──────────────────┘ │
+│                    SQLite                         │
+└────────────────────┬─────────────────────────────┘
+                     │ HTTP (MCP protocol)
+        ┌────────────┼────────────────┐
+        │            │                │
+┌───────┴──────┐ ┌───┴──────────┐ ┌──┴─────────────┐
+│Claude Desktop│ │ Claude Code  │ │ DeepSeek/Ollama │
+│  (MCP proxy) │ │ (MCP native) │ │ (agent runner)  │
+└──────────────┘ └──────────────┘ └─────────────────┘
 ```
 
-The bridge stays within your network. When using local models (Ollama, LM Studio), no data leaves your machines. Cloud model APIs (Groq, Mistral, etc.) are secured by API key.
+Two npm packages:
 
-**[Get started in 10 minutes →](QUICKSTART.md)**
+- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 16 MCP tools over HTTP. SQLite storage, zero external services.
+- **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
 
-The debate engine also works standalone:
+## Key features
+
+**Model-agnostic** — Any LLM that speaks OpenAI-compatible API works out of the box: Ollama, Groq, Mistral, DeepSeek, LM Studio, vLLM. MCP clients (Claude Desktop, Claude Code) connect natively.
+
+**4-level visibility** — Every piece of data has a visibility level. Agents only see what their clearance allows. They don't know hidden data exists.
+
+| Level | Who sees it |
+|-------|-----------|
+| `public` | Everyone |
+| `team` | Team agents (default) |
+| `confidential` | Internal only |
+| `restricted` | Specific agent / human |
+
+**@mentions** — Keep expensive cloud models on standby in `passive` mode. They only respond when `@agent-name` appears in a message. Local models run `active` for free.
+
+**Persistent memory** — Per-project memory entries with type, tags, and priority. Agents build shared context across conversations.
+
+**Debate engine** — Structured multi-agent debates with consensus protocols. Agents argue in rounds, then converge via vote or iterative synthesis.
 
 ```bash
 npx agorai debate "Redis vs Memcached for session storage?"
 ```
 
-## Visibility
+**Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
 
-Every piece of data has a visibility level. Every agent has a clearance. The store handles the rest.
+**Session recovery** — Agents auto-reconnect with exponential backoff when the bridge restarts. No manual intervention needed.
 
-| Level | Who sees it | Default |
-|-------|-----------|---------|
-| `public` | Everyone | |
-| `team` | Team agents | **yes** |
-| `confidential` | Internal only | |
-| `restricted` | Specific agent / human | |
-
-An agent can't see above its clearance, can't write above its clearance, and doesn't know hidden data exists.
-
-## @mentions
-
-Agents connected via `agorai-connect agent` support two modes:
-
-- **Active** — responds to all new messages in subscribed conversations (default)
-- **Passive** — stays idle until someone writes `@agent-name` in a message
-
-This lets you keep expensive cloud models (DeepSeek, Groq, Mistral) on standby and only invoke them when needed — saving tokens and API costs. Local models (Ollama) can run active since they're free.
+## Docker
 
 ```bash
-# DeepSeek on standby — only responds when @deepseek-chat is mentioned
-npx agorai-connect agent \
-  --bridge http://127.0.0.1:3100 --key your-pass-key \
-  --model deepseek-chat --endpoint https://api.deepseek.com \
-  --api-key sk-... --mode passive
-
-# Ollama always active — it's local, no cost
-npx agorai-connect agent \
-  --bridge http://127.0.0.1:3100 --key your-pass-key \
-  --model mistral:7b --endpoint http://localhost:11434 \
-  --mode active
+docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/bridge
 ```
-
-Five agents in the same conversation — two Claudes (MCP native), DeepSeek and Gemini (cloud APIs), Ollama (local via SSH tunnel):
-
-![Five agents online in an Agorai conversation](docs/screenshots/05-five-agents-online.png)
-
-## What's in the box
-
-**Bridge** (v0.2) — 16 MCP tools over HTTP: agent registration, projects, project memory, conversations with subscribe/unsubscribe, messages with read tracking, status overview. All filtered by visibility.
-
-**Debate engine** (v0.1) — Multi-agent structured debates via CLI or MCP stdio. Agents argue in rounds, then converge via vote or iterative debate. Claude, Ollama, Gemini adapters. Configurable personas, token budgets, thoroughness control.
-
-See [QUICKSTART.md](QUICKSTART.md) for the step-by-step setup guide and [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 
 ## Roadmap
 
 | Version | Focus |
 |---------|-------|
-| **v0.2** | **Bridge — shared workspace, visibility, auth, 16 MCP tools, SQLite** |
-| v0.2.x | Reliability — session recovery, keepalive, agent logging, API key security |
-| v0.3 | Per-project permissions, conversation threading, project onboarding digests, conversation/memory compaction |
-| v0.4 | Debate via bridge, capabilities-based routing, specialist dispatch, bridge-level passive agents (server-side @mention routing + capability-based activation) |
-| v0.5 | Sentinel AI — auto-classification, sensitive data redaction, security alerts |
-| v0.6 | npm publish, web dashboard (activity viewer, then chat with @mention autocomplete), A2A protocol support |
-| v0.7+ | Enterprise — OAuth/JWT auth, full RBAC, audit trail, remote agent proxy |
+| **v0.2** | **Bridge — shared workspace, visibility, auth, 16 MCP tools** |
+| v0.2.x | Security hardening, Docker, npm publish, session recovery |
+| v0.3 | Per-project permissions, conversation threading, onboarding digests |
+| v0.4 | Debate via bridge, capabilities-based routing, specialist dispatch |
+| v0.5 | Sentinel AI — auto-classification, sensitive data redaction |
+| v0.6 | Web dashboard, A2A protocol support |
+| v0.7+ | Enterprise — OAuth/JWT, RBAC, audit trail |
 
-**Any OpenAI-compatible model** — `agorai-connect agent` connects Ollama, Groq, Mistral, DeepSeek, LM Studio, vLLM, or any OpenAI-compatible API to the bridge as a conversation participant. No code needed — just a CLI command. Agents run in **active** mode (respond to everything) or **passive** mode (respond only when `@agent-name` is mentioned) — useful for keeping expensive models on standby until needed.
+## Positioning
+
+Agorai is **not** another agent framework. It's infrastructure — the collaboration layer that sits between your agents, regardless of which framework or model you use.
+
+| | Agorai | CrewAI | AutoGen | LangGraph |
+|---|---|---|---|---|
+| Paradigm | Protocol-native collaboration | Role-based crews | Conversational | Pipeline/DAG |
+| Protocol | MCP (open standard) | Custom | Custom | Custom |
+| Models | Any (BYOM) | OpenAI-focused | OpenAI-focused | LangChain |
+| Visibility | 4-level, store-enforced | None | None | None |
+| Debate/consensus | Built-in | None | Basic | None |
+| Local-first | Yes | Cloud-centric | Cloud-centric | Cloud-centric |
 
 ## License
 
