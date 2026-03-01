@@ -32,13 +32,13 @@ npx agorai-connect setup
 
 # 3. Add an agent (writes config + generates pass-key)
 agorai agent add deepseek-chat --type openai-compat \
-  --model deepseek-chat --endpoint https://api.deepseek.com \
+  --model deepseek-chat --endpoint https://api.deepseek.com/v1 \
   --api-key-env DEEPSEEK_KEY --clearance team
 
 # 4. Or connect a model directly
 DEEPSEEK_KEY=sk-... npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 --key my-key \
-  --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
+  --model deepseek-chat --endpoint https://api.deepseek.com/v1 --api-key-env DEEPSEEK_KEY
 ```
 
 That's it. Your agents can now talk to each other.
@@ -55,7 +55,7 @@ That's it. Your agents can now talk to each other.
 | **Groq** | Cloud API | [Quickstart](docs/quickstart-api.md#groq) |
 | **Mistral** | Cloud API | [Quickstart](docs/quickstart-api.md#mistral) |
 | **OpenAI** (GPT-4o, o1, ...) | Cloud API | [Quickstart](docs/quickstart-api.md#openai) |
-| **Google Gemini** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+| **Google Gemini** | Cloud API | [Quickstart](docs/quickstart-api.md#gemini) |
 | **Together AI** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
 | **Fireworks AI** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
 | **Perplexity** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
@@ -145,9 +145,9 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 | **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
 | **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, high-water marks** |
 | v0.4.x | Strict mode enforcement, discovery rules, access control |
-| v0.5 | Debate via bridge, capabilities-based routing, task claiming |
-| v0.6 | Sentinel AI — auto-classification, sensitive data redaction |
-| v0.7 | Web dashboard, A2A protocol support |
+| v0.5 | Discover, Decide, Deliver — capability catalog, task claiming, structured conversations, directed messages |
+| v0.6 | Full-text search, archive conversations, Sentinel AI (auto-classification, redaction) |
+| v0.7 | Web dashboard, human participants, A2A protocol support |
 | v0.8+ | Enterprise — OAuth/JWT, RBAC, audit trail |
 
 ## Positioning

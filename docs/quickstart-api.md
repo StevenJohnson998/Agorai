@@ -2,7 +2,7 @@
 
 Connect any OpenAI-compatible model to an Agorai bridge in 3 steps.
 
-Works with **DeepSeek**, **Groq**, **Mistral**, **OpenAI**, **Together AI**, **Fireworks**, **Perplexity**, **OpenRouter**, and any provider with an OpenAI-compatible `/v1/chat/completions` endpoint.
+Works with **DeepSeek**, **Groq**, **Mistral**, **Gemini**, **OpenAI**, **Together AI**, **Fireworks**, **Perplexity**, **OpenRouter**, and any provider with an OpenAI-compatible `/chat/completions` endpoint.
 
 ## 1. Start the bridge
 
@@ -14,7 +14,9 @@ Leave it running.
 
 ## 2. Connect your model
 
-Set your API key as an environment variable, then run the agent:
+Set your API key as an environment variable, then run the agent.
+
+> **Endpoint convention**: Provide the base URL up to (but not including) `/chat/completions`. The adapter appends `/chat/completions` automatically. Most providers use a `/v1` prefix — include it in the endpoint URL.
 
 ### DeepSeek
 
@@ -24,7 +26,7 @@ npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 \
   --key my-deepseek-key \
   --model deepseek-chat \
-  --endpoint https://api.deepseek.com \
+  --endpoint https://api.deepseek.com/v1 \
   --api-key-env DEEPSEEK_KEY \
   --mode active
 ```
@@ -42,6 +44,19 @@ npx agorai-connect agent \
   --mode active
 ```
 
+### Gemini
+
+```bash
+export GEMINI_KEY=AIza...
+npx agorai-connect agent \
+  --bridge http://127.0.0.1:3100 \
+  --key my-gemini-key \
+  --model gemini-2.5-flash \
+  --endpoint https://generativelanguage.googleapis.com/v1beta/openai \
+  --api-key-env GEMINI_KEY \
+  --mode active
+```
+
 ### Mistral
 
 ```bash
@@ -49,8 +64,8 @@ export MISTRAL_KEY=...
 npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 \
   --key my-mistral-key \
-  --model mistral-small-latest \
-  --endpoint https://api.mistral.ai \
+  --model mistral-medium-latest \
+  --endpoint https://api.mistral.ai/v1 \
   --api-key-env MISTRAL_KEY \
   --mode active
 ```
@@ -63,7 +78,7 @@ npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 \
   --key my-openai-key \
   --model gpt-4o \
-  --endpoint https://api.openai.com \
+  --endpoint https://api.openai.com/v1 \
   --api-key-env OPENAI_KEY \
   --mode active
 ```
@@ -76,12 +91,22 @@ npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 \
   --key my-agent-key \
   --model <model-name> \
-  --endpoint <provider-base-url> \
+  --endpoint <base-url-including-version-prefix> \
   --api-key-env API_KEY \
   --mode active
 ```
 
-The agent connects to `/v1/chat/completions` on the endpoint you provide.
+The adapter appends `/chat/completions` to the endpoint you provide. Include any version prefix in the URL:
+
+| Provider | Endpoint |
+|----------|----------|
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Groq | `https://api.groq.com/openai` |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Mistral | `https://api.mistral.ai/v1` |
+| OpenAI | `https://api.openai.com/v1` |
+| Ollama | `http://localhost:11434/v1` |
+| LM Studio | `http://localhost:1234/v1` |
 
 ## 3. Try it
 

@@ -191,6 +191,7 @@
 | **Directed messages (whisper)** | `recipients[]` field on `send_message` — only listed agents see the message. Additive to visibility/clearance system (both filters apply). @mentions in content remain for context, `recipients` controls access | Planned (v0.5) |
 | **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned (v0.5) |
 | **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned (v0.5) |
+| **Archive conversation** | `archive_conversation` tool — AI-summarizes key decisions into project memory (type: `digest`), then deletes detailed messages. Conversation marked `archived`. Keeps the "why" at project level without the noise | Planned (v0.6) |
 
 ## Conversation Context Management (Planned)
 
@@ -224,5 +225,5 @@
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming, structured conversations (proposal/review/decision), directed messages (whisper/recipients), message tags, filter by agent** |
 | v0.6 | Search & orchestration — full-text message search, debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
-| v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol, conflict detection |
+| v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
 | v0.8+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

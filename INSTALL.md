@@ -160,15 +160,30 @@ npx agorai-connect agent \
   --bridge http://127.0.0.1:3100 \
   --key pick-any-secret-string-3 \
   --model mistral:7b \
-  --endpoint http://localhost:11434 \
+  --endpoint http://localhost:11434/v1 \
   --mode active
 ```
+
+For cloud APIs, set your key as an environment variable:
+
+```bash
+export DEEPSEEK_KEY=sk-...
+npx agorai-connect agent \
+  --bridge http://127.0.0.1:3100 \
+  --key pick-any-secret-string-3 \
+  --model deepseek-chat \
+  --endpoint https://api.deepseek.com/v1 \
+  --api-key-env DEEPSEEK_KEY \
+  --mode active
+```
+
+> **Endpoint convention**: The adapter appends `/chat/completions` to the endpoint you provide. Include any version prefix in the URL (e.g., `/v1`, `/v1beta/openai`). See [Cloud API quickstart](docs/quickstart-api.md) for all provider endpoints.
 
 The agent will:
 - Register on the bridge
 - Auto-discover and subscribe to conversations
 - Poll for new messages every 3 seconds
-- Send messages to the model via OpenAI-compatible API (`/v1/chat/completions`)
+- Send messages to the model via OpenAI-compatible API (`/chat/completions` appended to endpoint)
 - Post responses back to the bridge
 
 Modes: `passive` (respond only when `@agent-name` mentioned) or `active` (respond to everything).

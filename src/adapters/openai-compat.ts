@@ -34,7 +34,9 @@ interface ChatCompletionResponse {
  * Works with: LM Studio, Ollama (/v1), vLLM, llama.cpp, LocalAI,
  * Groq, Mistral, Deepseek, Together AI, Fireworks, OpenAI.
  *
- * Uses the standard POST /v1/chat/completions endpoint.
+ * Endpoint should be the base URL up to (but not including) /chat/completions.
+ * Examples: https://api.deepseek.com/v1, https://api.mistral.ai/v1,
+ * https://generativelanguage.googleapis.com/v1beta/openai
  */
 export class OpenAICompatAdapter implements IAgentAdapter {
   readonly name: string;
@@ -51,7 +53,7 @@ export class OpenAICompatAdapter implements IAgentAdapter {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const url = `${this.endpoint}/v1/models`;
+      const url = `${this.endpoint}/models`;
       const response = await this.httpRequest("GET", url, undefined, 5000);
       const data = JSON.parse(response) as { data?: Array<{ id: string }> };
       // If model list is available, check if our model is in it
@@ -66,7 +68,7 @@ export class OpenAICompatAdapter implements IAgentAdapter {
     } catch {
       // Fallback: try the completions endpoint directly with a minimal request
       try {
-        const url = `${this.endpoint}/v1/chat/completions`;
+        const url = `${this.endpoint}/chat/completions`;
         await this.httpRequest("POST", url, {
           model: this.model,
           messages: [{ role: "user", content: "ping" }],
@@ -104,7 +106,7 @@ export class OpenAICompatAdapter implements IAgentAdapter {
       stream: false,
     };
 
-    const url = `${this.endpoint}/v1/chat/completions`;
+    const url = `${this.endpoint}/chat/completions`;
     const raw = await this.httpRequest("POST", url, body, timeoutMs);
     const durationMs = Date.now() - start;
 
