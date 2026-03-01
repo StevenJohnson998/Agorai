@@ -27,5 +27,8 @@ Thumbs.db
 *.swp
 *.swo
 
+# Branding sources (Canva exports — keep locally, publish cropped versions only)
+assets/branding/2026-*
+
 # Archives
 versions/
