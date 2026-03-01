@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-03-01 — v0.4.0 (Message Format / Metadata Overhaul)
+
+### Added
+- **`BridgeMetadata`**: trusted metadata injected by the bridge on every message — `visibility`, `senderClearance`, `visibilityCapped`, `originalVisibility?`, `timestamp`, `instructions`. Immutable by agents, always present.
+- **`agentMetadata`**: private operational metadata (cost, model, tokens, etc.) only visible to the sender. Other agents cannot see it. Replaces the free-form `metadata` field.
+- **Anti-forge protection**: bridge strips `_bridge*`, `bridgeMetadata`, `bridge_metadata` keys from agent-provided metadata before storing.
+- **Confidentiality modes** on projects: `normal` (agent-responsible, default), `strict` (bridge-enforced, future), `flexible` (agent chooses freely).
+- **`BridgeInstructions`** in bridge metadata: pre-computed human-readable confidentiality instruction + mode, so agents know how to handle visibility.
+- **High-water mark tracking** (`agent_high_water_marks` table): passive tracking of max visibility level seen per agent per project. Populated on every `getMessages()` call. Never decreases. Enforcement deferred to strict mode (future sprint).
+- **`getHighWaterMark(agentId, projectId)`**: new store method to query an agent's current high-water mark.
+- **Schema migration**: automatic `ALTER TABLE` on startup for existing databases — adds `agent_metadata`, `bridge_metadata` columns to `messages`, `confidentiality_mode` to `projects`. Migrates existing `metadata` → `agentMetadata`.
+- **MCP instructions expanded**: metadata model and confidentiality mode documentation in bridge handshake.
+
+### Changed
+- **`Message` type**: now has `agentMetadata` + `bridgeMetadata` fields. `metadata` is deprecated (kept for backward compat, will be removed in v0.5).
+- **`Project` type**: new `confidentialityMode` field (default: `"normal"`).
+- **`CreateProject` type**: new optional `confidentialityMode` field.
+- **`CreateProjectSchema`**: new `confidentiality_mode` enum field.
+- **`SendMessageSchema`**: metadata description updated to "Private metadata (only visible to you)".
+- **`send_message` response**: excludes deprecated `metadata` field, includes `agentMetadata` + `bridgeMetadata`.
+- **`get_messages` response**: excludes deprecated `metadata`, strips `agentMetadata` for non-sender messages.
+- **Bridge version**: `0.3.0` → `0.4.0`.
+
+### Tests
+- 15 new tests: bridgeMetadata generation (normal + capped), agentMetadata round-trip, anti-forge stripping, null metadata, confidentiality modes (default, strict, flexible, instructions), high-water marks (create, increase-only, per-project, unknown returns null)
+- Total: 222 server tests passing (was 207)
+
+### Not changed
+- `agorai-connect` stays at `0.0.6` (not impacted — does not touch metadata)
+- All existing tests pass without modification (backward compat)
+
+---
+
 ## 2026-03-01 — v0.3.0 (SSE Push Notifications) + agorai-connect v0.0.6
 
 ### Added (agorai — v0.3.0)

@@ -9,6 +9,7 @@
 import type {
   Agent,
   AgentRegistration,
+  AgentHighWaterMark,
   Project,
   CreateProject,
   MemoryEntry,
@@ -62,6 +63,9 @@ export interface IStore {
   getMessages(conversationId: string, agentId: string, opts?: GetMessagesOptions): Promise<Message[]>;
   markRead(messageIds: string[], agentId: string): Promise<void>;
   getUnreadCount(agentId: string): Promise<number>;
+
+  // --- High-water marks (passive tracking) ---
+  getHighWaterMark(agentId: string, projectId: string): Promise<AgentHighWaterMark | null>;
 
   // --- Lifecycle ---
   initialize(): Promise<void>;

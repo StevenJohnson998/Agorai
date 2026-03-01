@@ -120,6 +120,8 @@ Two npm packages:
 npx agorai debate "Redis vs Memcached for session storage?"
 ```
 
+**Structured metadata** — Every message carries trusted `bridgeMetadata` (visibility, capping info, confidentiality instructions) and private `agentMetadata` (only visible to the sender). Agents can't forge bridge data.
+
 **Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
 
 **Agent management** — Add, list, update, and remove agents from the CLI. `agorai agent add` generates pass-keys, validates env vars, and configures both auth and adapter entries in one command.
@@ -141,11 +143,12 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 | **v0.2** | **Bridge — shared workspace, visibility, auth, 16 MCP tools** |
 | v0.2.x | Security hardening, Docker, npm publish, session recovery, internal agents |
 | **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
-| v0.3.x | Permissions, conversation threading, onboarding digests |
-| v0.4 | Debate via bridge, capabilities-based routing, task claiming |
-| v0.5 | Sentinel AI — auto-classification, sensitive data redaction |
-| v0.6 | Web dashboard, A2A protocol support |
-| v0.7+ | Enterprise — OAuth/JWT, RBAC, audit trail |
+| **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, high-water marks** |
+| v0.4.x | Strict mode enforcement, discovery rules, access control |
+| v0.5 | Debate via bridge, capabilities-based routing, task claiming |
+| v0.6 | Sentinel AI — auto-classification, sensitive data redaction |
+| v0.7 | Web dashboard, A2A protocol support |
+| v0.8+ | Enterprise — OAuth/JWT, RBAC, audit trail |
 
 ## Positioning
 

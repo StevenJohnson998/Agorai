@@ -14,6 +14,7 @@ export type { IStore } from "./store/interfaces.js";
 export type {
   Agent,
   AgentRegistration,
+  AgentHighWaterMark,
   Project,
   CreateProject,
   Conversation,
@@ -27,6 +28,9 @@ export type {
   Subscription,
   SubscribeOptions,
   VisibilityLevel,
+  BridgeMetadata,
+  BridgeInstructions,
+  ConfidentialityMode,
 } from "./store/types.js";
 
 // --- Bridge ---

@@ -12,6 +12,7 @@ import { StoreEventBus } from "./events.js";
 import type {
   Agent,
   AgentRegistration,
+  AgentHighWaterMark,
   Project,
   CreateProject,
   MemoryEntry,
@@ -25,6 +26,9 @@ import type {
   CreateMessage,
   GetMessagesOptions,
   VisibilityLevel,
+  BridgeMetadata,
+  BridgeInstructions,
+  ConfidentialityMode,
 } from "./types.js";
 import { VISIBILITY_ORDER } from "./types.js";
 
@@ -66,6 +70,7 @@ export class SqliteStore implements IStore {
         name TEXT NOT NULL,
         description TEXT,
         visibility TEXT NOT NULL DEFAULT 'team',
+        confidentiality_mode TEXT NOT NULL DEFAULT 'normal',
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -118,6 +123,8 @@ export class SqliteStore implements IStore {
         visibility TEXT NOT NULL DEFAULT 'team',
         content TEXT NOT NULL,
         metadata TEXT,
+        agent_metadata TEXT,
+        bridge_metadata TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (conversation_id) REFERENCES conversations(id)
       );
@@ -131,11 +138,49 @@ export class SqliteStore implements IStore {
         FOREIGN KEY (message_id) REFERENCES messages(id),
         FOREIGN KEY (agent_id) REFERENCES agents(id)
       );
+
+      CREATE TABLE IF NOT EXISTS agent_high_water_marks (
+        agent_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        max_visibility TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (agent_id, project_id),
+        FOREIGN KEY (agent_id) REFERENCES agents(id),
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
     `);
+
+    // --- Schema migrations for existing databases ---
+    this.migrateSchema();
   }
 
   async close(): Promise<void> {
     this.db.close();
+  }
+
+  // --- Schema migration for existing databases ---
+
+  private migrateSchema(): void {
+    // Check if messages table has the new columns
+    const msgCols = this.db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
+    const msgColNames = new Set(msgCols.map((c) => c.name));
+
+    if (!msgColNames.has("agent_metadata")) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN agent_metadata TEXT");
+      // Migrate existing metadata → agent_metadata for pre-migration data
+      this.db.exec("UPDATE messages SET agent_metadata = metadata WHERE metadata IS NOT NULL");
+    }
+    if (!msgColNames.has("bridge_metadata")) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN bridge_metadata TEXT");
+    }
+
+    // Check if projects table has confidentiality_mode
+    const projCols = this.db.prepare("PRAGMA table_info(projects)").all() as { name: string }[];
+    const projColNames = new Set(projCols.map((c) => c.name));
+
+    if (!projColNames.has("confidentiality_mode")) {
+      this.db.exec("ALTER TABLE projects ADD COLUMN confidentiality_mode TEXT NOT NULL DEFAULT 'normal'");
+    }
   }
 
   // --- Agent helpers ---
@@ -252,16 +297,18 @@ export class SqliteStore implements IStore {
   async createProject(project: CreateProject): Promise<Project> {
     const id = randomUUID();
     const ts = now();
+    const confMode = project.confidentialityMode ?? "normal";
     this.db.prepare(`
-      INSERT INTO projects (id, name, description, visibility, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, project.name, project.description ?? null, project.visibility ?? "team", project.createdBy, ts, ts);
+      INSERT INTO projects (id, name, description, visibility, confidentiality_mode, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, project.name, project.description ?? null, project.visibility ?? "team", confMode, project.createdBy, ts, ts);
 
     return {
       id,
       name: project.name,
       description: project.description ?? null,
       visibility: project.visibility ?? "team",
+      confidentialityMode: confMode,
       createdBy: project.createdBy,
       createdAt: ts,
       updatedAt: ts,
@@ -296,6 +343,7 @@ export class SqliteStore implements IStore {
       name: row.name as string,
       description: row.description as string | null,
       visibility: row.visibility as VisibilityLevel,
+      confidentialityMode: (row.confidentiality_mode as ConfidentialityMode) ?? "normal",
       createdBy: row.created_by as string,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
@@ -489,6 +537,38 @@ export class SqliteStore implements IStore {
 
   // --- Messages ---
 
+  // --- Confidentiality instructions ---
+
+  private getConfidentialityInstructions(visibility: VisibilityLevel, mode: ConfidentialityMode): BridgeInstructions {
+    switch (mode) {
+      case "strict":
+        return {
+          confidentiality: "The bridge enforces confidentiality automatically. Your output visibility is managed by the bridge.",
+          mode,
+        };
+      case "flexible":
+        return {
+          confidentiality: "You may set any visibility level up to your clearance.",
+          mode,
+        };
+      case "normal":
+      default:
+        return {
+          confidentiality: `Set your output visibility >= ${visibility} (this message's level). Use the highest level among all input messages.`,
+          mode,
+        };
+    }
+  }
+
+  private getProjectConfidentialityMode(conversationId: string): ConfidentialityMode {
+    const row = this.db.prepare(`
+      SELECT p.confidentiality_mode FROM projects p
+      INNER JOIN conversations c ON c.project_id = p.id
+      WHERE c.id = ?
+    `).get(conversationId) as { confidentiality_mode: string } | undefined;
+    return (row?.confidentiality_mode as ConfidentialityMode) ?? "normal";
+  }
+
   async sendMessage(msg: CreateMessage): Promise<Message> {
     const id = randomUUID();
     const ts = now();
@@ -496,14 +576,35 @@ export class SqliteStore implements IStore {
     // Cap visibility at sender's clearance level
     const senderClearance = this.getAgentClearance(msg.fromAgent);
     const requestedVis = msg.visibility ?? "team";
-    const cappedVis =
-      visibilityToInt(requestedVis) > visibilityToInt(senderClearance)
-        ? senderClearance
-        : requestedVis;
+    const wasCapped = visibilityToInt(requestedVis) > visibilityToInt(senderClearance);
+    const cappedVis = wasCapped ? senderClearance : requestedVis;
+
+    // Build bridge metadata (trusted, immutable by agents)
+    const confMode = this.getProjectConfidentialityMode(msg.conversationId);
+    const bridgeMeta: BridgeMetadata = {
+      visibility: cappedVis,
+      senderClearance,
+      visibilityCapped: wasCapped,
+      ...(wasCapped ? { originalVisibility: requestedVis } : {}),
+      timestamp: ts,
+      instructions: this.getConfidentialityInstructions(cappedVis, confMode),
+    };
+
+    // Strip any _bridge / bridgeMetadata keys from agent-provided metadata (anti-forge)
+    let cleanedAgentMeta: Record<string, unknown> | null = null;
+    if (msg.metadata) {
+      cleanedAgentMeta = {};
+      for (const [k, v] of Object.entries(msg.metadata)) {
+        if (!k.startsWith("_bridge") && k !== "bridgeMetadata" && k !== "bridge_metadata") {
+          cleanedAgentMeta[k] = v;
+        }
+      }
+      if (Object.keys(cleanedAgentMeta).length === 0) cleanedAgentMeta = null;
+    }
 
     this.db.prepare(`
-      INSERT INTO messages (id, conversation_id, from_agent, type, visibility, content, metadata, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, conversation_id, from_agent, type, visibility, content, metadata, agent_metadata, bridge_metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       msg.conversationId,
@@ -511,7 +612,9 @@ export class SqliteStore implements IStore {
       msg.type ?? "message",
       cappedVis,
       msg.content,
-      msg.metadata ? JSON.stringify(msg.metadata) : null,
+      cleanedAgentMeta ? JSON.stringify(cleanedAgentMeta) : null,
+      cleanedAgentMeta ? JSON.stringify(cleanedAgentMeta) : null,
+      JSON.stringify(bridgeMeta),
       ts,
     );
 
@@ -525,7 +628,9 @@ export class SqliteStore implements IStore {
       type: msg.type ?? "message",
       visibility: cappedVis,
       content: msg.content,
-      metadata: msg.metadata ?? null,
+      metadata: cleanedAgentMeta,
+      agentMetadata: cleanedAgentMeta,
+      bridgeMetadata: bridgeMeta,
       createdAt: ts,
     };
 
@@ -565,7 +670,68 @@ export class SqliteStore implements IStore {
       results = results.slice(0, opts.limit);
     }
 
+    // Passive high-water mark tracking: record the max visibility the agent has seen
+    if (results.length > 0) {
+      this.updateHighWaterMark(agentId, conversationId, results);
+    }
+
     return results;
+  }
+
+  // --- High-water mark tracking ---
+
+  private updateHighWaterMark(agentId: string, conversationId: string, messages: Message[]): void {
+    // Find the project for this conversation
+    const convRow = this.db.prepare("SELECT project_id FROM conversations WHERE id = ?").get(conversationId) as
+      | { project_id: string }
+      | undefined;
+    if (!convRow) return;
+
+    const projectId = convRow.project_id;
+
+    // Find the max visibility among returned messages
+    let maxVis = 0;
+    for (const msg of messages) {
+      const v = visibilityToInt(msg.visibility);
+      if (v > maxVis) maxVis = v;
+    }
+
+    const maxVisLevel = (Object.entries(VISIBILITY_ORDER).find(([, v]) => v === maxVis)?.[0] ?? "public") as VisibilityLevel;
+    const ts = now();
+
+    // Upsert: only increase, never decrease
+    this.db.prepare(`
+      INSERT INTO agent_high_water_marks (agent_id, project_id, max_visibility, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (agent_id, project_id) DO UPDATE SET
+        max_visibility = CASE
+          WHEN excluded.max_visibility > agent_high_water_marks.max_visibility THEN excluded.max_visibility
+          ELSE agent_high_water_marks.max_visibility
+        END,
+        updated_at = CASE
+          WHEN excluded.max_visibility > agent_high_water_marks.max_visibility THEN excluded.updated_at
+          ELSE agent_high_water_marks.updated_at
+        END
+    `).run(agentId, projectId, String(maxVis), ts);
+  }
+
+  async getHighWaterMark(agentId: string, projectId: string): Promise<AgentHighWaterMark | null> {
+    const row = this.db.prepare(
+      "SELECT * FROM agent_high_water_marks WHERE agent_id = ? AND project_id = ?"
+    ).get(agentId, projectId) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    // Convert stored integer back to visibility level
+    const storedInt = parseInt(row.max_visibility as string, 10);
+    const visLevel = (Object.entries(VISIBILITY_ORDER).find(([, v]) => v === storedInt)?.[0] ?? "public") as VisibilityLevel;
+
+    return {
+      agentId: row.agent_id as string,
+      projectId: row.project_id as string,
+      maxVisibility: visLevel,
+      updatedAt: row.updated_at as string,
+    };
   }
 
   async markRead(messageIds: string[], agentId: string): Promise<void> {
@@ -597,6 +763,15 @@ export class SqliteStore implements IStore {
   }
 
   private rowToMessage(row: Record<string, unknown>): Message {
+    const legacyMeta = row.metadata ? JSON.parse(row.metadata as string) : null;
+    // For pre-migration rows, agent_metadata may be null but metadata has data
+    const agentMeta = row.agent_metadata
+      ? JSON.parse(row.agent_metadata as string)
+      : legacyMeta;
+    const bridgeMeta = row.bridge_metadata
+      ? JSON.parse(row.bridge_metadata as string)
+      : null;
+
     return {
       id: row.id as string,
       conversationId: row.conversation_id as string,
@@ -604,7 +779,9 @@ export class SqliteStore implements IStore {
       type: row.type as string,
       visibility: row.visibility as VisibilityLevel,
       content: row.content as string,
-      metadata: row.metadata ? JSON.parse(row.metadata as string) : null,
+      metadata: legacyMeta,
+      agentMetadata: agentMeta,
+      bridgeMetadata: bridgeMeta,
       createdAt: row.created_at as string,
     };
   }
