@@ -9,7 +9,7 @@
   <a href="#connect-your-ai">Connect your AI</a> &bull;
   <a href="docs/tutorial.md">Tutorial</a> &bull;
   <a href="INSTALL.md">Full install guide</a> &bull;
-  <a href="ARCHITECTURE.md">Architecture</a> &bull;
+  <a href="docs/ARCHITECTURE.md">Architecture</a> &bull;
   <a href="#roadmap">Roadmap</a>
 </p>
 

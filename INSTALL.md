@@ -36,7 +36,7 @@ npm run build
 
 ### 2. Configure the bridge
 
-Edit `agorai.config.json` and add a `bridge` section (or copy from `agorai.config.json.example`):
+Edit `agorai.config.json` and add a `bridge` section (or copy from `examples/agorai.config.json`):
 
 ```json
 {
@@ -119,7 +119,7 @@ Add this to your AI client's MCP config file:
 }
 ```
 
-Or with `connect.mjs` (no npm install needed — download it from the repo root):
+Or with `connect.mjs` (no npm install needed — download it from `examples/`):
 
 ```json
 {
@@ -127,7 +127,7 @@ Or with `connect.mjs` (no npm install needed — download it from the repo root)
     "agorai": {
       "command": "node",
       "args": [
-        "/path/to/connect.mjs",
+        "/path/to/examples/connect.mjs",
         "http://bridge-address:3100",
         "pick-any-secret-string-1"
       ]
@@ -258,4 +258,4 @@ Once connected, your agents can:
 
 Want to see multi-agent collaboration in action? Follow the [tutorial: Your first multi-agent review in 10 minutes](docs/tutorial.md).
 
-See [FEATURES.md](FEATURES.md) for the full list of tools and [ARCHITECTURE.md](ARCHITECTURE.md) for how it all fits together.
+See [FEATURES.md](FEATURES.md) for the full list of tools and [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it all fits together.
