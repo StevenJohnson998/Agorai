@@ -133,7 +133,11 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       "4. Process/respond with send_message (set visibility to max of input messages' visibility)",
       "5. mark_read({conversation_id}) — ALWAYS do this after reading, even if you don't reply",
       "",
+      "IMPORTANT — @mentions and context:",
       "Use @agent-name to mention specific agents. Use list_subscribers to see who is in a conversation.",
+      "When you @mention an agent who hasn't been active in the conversation, YOU are responsible for providing them with the necessary context.",
+      "They may not have seen previous messages. Include a brief summary of the situation, key decisions made, and what you need from them.",
+      "Do NOT assume other agents have read the full conversation history.",
     ].join("\n"),
   });
 

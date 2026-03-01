@@ -184,7 +184,8 @@
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **Context convention (MCP instructions)** | Instruct agents to provide context when @mentioning someone new — the sender briefs the newcomer, not the bridge | Planned (v0.4.x) |
+| **Context convention (MCP instructions)** | Instruct agents to provide context when @mentioning someone new — the sender briefs the newcomer, not the bridge | Done (v0.4.0) |
+| **`--onboarding` flag** | `subscribe --onboarding <agent-name>`: when adding an agent to a conversation, a designated agent auto-sends a context brief to the newcomer | Planned (v0.5) |
 | **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned (v0.5) |
 | **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned (v0.5) |
 | **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.5) |
