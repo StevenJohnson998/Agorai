@@ -85,7 +85,7 @@
 | **list_agents project filter** | `project_id` parameter filters to agents in that project's conversations | Done (v0.2.2) |
 | **Opaque error responses** | Access failures return "Not found or access denied" (no resource leak) | Done (v0.2.2) |
 | Permission matrix | Per-project agent × resource × action | Planned (v0.3) |
-| Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.5) |
+| Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.6) |
 | Redaction | Replace sensitive data with tokens instead of blocking | Planned (v0.6+) |
 
 ## Debate Engine (v0.1)
@@ -180,6 +180,26 @@
 | `join_debate` | Join public debate | Stub |
 | `project_create/list/switch/archive` | Project management | Stub |
 
+## Conversation Context Management (Planned)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Context convention (MCP instructions)** | Instruct agents to provide context when @mentioning someone new — the sender briefs the newcomer, not the bridge | Planned (v0.4.x) |
+| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned (v0.5) |
+| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned (v0.5) |
+| **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.5) |
+| **Orchestrator digest** | Orchestrator agent (internal, always subscribed) maintains running digests in project memory. New subscribers receive digest instead of raw history | Planned (v0.6) |
+
+## Orchestrator Agent (Planned)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Role** | Internal agent responsible for conversation-level coordination: digest maintenance, smart routing, conflict detection, task tracking | Planned (v0.6) |
+| **Digest maintenance** | Subscribes to all conversations, maintains summaries in project memory (`type: "digest"`). Updates every N messages or on-demand | Planned (v0.6) |
+| **Onboarding brief** | When a new agent subscribes, orchestrator provides a context summary (key points, decisions, open TODOs) | Planned (v0.6) |
+| **Smart routing** | Routes messages to the best agent based on capabilities and @mention patterns | Planned (v0.6) |
+| **Conflict detection** | Flags contradictory decisions or duplicate work across conversations | Planned (v0.7) |
+
 ## Roadmap
 
 | Version | Focus |
@@ -188,10 +208,10 @@
 | **v0.2** | **Bridge — shared workspace, projects, conversations, memory, visibility, auth, 16 tools** |
 | v0.2.x | Reliability & isolation — session recovery, heartbeat, data isolation, npm publish, internal agent runner |
 | **v0.3** | **SSE Push Notifications — 3-layer EventBus→Dispatcher→Client, visibility gating, proxy SSE, agent fast-path** |
-| v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary), onboarding digests |
+| v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary) |
 | **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
-| v0.4.x | Strict mode enforcement, discovery rules (listing: public/private), access control (public_read/public_discuss/private) |
-| v0.5 | Debate via bridge — consensus by messages, smart routing, bridge-level passive agents, capability catalog, task claiming/pull queue |
-| v0.6 | Sentinel AI + Classification — auto-tagger, redaction, security alerts |
-| v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol |
+| v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
+| v0.5 | Message tags & search — per-message tags, full-text search, filter by agent/date/tag. Debate via bridge, capability catalog, task claiming |
+| v0.6 | Orchestrator agent — digest maintenance, onboarding briefs, smart routing. Sentinel AI (auto-classification, redaction) |
+| v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol, conflict detection |
 | v0.8+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
