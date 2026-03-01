@@ -25,6 +25,7 @@ import { resolvePersonas } from "./personas.js";
 import { createAdapter } from "./adapters/index.js";
 import { DebateSession, type DebateMode } from "./orchestrator.js";
 import { writeFileSync, existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { setLogLevel, initFileLogging } from "./logger.js";
 import {
   addAgent,
@@ -52,7 +53,7 @@ Commands:
   project archive [id]     Archive a project
   context get [key]        Read from private memory
   context set <key> <val>  Write to private memory
-  init                     Create agorai.config.json
+  init [--port] [--host]   Create agorai.config.json with bridge config
   start [--http]           Start MCP server (stdio or HTTP)
   serve                    Start bridge HTTP server (Streamable HTTP)
   connect <url> --key <k>  Connect Claude Desktop to a remote bridge (stdio→HTTP proxy)
@@ -141,7 +142,7 @@ async function main() {
       cmdContext(args.slice(1));
       break;
     case "init":
-      cmdInit();
+      cmdInit(args.slice(1));
       break;
     case "start":
       cmdStart(args.slice(1));
@@ -517,12 +518,32 @@ function cmdContext(args: string[]) {
   }
 }
 
-function cmdInit() {
+function cmdInit(args: string[]) {
+  // Parse --port and --host flags
+  let port = 3100;
+  let host = "127.0.0.1";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--port" && args[i + 1]) {
+      port = parseInt(args[i + 1], 10);
+      if (isNaN(port) || port < 1 || port > 65535) {
+        console.error("Error: --port must be a valid port number (1-65535).");
+        process.exit(1);
+      }
+      i++;
+    } else if (args[i] === "--host" && args[i + 1]) {
+      host = args[i + 1];
+      i++;
+    }
+  }
+
   const filename = "agorai.config.json";
   if (existsSync(filename)) {
     console.log(`${filename} already exists. Skipping.`);
     return;
   }
+
+  const passKey = randomBytes(24).toString("base64url");
+  const salt = randomBytes(32).toString("hex");
 
   const defaultConfig = {
     user: "default",
@@ -543,12 +564,27 @@ function cmdInit() {
         enabled: false,
       },
     ],
+    bridge: {
+      host,
+      port,
+      salt,
+      apiKeys: [
+        { key: passKey, agent: "my-agent", clearanceLevel: "team" },
+      ],
+    },
     database: { path: "./data/agorai.db" },
   };
 
   writeFileSync(filename, JSON.stringify(defaultConfig, null, 2) + "\n");
   console.log(`Created ${filename}`);
-  console.log("Edit it to enable agents and configure personas.");
+  console.log(`  Bridge:   http://${host}:${port}/mcp`);
+  console.log(`  Pass-key: ${passKey}`);
+  console.log(`  Salt:     configured (auto-generated)`);
+  console.log("");
+  console.log("Next steps:");
+  console.log("  1. agorai serve                    # start the bridge");
+  console.log("  2. npx agorai-connect setup         # connect Claude Desktop");
+  console.log("  3. Edit agorai.config.json to add more agents");
 }
 
 function cmdStart(args: string[]) {
