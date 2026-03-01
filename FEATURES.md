@@ -85,6 +85,7 @@
 | **list_agents project filter** | `project_id` parameter filters to agents in that project's conversations | Done (v0.2.2) |
 | **Opaque error responses** | Access failures return "Not found or access denied" (no resource leak) | Done (v0.2.2) |
 | Permission matrix | Per-project agent × resource × action | Planned (v0.3) |
+| **Config isolation** | Protect `agorai.config.json` from filesystem-capable agents — restricted dir permissions, env var pass-keys, sandboxed agent scope | Planned (v0.5) |
 | Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.6) |
 | Redaction | Replace sensitive data with tokens instead of blocking | Planned (v0.6+) |
 
