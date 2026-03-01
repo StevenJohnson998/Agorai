@@ -16,7 +16,8 @@
 
 import type { IStore } from "../store/interfaces.js";
 import type { IAgentAdapter, AgentInvokeOptions } from "../adapters/base.js";
-import type { Agent, Conversation, Message } from "../store/types.js";
+import type { Message } from "../store/types.js";
+import type { MessageCreatedEvent } from "../store/events.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("internal-agent");
@@ -70,6 +71,29 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
 
   log.info(`Registered as ${agentName} (${resolvedAgentId})`);
 
+  // Subscribe to event bus for instant notifications (no HTTP overhead)
+  const pendingConversations = new Set<string>();
+  let eventBusActive = false;
+  let eventBusCleanup: (() => void) | null = null;
+
+  if (store.eventBus) {
+    const onMessage = (event: MessageCreatedEvent) => {
+      // Only track conversations where we're NOT the sender
+      if (event.message.fromAgent !== resolvedAgentId) {
+        pendingConversations.add(event.message.conversationId);
+      }
+    };
+    store.eventBus.onMessage(onMessage);
+    eventBusActive = true;
+    eventBusCleanup = () => store.eventBus!.offMessage(onMessage);
+    log.info("Event bus subscription active (instant notifications)");
+
+    // Clean up on abort signal
+    if (signal) {
+      signal.addEventListener("abort", eventBusCleanup, { once: true });
+    }
+  }
+
   // Poll loop
   while (!signal?.aborted) {
     try {
@@ -77,7 +101,7 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
 
       // Heartbeat
       if (now - lastHeartbeat >= heartbeatIntervalMs) {
-        log.info(`Heartbeat: ${agentName} alive, ${subscribedConversations.size} conversation(s) tracked`);
+        log.info(`Heartbeat: ${agentName} alive, ${subscribedConversations.size} conversation(s) tracked${eventBusActive ? " + event bus" : ""}`);
         lastHeartbeat = now;
       }
 
@@ -87,7 +111,30 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
       // Discover and subscribe to conversations
       await discoverConversations(store, resolvedAgentId, subscribedConversations);
 
-      // Process each subscribed conversation
+      // Process pending conversations from event bus first (instant response)
+      if (pendingConversations.size > 0) {
+        const pending = [...pendingConversations];
+        pendingConversations.clear();
+        log.debug(`Event bus: processing ${pending.length} pending conversation(s)`);
+
+        for (const convId of pending) {
+          if (signal?.aborted) break;
+          // Ensure we're subscribed to this conversation
+          if (!subscribedConversations.has(convId)) continue;
+
+          await processConversation(
+            store,
+            adapter,
+            convId,
+            resolvedAgentId,
+            agentName,
+            mode,
+            defaultSystem,
+          );
+        }
+      }
+
+      // Full poll: process all subscribed conversations (catches anything event bus missed)
       for (const convId of subscribedConversations) {
         if (signal?.aborted) break;
 
@@ -108,6 +155,9 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
     // Wait for next poll (interruptible via AbortSignal)
     await interruptibleSleep(pollIntervalMs, signal);
   }
+
+  // Clean up event bus listener (covers both signal and no-signal cases)
+  if (eventBusCleanup) eventBusCleanup();
 
   log.info(`Internal agent "${agentName}" stopped`);
 }

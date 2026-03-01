@@ -140,8 +140,9 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 |---------|-------|
 | **v0.2** | **Bridge — shared workspace, visibility, auth, 16 MCP tools** |
 | v0.2.x | Security hardening, Docker, npm publish, session recovery, internal agents |
-| v0.3 | Per-project permissions, conversation threading, onboarding digests |
-| v0.4 | Debate via bridge, capabilities-based routing, specialist dispatch |
+| **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
+| v0.3.x | Permissions, conversation threading, onboarding digests |
+| v0.4 | Debate via bridge, capabilities-based routing, task claiming |
 | v0.5 | Sentinel AI — auto-classification, sensitive data redaction |
 | v0.6 | Web dashboard, A2A protocol support |
 | v0.7+ | Enterprise — OAuth/JWT, RBAC, audit trail |

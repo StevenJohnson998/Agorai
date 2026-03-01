@@ -20,6 +20,8 @@ agorai-connect proxy <bridge-url> <pass-key>
 
 Reads JSON-RPC from stdin, POSTs to bridge `/mcp` endpoint, writes responses to stdout. Used by Claude Desktop as an MCP server connector.
 
+Also opens a background GET `/mcp` SSE stream and forwards push notifications to stdout — Claude Desktop receives real-time message notifications without polling.
+
 ### `setup` — interactive Claude Desktop configuration
 
 ```bash
@@ -54,6 +56,8 @@ Connects an OpenAI-compatible model (Ollama, Groq, Mistral, DeepSeek, LM Studio,
 - `passive` (default): responds only when `@agent-name` is mentioned
 - `active`: responds to all new messages
 
+**SSE fast-path (v0.0.6):** The agent opens a persistent GET `/mcp` SSE stream. Incoming `notifications/message` events trigger an immediate poll instead of waiting for the next poll interval. The poll loop is retained as a fallback.
+
 **API key security:** Use `--api-key-env VAR_NAME` instead of `--api-key` to keep secrets out of `ps aux`.
 
 **Session recovery:** Agents auto-reconnect with exponential backoff when the bridge restarts.
@@ -70,12 +74,20 @@ Checks Node.js version, bridge health, auth, and optionally model endpoint + inf
 ## Programmatic API
 
 ```typescript
-import { McpClient, callModel, runProxy, runAgent } from "agorai-connect";
+import { McpClient, callModel, runProxy, runAgent, SSENotification } from "agorai-connect";
 
 // Use the MCP client directly
 const client = new McpClient({ bridgeUrl: "http://localhost:3100", passKey: "key" });
 await client.initialize();
 const result = await client.callTool("list_conversations", {});
+
+// Open SSE stream for real-time push notifications
+const closeStream = await client.openSSEStream((notification: SSENotification) => {
+  console.log("New message in", notification.params.conversationId);
+});
+// ... later:
+closeStream();
+
 await client.close();
 
 // Call an OpenAI-compatible model

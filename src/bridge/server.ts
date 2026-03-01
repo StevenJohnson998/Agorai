@@ -10,9 +10,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { IStore } from "../store/interfaces.js";
 import type { IAuthProvider, AuthResult } from "./auth.js";
 import type { Config } from "../config.js";
+import type { MessageCreatedEvent } from "../store/events.js";
+import { VISIBILITY_ORDER, type VisibilityLevel } from "../store/types.js";
 import { createLogger } from "../logger.js";
 
 import {
@@ -41,6 +44,9 @@ const sessionAuth = new Map<string, AuthResult>();
 
 /** Active transports keyed by sessionId. */
 const transports = new Map<string, StreamableHTTPServerTransport>();
+
+/** Reverse index: agentId → set of sessionIds (one agent can have multiple sessions). */
+const agentSessions = new Map<string, Set<string>>();
 
 // --- Rate limiter (sliding window per agent) ---
 
@@ -98,7 +104,31 @@ const ACCESS_DENIED = { content: [{ type: "text" as const, text: JSON.stringify(
 function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
   const server = new McpServer({
     name: "agorai-bridge",
-    version: "0.2.2",
+    version: "0.3.0",
+  }, {
+    instructions: [
+      "You are connected to Agorai, a multi-agent collaboration bridge.",
+      "",
+      "IMPORTANT — Message read tracking:",
+      "After you read messages with get_messages, you MUST call mark_read with the same conversation_id.",
+      "This prevents you from seeing the same messages again on the next poll.",
+      "Example: get_messages({conversation_id: \"abc\"}) → process messages → mark_read({conversation_id: \"abc\"})",
+      "",
+      "IMPORTANT — Visibility / confidentiality levels:",
+      "Messages have a visibility level: public < team < confidential < restricted.",
+      "When you send a message, set its visibility to the HIGHEST level among the messages you used as input.",
+      "For example, if you read messages at 'team' and 'confidential' level, your reply MUST be 'confidential'.",
+      "If unsure, default to the conversation's default visibility. Never downgrade confidentiality.",
+      "",
+      "Typical workflow:",
+      "1. get_status — check for unread messages",
+      "2. list_projects → list_conversations → subscribe to conversations you want to follow",
+      "3. get_messages({conversation_id, unread_only: true}) — fetch new messages",
+      "4. Process/respond with send_message (set visibility to max of input messages' visibility)",
+      "5. mark_read({conversation_id}) — ALWAYS do this after reading, even if you don't reply",
+      "",
+      "Use @agent-name to mention specific agents. Use list_subscribers to see who is in a conversation.",
+    ].join("\n"),
   });
 
   // --- Agent tools ---
@@ -333,7 +363,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   server.tool(
     "send_message",
-    "Send a message in a conversation (visibility capped at your clearance)",
+    "Send a message in a conversation (visibility capped at your clearance). Set visibility to the highest level among the input messages you used (public < team < confidential < restricted). If unsure, omit it and the conversation default will be used.",
     SendMessageSchema.shape,
     async (args) => {
       // Verify caller is subscribed to the conversation
@@ -354,7 +384,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   server.tool(
     "get_messages",
-    "Get messages from a conversation (filtered by your clearance)",
+    "Get messages from a conversation (filtered by your clearance). IMPORTANT: After calling this, you MUST call mark_read with the same conversation_id to avoid seeing the same messages again.",
     GetMessagesSchema.shape,
     async (args) => {
       // Verify caller is subscribed to the conversation
@@ -399,7 +429,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   server.tool(
     "mark_read",
-    "Mark messages as read in a conversation",
+    "Mark messages as read in a conversation. Call this after every get_messages to avoid re-reading the same messages. Pass just conversation_id to mark all messages read.",
     MarkReadSchema.shape,
     async (args) => {
       if (args.up_to_message_id) {
@@ -444,7 +474,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       // Health endpoint
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", version: "0.2.2" }));
+        res.end(JSON.stringify({ status: "ok", version: "0.3.0" }));
         return;
       }
 
@@ -496,8 +526,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         if (sessionId && transports.has(sessionId)) {
           const transport = transports.get(sessionId)!;
           await transport.close();
-          transports.delete(sessionId);
-          sessionAuth.delete(sessionId);
+          removeSession(sessionId);
           res.writeHead(200);
           res.end();
         } else {
@@ -507,7 +536,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         return;
       }
 
-      // Check for existing session
+      // Check for existing session (GET or POST)
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
       if (sessionId && transports.has(sessionId)) {
@@ -522,6 +551,13 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         return;
       }
 
+      // GET without session ID — cannot initialize via GET
+      if (req.method === "GET") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "GET requires an existing session. Initialize with POST first." }));
+        return;
+      }
+
       // New session — create transport and MCP server scoped to this agent
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
@@ -530,19 +566,27 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       const mcpServer = createBridgeMcpServer(store, authResult.agentId!);
       await mcpServer.connect(transport);
 
+      // Track whether onclose fired before we finish registration
+      let closedBeforeRegistered = false;
+
       transport.onclose = () => {
         if (transport.sessionId) {
-          transports.delete(transport.sessionId);
-          sessionAuth.delete(transport.sessionId);
-          log.debug(`session closed: ${transport.sessionId}`);
+          if (transports.has(transport.sessionId)) {
+            removeSession(transport.sessionId);
+            log.debug(`session closed: ${transport.sessionId}`);
+          } else {
+            // onclose fired before registration completed — flag it
+            closedBeforeRegistered = true;
+          }
         }
       };
 
       await transport.handleRequest(req, res);
 
-      if (transport.sessionId) {
+      if (transport.sessionId && !closedBeforeRegistered) {
         transports.set(transport.sessionId, transport);
         sessionAuth.set(transport.sessionId, authResult);
+        trackAgentSession(authResult.agentId!, transport.sessionId);
         log.info(`new session: ${transport.sessionId} (agent: ${authResult.agentName})`);
       }
     } catch (err) {
@@ -553,6 +597,12 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       }
     }
   });
+
+  // --- SSE push notification dispatch ---
+
+  const eventBusListener = store.eventBus
+    ? setupSSEDispatch(store)
+    : (log.info("Store has no eventBus — SSE push notifications disabled, agents will use polling"), undefined);
 
   const host = bridgeConfig.host;
   const port = bridgeConfig.port;
@@ -566,12 +616,18 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
 
   return {
     close: async () => {
-      // Close all active transports
+      // Unsubscribe from event bus
+      if (eventBusListener && store.eventBus) {
+        store.eventBus.offMessage(eventBusListener);
+      }
+
+      // Close all active transports (best-effort — some may already be closed)
       for (const transport of transports.values()) {
-        await transport.close();
+        try { await transport.close(); } catch { /* already closed */ }
       }
       transports.clear();
       sessionAuth.clear();
+      agentSessions.clear();
 
       await new Promise<void>((resolve, reject) => {
         httpServer.close((err) => (err ? reject(err) : resolve()));
@@ -579,4 +635,105 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       log.info("bridge server stopped");
     },
   };
+}
+
+// --- Agent session tracking helpers ---
+
+function trackAgentSession(agentId: string, sessionId: string): void {
+  let sessions = agentSessions.get(agentId);
+  if (!sessions) {
+    sessions = new Set();
+    agentSessions.set(agentId, sessions);
+  }
+  sessions.add(sessionId);
+}
+
+function removeSession(sessionId: string): void {
+  const auth = sessionAuth.get(sessionId);
+  if (auth?.agentId) {
+    const sessions = agentSessions.get(auth.agentId);
+    if (sessions) {
+      sessions.delete(sessionId);
+      if (sessions.size === 0) agentSessions.delete(auth.agentId);
+    }
+  }
+  transports.delete(sessionId);
+  sessionAuth.delete(sessionId);
+}
+
+// --- SSE push notification dispatch ---
+
+function setupSSEDispatch(store: IStore): (event: MessageCreatedEvent) => void {
+  const listener = (event: MessageCreatedEvent) => {
+    // Fire-and-forget — errors are logged, not thrown
+    dispatchMessageNotification(store, event).catch((err) => {
+      log.error(`SSE dispatch error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+
+  store.eventBus!.onMessage(listener);
+  log.info("SSE push notifications enabled");
+  return listener;
+}
+
+async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent): Promise<void> {
+  const { message } = event;
+
+  // Get all subscribers + all agents in one batch (avoids N+1 DB calls)
+  const [subscribers, allAgents] = await Promise.all([
+    store.getSubscribers(message.conversationId),
+    store.listAgents(),
+  ]);
+  const agentMap = new Map(allAgents.map((a) => [a.id, a]));
+
+  log.debug(`SSE dispatch: ${subscribers.length} sub(s), ${agentSessions.size} session group(s)`);
+
+  // Build the notification payload (content preview, not full message)
+  const contentPreview = message.content.length > 200
+    ? message.content.slice(0, 200) + "..."
+    : message.content;
+
+  const notification: JSONRPCMessage = {
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: {
+      conversationId: message.conversationId,
+      messageId: message.id,
+      fromAgent: message.fromAgent,
+      type: message.type,
+      visibility: message.visibility,
+      contentPreview,
+      createdAt: message.createdAt,
+    },
+  };
+
+  const messageVisInt = VISIBILITY_ORDER[message.visibility];
+
+  for (const sub of subscribers) {
+    // Exclude sender — they already know about their own message
+    if (sub.agentId === message.fromAgent) continue;
+
+    // Visibility gate: agent clearance must be >= message visibility
+    const agent = agentMap.get(sub.agentId);
+    if (!agent) continue;
+
+    const agentVisInt = VISIBILITY_ORDER[agent.clearanceLevel as VisibilityLevel];
+    if (agentVisInt < messageVisInt) continue;
+
+    // Find all active sessions for this agent and push notification
+    const sessions = agentSessions.get(sub.agentId);
+    if (!sessions) continue;
+
+    for (const sessionId of sessions) {
+      const transport = transports.get(sessionId);
+      if (!transport) continue;
+
+      try {
+        await transport.send(notification);
+      } catch {
+        // Fire-and-forget: transport may have disconnected (agent will fall back to polling)
+        log.debug(`SSE send failed for session ${sessionId} (agent: ${agent.name})`);
+      }
+    }
+  }
 }
