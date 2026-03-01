@@ -21,6 +21,33 @@ export const VISIBILITY_ORDER: Record<VisibilityLevel, number> = {
   restricted: 3,
 };
 
+// --- Confidentiality model ---
+
+export type ConfidentialityMode = "normal" | "strict" | "flexible";
+
+export interface BridgeInstructions {
+  /** Human-readable instruction for handling confidentiality. Pre-computed by bridge based on project mode. */
+  confidentiality: string;
+  /** The project's confidentiality mode. */
+  mode: ConfidentialityMode;
+}
+
+export interface BridgeMetadata {
+  visibility: VisibilityLevel;
+  senderClearance: VisibilityLevel;
+  visibilityCapped: boolean;
+  originalVisibility?: VisibilityLevel;
+  timestamp: string;
+  instructions: BridgeInstructions;
+}
+
+export interface AgentHighWaterMark {
+  agentId: string;
+  projectId: string;
+  maxVisibility: VisibilityLevel;
+  updatedAt: string;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -37,6 +64,7 @@ export interface Project {
   name: string;
   description: string | null;
   visibility: VisibilityLevel;
+  confidentialityMode: ConfidentialityMode;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -81,7 +109,10 @@ export interface Message {
   type: string;
   visibility: VisibilityLevel;
   content: string;
+  /** @deprecated Use agentMetadata/bridgeMetadata */
   metadata: Record<string, unknown> | null;
+  agentMetadata: Record<string, unknown> | null;
+  bridgeMetadata: BridgeMetadata | null;
   createdAt: string;
 }
 
@@ -99,6 +130,7 @@ export interface CreateProject {
   name: string;
   description?: string;
   visibility?: VisibilityLevel;
+  confidentialityMode?: ConfidentialityMode;
   createdBy: string;
 }
 

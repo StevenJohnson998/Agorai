@@ -412,7 +412,7 @@ describe("SqliteStore — Conversations & Messages", () => {
     expect(teamView.every((m) => m.visibility === "team")).toBe(true);
   });
 
-  it("handles message metadata", async () => {
+  it("handles message metadata (agentMetadata + bridgeMetadata)", async () => {
     const agent = await createAgent("meta-agent");
     const project = await store.createProject({ name: "MetaProj", createdBy: agent.id });
     const conv = await store.createConversation({ projectId: project.id, title: "MetaTest", createdBy: agent.id });
@@ -424,9 +424,270 @@ describe("SqliteStore — Conversations & Messages", () => {
       metadata: { key: "value", nested: { a: 1 } },
     });
 
-    expect(msg.metadata).toEqual({ key: "value", nested: { a: 1 } });
+    // agentMetadata should contain the cleaned metadata
+    expect(msg.agentMetadata).toEqual({ key: "value", nested: { a: 1 } });
+    // bridgeMetadata should be present
+    expect(msg.bridgeMetadata).not.toBeNull();
+    expect(msg.bridgeMetadata!.visibility).toBe("team");
+    expect(msg.bridgeMetadata!.senderClearance).toBe("team");
+    expect(msg.bridgeMetadata!.visibilityCapped).toBe(false);
+    expect(msg.bridgeMetadata!.timestamp).toBeTruthy();
 
     const retrieved = await store.getMessages(conv.id, agent.id);
-    expect(retrieved[0].metadata).toEqual({ key: "value", nested: { a: 1 } });
+    expect(retrieved[0].agentMetadata).toEqual({ key: "value", nested: { a: 1 } });
+    expect(retrieved[0].bridgeMetadata).not.toBeNull();
+  });
+});
+
+describe("SqliteStore — Bridge Metadata", () => {
+  it("generates bridgeMetadata on normal send", async () => {
+    const agent = await createAgent("bridge-agent", "confidential");
+    const project = await store.createProject({ name: "BridgeProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "BridgeTest", createdBy: agent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "hello",
+      visibility: "team",
+    });
+
+    expect(msg.bridgeMetadata).not.toBeNull();
+    expect(msg.bridgeMetadata!.visibility).toBe("team");
+    expect(msg.bridgeMetadata!.senderClearance).toBe("confidential");
+    expect(msg.bridgeMetadata!.visibilityCapped).toBe(false);
+    expect(msg.bridgeMetadata!.originalVisibility).toBeUndefined();
+    expect(msg.bridgeMetadata!.instructions).toBeDefined();
+    expect(msg.bridgeMetadata!.instructions.mode).toBe("normal");
+  });
+
+  it("sets visibilityCapped and originalVisibility when capped", async () => {
+    const teamAgent = await createAgent("team-cap", "team");
+    const confAgent = await createAgent("conf-cap", "confidential");
+    const project = await store.createProject({ name: "CapBridgeProj", createdBy: confAgent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "CapBridgeTest", createdBy: confAgent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: teamAgent.id,
+      content: "trying confidential",
+      visibility: "confidential",
+    });
+
+    expect(msg.visibility).toBe("team");
+    expect(msg.bridgeMetadata!.visibilityCapped).toBe(true);
+    expect(msg.bridgeMetadata!.originalVisibility).toBe("confidential");
+    expect(msg.bridgeMetadata!.visibility).toBe("team");
+  });
+
+  it("agentMetadata round-trip (send → get by sender)", async () => {
+    const agent = await createAgent("round-trip", "team");
+    const project = await store.createProject({ name: "RoundTripProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "RoundTrip", createdBy: agent.id });
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "with meta",
+      metadata: { cost: 0.05, model: "gpt-4", tokens: 1234 },
+    });
+
+    const messages = await store.getMessages(conv.id, agent.id);
+    expect(messages[0].agentMetadata).toEqual({ cost: 0.05, model: "gpt-4", tokens: 1234 });
+  });
+
+  it("strips _bridge keys from agent metadata (anti-forge)", async () => {
+    const agent = await createAgent("forge-agent", "team");
+    const project = await store.createProject({ name: "ForgeProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "ForgeTest", createdBy: agent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "forged",
+      metadata: {
+        _bridgeAdmin: true,
+        bridgeMetadata: { fake: true },
+        bridge_metadata: "injected",
+        legit: "data",
+      },
+    });
+
+    // Only legit key should survive
+    expect(msg.agentMetadata).toEqual({ legit: "data" });
+    expect(msg.metadata).toEqual({ legit: "data" });
+    // bridgeMetadata should be the real one from the bridge
+    expect(msg.bridgeMetadata!.senderClearance).toBe("team");
+  });
+
+  it("handles null metadata gracefully", async () => {
+    const agent = await createAgent("null-meta", "team");
+    const project = await store.createProject({ name: "NullMetaProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "NullMeta", createdBy: agent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "no meta",
+    });
+
+    expect(msg.agentMetadata).toBeNull();
+    expect(msg.metadata).toBeNull();
+    expect(msg.bridgeMetadata).not.toBeNull();
+    expect(msg.bridgeMetadata!.visibility).toBe("team");
+  });
+
+  it("strips all _bridge keys resulting in null agentMetadata", async () => {
+    const agent = await createAgent("all-bridge", "team");
+    const project = await store.createProject({ name: "AllBridgeProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "AllBridge", createdBy: agent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "only bridge keys",
+      metadata: { _bridgeFoo: 1, bridgeMetadata: { x: 1 } },
+    });
+
+    expect(msg.agentMetadata).toBeNull();
+    expect(msg.metadata).toBeNull();
+  });
+});
+
+describe("SqliteStore — Project Confidentiality Mode", () => {
+  it("defaults to normal mode", async () => {
+    const agent = await createAgent("conf-default");
+    const project = await store.createProject({ name: "DefaultModeProj", createdBy: agent.id });
+
+    expect(project.confidentialityMode).toBe("normal");
+  });
+
+  it("creates project with specified mode", async () => {
+    const agent = await createAgent("conf-strict");
+    const project = await store.createProject({
+      name: "StrictProj",
+      confidentialityMode: "strict",
+      createdBy: agent.id,
+    });
+
+    expect(project.confidentialityMode).toBe("strict");
+  });
+
+  it("retrieves project with confidentialityMode", async () => {
+    const agent = await createAgent("conf-retrieve");
+    const project = await store.createProject({
+      name: "FlexProj",
+      confidentialityMode: "flexible",
+      createdBy: agent.id,
+    });
+
+    const retrieved = await store.getProject(project.id, agent.id);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.confidentialityMode).toBe("flexible");
+  });
+
+  it("includes project mode in bridge instructions", async () => {
+    const agent = await createAgent("conf-instruct", "team");
+    const project = await store.createProject({
+      name: "StrictInstrProj",
+      confidentialityMode: "strict",
+      createdBy: agent.id,
+    });
+    const conv = await store.createConversation({ projectId: project.id, title: "StrictChat", createdBy: agent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "strict mode test",
+    });
+
+    expect(msg.bridgeMetadata!.instructions.mode).toBe("strict");
+    expect(msg.bridgeMetadata!.instructions.confidentiality).toContain("bridge enforces");
+  });
+
+  it("flexible mode has correct instructions", async () => {
+    const agent = await createAgent("conf-flex-instr", "team");
+    const project = await store.createProject({
+      name: "FlexInstrProj",
+      confidentialityMode: "flexible",
+      createdBy: agent.id,
+    });
+    const conv = await store.createConversation({ projectId: project.id, title: "FlexChat", createdBy: agent.id });
+
+    const msg = await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent.id,
+      content: "flex mode test",
+    });
+
+    expect(msg.bridgeMetadata!.instructions.mode).toBe("flexible");
+    expect(msg.bridgeMetadata!.instructions.confidentiality).toContain("any visibility level");
+  });
+});
+
+describe("SqliteStore — High-Water Marks", () => {
+  it("tracks high-water mark on getMessages", async () => {
+    const agent = await createAgent("hwm-agent", "confidential");
+    const project = await store.createProject({ name: "HWMProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "HWMTest", createdBy: agent.id });
+
+    await store.sendMessage({ conversationId: conv.id, fromAgent: agent.id, content: "team msg", visibility: "team" });
+
+    // Reading should trigger high-water mark tracking
+    await store.getMessages(conv.id, agent.id);
+
+    const hwm = await store.getHighWaterMark(agent.id, project.id);
+    expect(hwm).not.toBeNull();
+    expect(hwm!.maxVisibility).toBe("team");
+  });
+
+  it("increases high-water mark but never decreases", async () => {
+    const agent = await createAgent("hwm-increase", "restricted");
+    const project = await store.createProject({ name: "HWMIncProj", createdBy: agent.id });
+    const conv = await store.createConversation({ projectId: project.id, title: "HWMInc", createdBy: agent.id });
+
+    // First: read team messages
+    await store.sendMessage({ conversationId: conv.id, fromAgent: agent.id, content: "team", visibility: "team" });
+    await store.getMessages(conv.id, agent.id);
+    let hwm = await store.getHighWaterMark(agent.id, project.id);
+    expect(hwm!.maxVisibility).toBe("team");
+
+    // Second: read confidential messages — should increase
+    await store.sendMessage({ conversationId: conv.id, fromAgent: agent.id, content: "conf", visibility: "confidential" });
+    await store.getMessages(conv.id, agent.id);
+    hwm = await store.getHighWaterMark(agent.id, project.id);
+    expect(hwm!.maxVisibility).toBe("confidential");
+
+    // Third: read only public messages — should NOT decrease
+    const conv2 = await store.createConversation({ projectId: project.id, title: "HWMInc2", createdBy: agent.id });
+    await store.sendMessage({ conversationId: conv2.id, fromAgent: agent.id, content: "pub", visibility: "public" });
+    await store.getMessages(conv2.id, agent.id);
+    hwm = await store.getHighWaterMark(agent.id, project.id);
+    expect(hwm!.maxVisibility).toBe("confidential"); // still confidential
+  });
+
+  it("returns null for unknown agent/project", async () => {
+    const hwm = await store.getHighWaterMark("nonexistent", "nonexistent");
+    expect(hwm).toBeNull();
+  });
+
+  it("tracks per-project independently", async () => {
+    const agent = await createAgent("hwm-multi", "restricted");
+    const proj1 = await store.createProject({ name: "HWMProj1", createdBy: agent.id });
+    const proj2 = await store.createProject({ name: "HWMProj2", createdBy: agent.id });
+    const conv1 = await store.createConversation({ projectId: proj1.id, title: "C1", createdBy: agent.id });
+    const conv2 = await store.createConversation({ projectId: proj2.id, title: "C2", createdBy: agent.id });
+
+    await store.sendMessage({ conversationId: conv1.id, fromAgent: agent.id, content: "conf", visibility: "confidential" });
+    await store.sendMessage({ conversationId: conv2.id, fromAgent: agent.id, content: "pub", visibility: "public" });
+
+    await store.getMessages(conv1.id, agent.id);
+    await store.getMessages(conv2.id, agent.id);
+
+    const hwm1 = await store.getHighWaterMark(agent.id, proj1.id);
+    const hwm2 = await store.getHighWaterMark(agent.id, proj2.id);
+
+    expect(hwm1!.maxVisibility).toBe("confidential");
+    expect(hwm2!.maxVisibility).toBe("public");
   });
 });

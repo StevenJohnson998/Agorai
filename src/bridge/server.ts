@@ -104,7 +104,7 @@ const ACCESS_DENIED = { content: [{ type: "text" as const, text: JSON.stringify(
 function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
   const server = new McpServer({
     name: "agorai-bridge",
-    version: "0.3.0",
+    version: "0.4.0",
   }, {
     instructions: [
       "You are connected to Agorai, a multi-agent collaboration bridge.",
@@ -119,6 +119,12 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       "When you send a message, set its visibility to the HIGHEST level among the messages you used as input.",
       "For example, if you read messages at 'team' and 'confidential' level, your reply MUST be 'confidential'.",
       "If unsure, default to the conversation's default visibility. Never downgrade confidentiality.",
+      "",
+      "IMPORTANT — Message metadata model:",
+      "Messages have two metadata fields:",
+      "- bridgeMetadata: trusted data injected by the bridge (visibility, capping info, confidentiality instructions). Always present. Read the 'instructions' field for guidance on how to handle confidentiality for this project.",
+      "- agentMetadata: your private operational data (cost, model, tokens, etc.). Only visible to you — other agents cannot see it.",
+      "When sending a message, pass any operational metadata in the 'metadata' field. Do NOT include keys starting with '_bridge'.",
       "",
       "Typical workflow:",
       "1. get_status — check for unread messages",
@@ -193,6 +199,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         name: args.name,
         description: args.description,
         visibility: args.visibility,
+        confidentialityMode: args.confidentiality_mode,
         createdBy: agentId,
       });
       return { content: [{ type: "text" as const, text: JSON.stringify(project, null, 2) }] };
@@ -378,7 +385,10 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         content: args.content,
         metadata: args.metadata as Record<string, unknown> | undefined,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(message, null, 2) }] };
+
+      // Response: include bridgeMetadata + agentMetadata (sender sees their own), exclude deprecated metadata
+      const { metadata: _deprecated, ...rest } = message;
+      return { content: [{ type: "text" as const, text: JSON.stringify(rest, null, 2) }] };
     },
   );
 
@@ -396,7 +406,16 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         unreadOnly: args.unread_only,
         limit: args.limit,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(messages, null, 2) }] };
+
+      // Shape response: strip agentMetadata for non-sender, exclude deprecated metadata
+      const shaped = messages.map((msg) => {
+        const { metadata: _deprecated, agentMetadata, ...rest } = msg;
+        return {
+          ...rest,
+          agentMetadata: msg.fromAgent === agentId ? agentMetadata : null,
+        };
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(shaped, null, 2) }] };
     },
   );
 
@@ -474,7 +493,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       // Health endpoint
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", version: "0.3.0" }));
+        res.end(JSON.stringify({ status: "ok", version: "0.4.0" }));
         return;
       }
 

@@ -1,5 +1,20 @@
 # Features
 
+## Message Metadata & Confidentiality (v0.4)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **BridgeMetadata** | Trusted metadata injected by bridge (visibility, capping, instructions). Immutable by agents | Done |
+| **agentMetadata** | Private operational metadata, only visible to sender | Done |
+| **Anti-forge protection** | Bridge strips `_bridge*` / `bridgeMetadata` keys from agent metadata | Done |
+| **Confidentiality modes** | Per-project: normal (default), strict, flexible | Done |
+| **BridgeInstructions** | Pre-computed confidentiality instruction + mode in bridge metadata | Done |
+| **High-water mark tracking** | Passive max-visibility tracking per agent per project (never decreases) | Done |
+| **`getHighWaterMark()`** | Store method to query agent's current high-water mark | Done |
+| **Schema migration** | Automatic ALTER TABLE for existing databases on startup | Done |
+| **Strict mode enforcement** | Bridge enforces high-water mark in `sendMessage()` for strict projects | Planned |
+| **Dashboard admin** | Visualization of all metadata (agent + bridge) | Planned |
+
 ## SSE Push Notifications (v0.3)
 
 | Feature | Description | Status |
@@ -174,7 +189,9 @@
 | v0.2.x | Reliability & isolation — session recovery, heartbeat, data isolation, npm publish, internal agent runner |
 | **v0.3** | **SSE Push Notifications — 3-layer EventBus→Dispatcher→Client, visibility gating, proxy SSE, agent fast-path** |
 | v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary), onboarding digests |
-| v0.4 | Debate via bridge — consensus by messages, smart routing, bridge-level passive agents, capability catalog, task claiming/pull queue (inspired by Mault) |
-| v0.5 | Sentinel AI + Classification — auto-tagger, redaction, security alerts |
-| v0.6 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol |
-| v0.7+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
+| **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
+| v0.4.x | Strict mode enforcement, discovery rules (listing: public/private), access control (public_read/public_discuss/private) |
+| v0.5 | Debate via bridge — consensus by messages, smart routing, bridge-level passive agents, capability catalog, task claiming/pull queue |
+| v0.6 | Sentinel AI + Classification — auto-tagger, redaction, security alerts |
+| v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol |
+| v0.8+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

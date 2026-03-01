@@ -54,6 +54,7 @@ export const CreateProjectSchema = z.object({
   name: z.string().min(1).max(MAX.name).describe("Project name"),
   description: z.string().max(MAX.description).optional().describe("Project description"),
   visibility: VisibilityParam,
+  confidentiality_mode: z.enum(["normal", "strict", "flexible"]).default("normal").describe("Confidentiality mode: normal (agent-responsible), strict (bridge-enforced), flexible (agent chooses freely)"),
 });
 
 export const ListProjectsSchema = z.object({});
@@ -114,7 +115,7 @@ export const SendMessageSchema = z.object({
   content: z.string().min(1).max(MAX.messageContent).describe("Message content"),
   type: z.enum(["message", "spec", "result", "review", "status", "question"]).default("message").describe("Message type"),
   visibility: VisibilityParam,
-  metadata: z.record(z.unknown()).optional().describe("Arbitrary metadata"),
+  metadata: z.record(z.unknown()).optional().describe("Private metadata (only visible to you). Do not include keys starting with '_bridge'."),
 });
 
 export const GetMessagesSchema = z.object({
