@@ -67,6 +67,7 @@ Options:
   --continue <debate_id>   Resume an existing debate (add more rounds)
   --force                  Skip pre-estimation budget warning
   --with-agent <name>      (serve) Spawn an internal agent in the same process (repeatable)
+  --port <number>          (serve) Override bridge port (default: from config, usually 3100)
   --type <type>            (agent add) claude-desktop|claude-code|openai-compat|ollama|custom
   --model <model>          (agent add/update) Model name
   --endpoint <url>         (agent add/update) API endpoint URL
@@ -570,12 +571,20 @@ function cmdStart(args: string[]) {
 }
 
 async function cmdServe(args: string[]) {
-  // Parse --with-agent flags (can be repeated)
+  // Parse flags
   const withAgents: string[] = [];
+  let portOverride: number | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--with-agent" && args[i + 1]) {
       withAgents.push(args[i + 1]);
-      i++; // skip value
+      i++;
+    } else if (args[i] === "--port" && args[i + 1]) {
+      portOverride = parseInt(args[i + 1], 10);
+      if (isNaN(portOverride) || portOverride < 1 || portOverride > 65535) {
+        console.error("Error: --port must be a valid port number (1-65535).");
+        process.exit(1);
+      }
+      i++;
     }
   }
 
@@ -586,6 +595,10 @@ async function cmdServe(args: string[]) {
     console.error('Error: bridge not configured. Add a "bridge" section to agorai.config.json.');
     console.error("See agorai.config.json.example for reference.");
     process.exit(1);
+  }
+
+  if (portOverride) {
+    config.bridge.port = portOverride;
   }
 
   if (config.bridge.apiKeys.length === 0) {
