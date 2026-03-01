@@ -2,6 +2,8 @@ services:
   agorai-test:
     build: .
     container_name: agorai-test
+    ports:
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./data:/app/data
       - ./agorai.config.json:/app/agorai.config.json:ro

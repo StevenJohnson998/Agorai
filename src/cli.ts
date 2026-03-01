@@ -68,6 +68,7 @@ Options:
   --force                  Skip pre-estimation budget warning
   --with-agent <name>      (serve) Spawn an internal agent in the same process (repeatable)
   --port <number>          (serve) Override bridge port (default: from config, usually 3100)
+  --host <addr>            (serve) Override bridge host (default: from config, usually 127.0.0.1)
   --type <type>            (agent add) claude-desktop|claude-code|openai-compat|ollama|custom
   --model <model>          (agent add/update) Model name
   --endpoint <url>         (agent add/update) API endpoint URL
@@ -574,6 +575,7 @@ async function cmdServe(args: string[]) {
   // Parse flags
   const withAgents: string[] = [];
   let portOverride: number | undefined;
+  let hostOverride: string | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--with-agent" && args[i + 1]) {
       withAgents.push(args[i + 1]);
@@ -584,6 +586,9 @@ async function cmdServe(args: string[]) {
         console.error("Error: --port must be a valid port number (1-65535).");
         process.exit(1);
       }
+      i++;
+    } else if (args[i] === "--host" && args[i + 1]) {
+      hostOverride = args[i + 1];
       i++;
     }
   }
@@ -599,6 +604,9 @@ async function cmdServe(args: string[]) {
 
   if (portOverride) {
     config.bridge.port = portOverride;
+  }
+  if (hostOverride) {
+    config.bridge.host = hostOverride;
   }
 
   if (config.bridge.apiKeys.length === 0) {

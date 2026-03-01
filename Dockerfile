@@ -30,4 +30,4 @@ EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
   CMD wget -q -O- http://127.0.0.1:3100/health || exit 1
 
-ENTRYPOINT ["node", "dist/cli.js", "serve"]
+ENTRYPOINT ["node", "dist/cli.js", "serve", "--host", "0.0.0.0"]
