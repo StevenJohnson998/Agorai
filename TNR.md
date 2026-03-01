@@ -184,11 +184,117 @@ Chaque section = un domaine fonctionnel. Chaque ligne = un scénario à valider.
 
 ---
 
+## 13. Message Metadata & Confidentiality (v0.4)
+
+| # | Test | Type | Fichier test | Résultat attendu |
+|---|------|------|-------------|-----------------|
+| 13.1 | bridgeMetadata on normal send | [A] | `store.test.ts` | `bridgeMetadata` contient visibility, senderClearance, visibilityCapped=false, timestamp, instructions |
+| 13.2 | bridgeMetadata on capped send | [A] | `store.test.ts` | `visibilityCapped=true`, `originalVisibility` présent quand visibility > clearance |
+| 13.3 | agentMetadata round-trip | [A] | `store.test.ts` | agentMetadata envoyé par sender récupéré tel quel par getMessages |
+| 13.4 | Anti-forge: strip _bridge keys | [A] | `store.test.ts` | Clés commençant par `_bridge` supprimées du metadata agent avant stockage |
+| 13.5 | Null metadata graceful | [A] | `store.test.ts` | `null` metadata → `agentMetadata: null`, `bridgeMetadata` généré normalement |
+| 13.6 | Strip all _bridge → null agentMetadata | [A] | `store.test.ts` | Si toutes les clés sont `_bridge*`, `agentMetadata` résultant = null |
+| 13.7 | Project confidentiality default | [A] | `store.test.ts` | Projet créé sans mode → `confidentialityMode: "normal"` |
+| 13.8 | Project confidentiality explicit | [A] | `store.test.ts` | Projet créé avec `strict` ou `flexible` → mode stocké correctement |
+| 13.9 | Project confidentiality in retrieve | [A] | `store.test.ts` | `getProject()` retourne `confidentialityMode` |
+| 13.10 | Bridge instructions — normal mode | [A] | `store.test.ts` | `bridgeMetadata.instructions.mode === "normal"`, instruction mentionne output visibility |
+| 13.11 | Bridge instructions — flexible mode | [A] | `store.test.ts` | `bridgeMetadata.instructions.mode === "flexible"`, instruction autorise tout level |
+| 13.12 | High-water mark tracking | [A] | `store.test.ts` | `getMessages()` crée/met à jour le high-water mark de l'agent pour le projet |
+| 13.13 | High-water mark never decreases | [A] | `store.test.ts` | Lire des messages `public` après `confidential` → mark reste `confidential` |
+| 13.14 | High-water mark null for unknown | [A] | `store.test.ts` | `getHighWaterMark()` retourne null pour agent/projet inconnu |
+| 13.15 | High-water mark per-project | [A] | `store.test.ts` | Tracks séparément pour chaque projet |
+| 13.16 | agentMetadata + bridgeMetadata in messages | [A] | `store.test.ts` | `handles message metadata (agentMetadata + bridgeMetadata)` — ancien test migré |
+| 13.17 | Schema migration (existing DB) | [M] | — | Base existante v0.3 → les colonnes `agent_metadata`, `bridge_metadata`, `confidentiality_mode` ajoutées automatiquement, données `metadata` existantes migrées vers `agent_metadata` |
+| 13.18 | Bridge: agentMetadata filtered per sender | [M] | — | Via MCP: `get_messages` retourne `agentMetadata` uniquement pour les messages du reader (pas ceux des autres agents) |
+| 13.19 | Bridge: deprecated metadata excluded | [M] | — | Via MCP: réponse `get_messages` ne contient pas l'ancien champ `metadata` |
+
+---
+
+## 14. SSE Push Notifications (v0.3)
+
+| # | Test | Type | Fichier test | Résultat attendu |
+|---|------|------|-------------|-----------------|
+| 14.1 | Notify subscribed (exclude sender) | [A] | `bridge-sse.test.ts` | Abonné reçoit notification, sender non |
+| 14.2 | No notify unsubscribed | [A] | `bridge-sse.test.ts` | Agent non-abonné ne reçoit pas la notification |
+| 14.3 | Visibility gating — team receives team | [A] | `bridge-sse.test.ts` | Agent `team` reçoit notification `team` |
+| 14.4 | Visibility gating — team blocks confidential | [A] | `bridge-sse.test.ts` | Agent `team` ne reçoit PAS notification `confidential` |
+| 14.5 | Visibility gating — confidential receives confidential | [A] | `bridge-sse.test.ts` | Agent `confidential` reçoit notification `confidential` |
+| 14.6 | Content preview — truncated at 200 | [A] | `bridge-sse.test.ts` | Preview tronqué à 200 chars + `…` |
+| 14.7 | Content preview — short not truncated | [A] | `bridge-sse.test.ts` | Message court non tronqué |
+| 14.8 | Notification payload fields | [A] | `bridge-sse.test.ts` | Contient conversationId, messageId, fromAgent, type, visibility, preview |
+| 14.9 | Multi-subscriber scenario | [A] | `bridge-sse.test.ts` | Plusieurs abonnés notifiés avec filtrage visibility correct |
+| 14.10 | SSE E2E — curl stream | [M] | — | `curl -N -H "Authorization: Bearer <key>" http://127.0.0.1:3100/mcp` reçoit les notifications en temps réel quand un autre agent envoie un message |
+
+---
+
+## 15. Agent Management CLI & Config Manager
+
+| # | Test | Type | Fichier test | Résultat attendu |
+|---|------|------|-------------|-----------------|
+| 15.1 | loadRawConfig preserves fields | [A] | `config-manager.test.ts` | Charge et préserve tous les champs JSON bruts |
+| 15.2 | Config round-trip sans perte | [A] | `config-manager.test.ts` | save → load → identique |
+| 15.3 | generatePassKey format | [A] | `config-manager.test.ts` | Base64url de longueur attendue |
+| 15.4 | generatePassKey unique | [A] | `config-manager.test.ts` | Deux appels → clés différentes |
+| 15.5 | addAgent — openai-compat | [A] | `config-manager.test.ts` | Ajouté dans `bridge.apiKeys` ET `agents[]` |
+| 15.6 | addAgent — MCP type | [A] | `config-manager.test.ts` | Ajouté dans `bridge.apiKeys` SEULEMENT (pas `agents[]`) |
+| 15.7 | addAgent — ollama | [A] | `config-manager.test.ts` | Ajouté dans les deux arrays |
+| 15.8 | addAgent — duplicate rejeté | [A] | `config-manager.test.ts` | Throw si nom déjà existant |
+| 15.9 | addAgent — default clearance team | [A] | `config-manager.test.ts` | Clearance par défaut = `team` |
+| 15.10 | addAgent — crée bridge section si manquante | [A] | `config-manager.test.ts` | Config vide → section `bridge` créée automatiquement |
+| 15.11 | listAgents — merge bridge + agents | [A] | `config-manager.test.ts` | Fusionne `bridge.apiKeys` et `agents[]` par nom |
+| 15.12 | listAgents — empty config | [A] | `config-manager.test.ts` | Retourne tableau vide |
+| 15.13 | listAgents — orphan agents | [A] | `config-manager.test.ts` | Agents dans `agents[]` mais pas dans `bridge.apiKeys` inclus |
+| 15.14 | updateAgent — model | [A] | `config-manager.test.ts` | Met à jour le modèle dans `agents[]` |
+| 15.15 | updateAgent — clearance | [A] | `config-manager.test.ts` | Met à jour le clearance dans `bridge.apiKeys` |
+| 15.16 | updateAgent — multiple fields | [A] | `config-manager.test.ts` | Plusieurs champs mis à jour en une fois |
+| 15.17 | updateAgent — unknown rejeté | [A] | `config-manager.test.ts` | Throw si agent inconnu |
+| 15.18 | updateAgent — no changes rejeté | [A] | `config-manager.test.ts` | Throw si aucun changement spécifié |
+| 15.19 | removeAgent — both arrays | [A] | `config-manager.test.ts` | Supprimé de `bridge.apiKeys` ET `agents[]` |
+| 15.20 | removeAgent — MCP only | [A] | `config-manager.test.ts` | Supprimé de `bridge.apiKeys` uniquement |
+| 15.21 | removeAgent — unknown rejeté | [A] | `config-manager.test.ts` | Throw si agent inconnu |
+| 15.22 | removeAgent — preserve others | [A] | `config-manager.test.ts` | Les autres agents restent intacts |
+
+---
+
+## 16. agorai-connect
+
+| # | Test | Type | Fichier test | Résultat attendu |
+|---|------|------|-------------|-----------------|
+| 16.1 | callModel — URL construction | [A] | `model-caller.test.ts` | Construit l'URL correcte depuis endpoint |
+| 16.2 | callModel — Authorization header | [A] | `model-caller.test.ts` | Envoie `Authorization: Bearer` quand apiKey fourni |
+| 16.3 | callModel — empty choices error | [A] | `model-caller.test.ts` | Throw sur réponse avec choices vide |
+| 16.4 | callModel — /chat/completions detection | [A] | `model-caller.test.ts` | N'ajoute pas `/chat/completions` si déjà présent |
+| 16.5 | callModel — HTTP error | [A] | `model-caller.test.ts` | Throw sur erreur HTTP |
+| 16.6 | McpClient — initialize | [A] | `mcp-client.test.ts` | Envoie initialize, capture session ID |
+| 16.7 | McpClient — tool calls | [A] | `mcp-client.test.ts` | Structure JSON-RPC correcte |
+| 16.8 | McpClient — SSE responses | [A] | `mcp-client.test.ts` | Parse les réponses SSE |
+| 16.9 | McpClient — JSON-RPC error | [A] | `mcp-client.test.ts` | Throw sur erreur JSON-RPC |
+| 16.10 | McpClient — SessionExpiredError | [A] | `mcp-client.test.ts` | 404 + "Session not found" → SessionExpiredError |
+| 16.11 | McpClient — BridgeUnreachableError | [A] | `mcp-client.test.ts` | Connection refused → BridgeUnreachableError |
+| 16.12 | McpClient — resetSession | [A] | `mcp-client.test.ts` | Efface l'état de session |
+| 16.13 | Backoff — exponential delays | [A] | `backoff.test.ts` | Délais exponentiels corrects |
+| 16.14 | Backoff — max cap | [A] | `backoff.test.ts` | Plafonné à maxMs |
+| 16.15 | Backoff — jitter | [A] | `backoff.test.ts` | Jitter dans la plage attendue |
+| 16.16 | Backoff — reset on succeed | [A] | `backoff.test.ts` | `succeed()` remet le compteur à zéro |
+| 16.17 | Backoff — wait increments | [A] | `backoff.test.ts` | `wait()` incrémente le failure count |
+| 16.18 | SSE stream — push notifications | [A] | `sse-stream.test.ts` | Reçoit les notifications push via SSE |
+| 16.19 | Config paths — platform detection | [A] | `config-paths.test.ts` | Retourne une plateforme valide |
+| 16.20 | Config paths — Windows candidates | [A] | `config-paths.test.ts` | Inclut Windows Store path, ≥3 candidats, APPDATA en premier |
+| 16.21 | Config paths — macOS/Linux | [A] | `config-paths.test.ts` | Application Support (macOS), .config (Linux) |
+| 16.22 | Config paths — defaultConfigPath | [A] | `config-paths.test.ts` | Retourne un string pour chaque plateforme |
+| 16.23 | Config paths — resolveNodePath | [A] | `config-paths.test.ts` | `node` sur non-windows, full path sur Windows |
+| 16.24 | Config paths — searchClaudeConfig | [A] | `config-paths.test.ts` | Vide si pas de config, trouve les fichiers imbriqués |
+| 16.25 | URL utils — normalizeBridgeUrl | [A] | `utils.test.ts` | Ajoute `/mcp`, strip trailing slash, https, multi-slash |
+| 16.26 | URL utils — baseUrl | [A] | `utils.test.ts` | Strip `/mcp`, `/mcp/`, trailing slashes |
+
+---
+
 ## Historique des exécutions
 
 | Date | Version | Tests auto | Tests manuels | Résultat | Notes |
 |------|---------|-----------|--------------|---------|-------|
 | 2026-02-28 | v0.2.3 | 170/170 ✅ | — | PASS | Première exécution TNR. Tests manuels 11.x/12.x à faire pré-release |
+| 2026-03-01 | v0.4.0 | 222/222 ✅ + 62/62 ✅ | SSE E2E ✅ | PASS | Ajout sections 13-16. agorai 222 tests, agorai-connect 62 tests. SSE testé E2E (curl instant, Claude Desktop polling ~8s) |
 
 ---
 
@@ -198,4 +304,6 @@ Chaque section = un domaine fonctionnel. Chaque ligne = un scénario à valider.
 - Les tests `[M]` nécessitent un bridge actif avec config valide + au moins un modèle disponible (Ollama recommandé)
 - Les tests `[S]` sont des commandes shell à exécuter manuellement mais vérifiables par script
 - Mettre à jour ce fichier à chaque ajout de feature, nouvelle version, ou bug corrigé
-- agorai-connect a ses propres 45 tests dans `packages/agorai-connect/` (non détaillés ici — voir son propre test runner)
+- agorai-connect a ses propres 62 tests dans `packages/agorai-connect/` — détaillés en section 16
+- Les tests manuels `[M]` de la section 13 (13.17-13.19) nécessitent un bridge actif et deux agents connectés
+- Les gaps identifiés (schema migration, bridge-level agentMetadata filtering, deprecated metadata exclusion) sont couverts par les tests manuels 13.17-13.19
