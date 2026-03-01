@@ -17,6 +17,14 @@ import type { Config } from "../config.js";
 import type { MessageCreatedEvent } from "../store/events.js";
 import { VISIBILITY_ORDER, type VisibilityLevel } from "../store/types.js";
 import { createLogger } from "../logger.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve, dirname } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PKG_VERSION: string = JSON.parse(
+  readFileSync(resolve(__dirname, "../../package.json"), "utf-8")
+).version;
 
 import {
   RegisterAgentSchema,
@@ -104,7 +112,7 @@ const ACCESS_DENIED = { content: [{ type: "text" as const, text: JSON.stringify(
 function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
   const server = new McpServer({
     name: "agorai-bridge",
-    version: "0.4.0",
+    version: PKG_VERSION,
   }, {
     instructions: [
       "You are connected to Agorai, a multi-agent collaboration bridge.",
@@ -497,7 +505,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       // Health endpoint
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", version: "0.4.0" }));
+        res.end(JSON.stringify({ status: "ok", version: PKG_VERSION }));
         return;
       }
 

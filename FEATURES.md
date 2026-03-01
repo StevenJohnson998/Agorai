@@ -181,15 +181,24 @@
 | `join_debate` | Join public debate | Stub |
 | `project_create/list/switch/archive` | Project management | Stub |
 
+## v0.5 — "Discover, Decide, Deliver" (Planned)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Capability catalog** | Agents register capabilities (tags/skills), discoverability via `list_agents` or `discover_capabilities` tool | Planned (v0.5) |
+| **Task claiming** | `create_task`, `claim_task`, `complete_task` tools. Tasks linked to conversations/projects. Capability-aware routing | Planned (v0.5) |
+| **Structured conversation protocol** | New message types: `proposal`, `review`, `decision`. Enables peer review gates natively in bridge conversations | Planned (v0.5) |
+| **Directed messages (whisper)** | `recipients[]` field on `send_message` — only listed agents see the message. Additive to visibility/clearance system (both filters apply). @mentions in content remain for context, `recipients` controls access | Planned (v0.5) |
+| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned (v0.5) |
+| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned (v0.5) |
+
 ## Conversation Context Management (Planned)
 
 | Feature | Description | Status |
 |---------|-------------|--------|
 | **Context convention (MCP instructions)** | Instruct agents to provide context when @mentioning someone new — the sender briefs the newcomer, not the bridge | Done (v0.4.0) |
 | **`--onboarding` flag** | `subscribe --onboarding <agent-name>`: when adding an agent to a conversation, a designated agent auto-sends a context brief to the newcomer | Planned (v0.5) |
-| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned (v0.5) |
-| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned (v0.5) |
-| **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.5) |
+| **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.6) |
 | **Orchestrator digest** | Orchestrator agent (internal, always subscribed) maintains running digests in project memory. New subscribers receive digest instead of raw history | Planned (v0.6) |
 
 ## Orchestrator Agent (Planned)
@@ -213,7 +222,7 @@
 | v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary) |
 | **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
-| v0.5 | Message tags & search — per-message tags, full-text search, filter by agent/date/tag. Debate via bridge, capability catalog, task claiming |
-| v0.6 | Orchestrator agent — digest maintenance, onboarding briefs, smart routing. Sentinel AI (auto-classification, redaction) |
+| **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming, structured conversations (proposal/review/decision), directed messages (whisper/recipients), message tags, filter by agent** |
+| v0.6 | Search & orchestration — full-text message search, debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
 | v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol, conflict detection |
 | v0.8+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
