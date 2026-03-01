@@ -8,6 +8,7 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import type { IStore } from "./interfaces.js";
+import { StoreEventBus } from "./events.js";
 import type {
   Agent,
   AgentRegistration,
@@ -38,11 +39,13 @@ function now(): string {
 
 export class SqliteStore implements IStore {
   private db: Database.Database;
+  readonly eventBus: StoreEventBus;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, eventBus?: StoreEventBus) {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+    this.eventBus = eventBus ?? new StoreEventBus();
   }
 
   async initialize(): Promise<void> {
@@ -515,7 +518,7 @@ export class SqliteStore implements IStore {
     // Update conversation updated_at
     this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(ts, msg.conversationId);
 
-    return {
+    const message: Message = {
       id,
       conversationId: msg.conversationId,
       fromAgent: msg.fromAgent,
@@ -525,6 +528,11 @@ export class SqliteStore implements IStore {
       metadata: msg.metadata ?? null,
       createdAt: ts,
     };
+
+    // Emit event for reactive consumers (SSE, internal agents)
+    this.eventBus.emitMessage(message);
+
+    return message;
   }
 
   async getMessages(conversationId: string, agentId: string, opts?: GetMessagesOptions): Promise<Message[]> {

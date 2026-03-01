@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-03-01 — v0.3.0 (SSE Push Notifications) + agorai-connect v0.0.6
+
+### Added (agorai — v0.3.0)
+- **SSE Push Notifications — 3-layer architecture**:
+  1. **Store EventBus** (`src/store/events.ts`): `EventEmitter` on `SqliteStore`, emits `message:created` after DB insert. `setMaxListeners(0)` for pub/sub pattern
+  2. **Bridge SSE Dispatcher** (`src/bridge/server.ts`): listens to EventBus, pushes `notifications/message` JSON-RPC notifications to subscribed agents via `transport.send()`. Applies visibility gating (agent clearance >= message visibility) and sender exclusion (agents don't notify themselves)
+  3. **Client listeners** (see agorai-connect v0.0.6 below + internal agent)
+- **`initialize` server instructions**: `initialize` response now includes workflow instructions (call `mark_read` after `get_messages`, respect visibility when sending)
+- **Enhanced tool descriptions**: `get_messages`, `mark_read`, `send_message` have richer descriptions with workflow hints
+- **Content preview in notifications**: 200-char preview of message content in push notification payload
+- **Internal agent cleanup**: eventBusCleanup closure unsubscribes from EventBus on shutdown
+- **Session registration race fix**: `closedBeforeRegistered` flag prevents double-registration when SSE stream closes before MCP handshake completes
+
+### Fixed (agorai — v0.3.0)
+- **N+1 agent lookup**: bridge dispatcher now uses `listAgents()` for a single batch lookup instead of per-subscriber `getAgent()` calls
+
+### Added (agorai-connect — v0.0.6)
+- **`McpClient.openSSEStream()`**: opens GET `/mcp` SSE stream, parses incoming `notifications/message` JSON-RPC events, auto-reconnects on disconnect
+- **`SSENotification` type**: exported from `index.ts` for library consumers
+- **Proxy SSE listener**: `proxy` command opens a background GET `/mcp` SSE stream and forwards `data:` lines to stdout — Claude Desktop receives push notifications via stdio without polling
+- **Agent SSE fast-path**: `agent` command opens SSE stream, routes `notifications/message` events to a `pendingConversations` set for instant poll trigger (poll loop retained as fallback)
+
+### Tests
+- **Store EventBus**: 6 new tests (`store-events.test.ts`) — emits on createMessage, not on other ops, multiple listeners, setMaxListeners, cleanup
+- **Bridge SSE Dispatcher**: 9 new tests (`bridge-sse.test.ts`) — push on send, visibility gating, sender exclusion, N+1 batch lookup, session race fix
+- **agorai-connect SSE stream**: 7 new tests (`sse-stream.test.ts`) — stream open, notification parsing, auto-reconnect, SSENotification type
+- **Total**: 207 server tests + 62 agorai-connect tests = **269 tests passing** (was 192 + 55 = 247)
+
+### Published
+- `agorai@0.3.0`
+- `agorai-connect@0.0.6`
+
+---
+
 ## 2026-02-28 — Agent Management CLI
 
 ### Added

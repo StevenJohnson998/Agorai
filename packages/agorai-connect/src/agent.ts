@@ -14,7 +14,7 @@
  * 6. Graceful shutdown on SIGINT/SIGTERM
  */
 
-import { McpClient, type ToolCallResult } from "./mcp-client.js";
+import { McpClient, type ToolCallResult, type SSENotification } from "./mcp-client.js";
 import { callModel, type ChatMessage, type ModelCallerOptions } from "./model-caller.js";
 import { log, checkHealth, baseUrl } from "./utils.js";
 import { SessionExpiredError, BridgeUnreachableError } from "./errors.js";
@@ -54,11 +54,37 @@ export async function runAgent(options: AgentOptions): Promise<void> {
   const backoff = new Backoff();
   let running = true;
 
+  // SSE push notification state
+  const pendingConversations = new Set<string>();
+  let sseConnected = false;
+  let sseAbort: (() => void) | null = null;
+
+  function startSSEStream(): void {
+    // Close existing stream if any
+    if (sseAbort) sseAbort();
+    sseConnected = false;
+
+    const controller = client.openSSEStream((notification: SSENotification) => {
+      if (notification.method === "notifications/message") {
+        const convId = notification.params.conversationId as string;
+        if (convId) {
+          pendingConversations.add(convId);
+          log("debug", `SSE: notification for conversation ${convId}`);
+        }
+      }
+    });
+
+    sseAbort = () => controller.abort();
+    sseConnected = true;
+    log("info", "SSE push notifications enabled");
+  }
+
   // Graceful shutdown
   const shutdown = async () => {
     if (!running) return;
     running = false;
     log("info", "Shutting down agent...");
+    if (sseAbort) sseAbort();
     await client.close();
     process.exit(0);
   };
@@ -125,6 +151,7 @@ export async function runAgent(options: AgentOptions): Promise<void> {
     try {
       await initializeSession();
       backoff.succeed();
+      startSSEStream();
       break;
     } catch (err) {
       if (err instanceof BridgeUnreachableError) {
@@ -139,7 +166,7 @@ export async function runAgent(options: AgentOptions): Promise<void> {
   if (!running) return;
 
   console.log(`Agent running (mode: ${mode}, model: ${model})`);
-  console.log(`Polling every ${pollIntervalMs / 1000}s. Press Ctrl+C to stop.\n`);
+  console.log(`Polling every ${pollIntervalMs / 1000}s${sseConnected ? " + SSE push" : ""}. Press Ctrl+C to stop.\n`);
 
   // Health check state
   let consecutiveHealthFailures = 0;
@@ -189,7 +216,31 @@ export async function runAgent(options: AgentOptions): Promise<void> {
         }
       }
 
-      // Check each subscribed conversation for new messages
+      // Process conversations with SSE notifications first (instant response)
+      if (pendingConversations.size > 0) {
+        const pending = [...pendingConversations];
+        pendingConversations.clear();
+        log("debug", `SSE: processing ${pending.length} pending conversation(s)`);
+
+        for (const convId of pending) {
+          // Ensure we're tracking this conversation
+          if (!conversationState.has(convId)) {
+            conversationState.set(convId, {});
+          }
+          await processConversation(
+            client,
+            convId,
+            conversationState,
+            modelOpts,
+            defaultSystem,
+            myName,
+            myId,
+            mode,
+          );
+        }
+      }
+
+      // Full poll: check all conversations (catches anything SSE might have missed)
       for (const [convId] of conversationState) {
         const msgResult = await client.callTool("get_messages", {
           conversation_id: convId,
@@ -227,10 +278,13 @@ export async function runAgent(options: AgentOptions): Promise<void> {
     } catch (err) {
       if (err instanceof SessionExpiredError) {
         log("info", "Session expired — reconnecting...");
+        if (sseAbort) sseAbort();
+        sseConnected = false;
         client.resetSession();
         try {
           await initializeSession();
           backoff.succeed();
+          startSSEStream();
           log("info", "Reconnected successfully");
         } catch (initErr) {
           if (initErr instanceof BridgeUnreachableError) {

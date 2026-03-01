@@ -133,6 +133,98 @@ async function reinitializeSession(
   return newSessionId;
 }
 
+/** Delay helper. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Open a GET /mcp SSE stream for push notifications and forward them to stdout.
+ * Runs in the background — returns an abort function to stop the stream.
+ */
+function openSSEListener(
+  endpoint: string,
+  passKey: string,
+  getSessionId: () => string | undefined,
+): () => void {
+  const controller = new AbortController();
+  let running = true;
+
+  async function listen(): Promise<void> {
+    while (running && !controller.signal.aborted) {
+      const sid = getSessionId();
+      if (!sid) {
+        // No session yet — wait and retry
+        await sleep(1000);
+        continue;
+      }
+
+      try {
+        const resp = await fetch(endpoint, {
+          method: "GET",
+          headers: {
+            "Accept": "text/event-stream",
+            "Authorization": `Bearer ${passKey}`,
+            "mcp-session-id": sid,
+          },
+          signal: controller.signal,
+        });
+
+        if (!resp.ok || !resp.body) {
+          log("debug", `SSE stream response: HTTP ${resp.status}`);
+          await resp.text(); // drain
+          await sleep(3000);
+          continue;
+        }
+
+        log("info", "SSE notification stream connected");
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (running && !controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? ""; // keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (data) {
+                // Forward JSON-RPC notification to stdout (Claude Desktop)
+                process.stdout.write(data + "\n");
+              }
+            }
+          }
+        }
+
+        log("info", "SSE notification stream disconnected");
+      } catch (err) {
+        if (controller.signal.aborted) break;
+        const msg = err instanceof Error ? err.message : String(err);
+        log("debug", `SSE stream error: ${msg}`);
+      }
+
+      // Reconnect after a delay (unless aborted)
+      if (running && !controller.signal.aborted) {
+        await sleep(3000);
+      }
+    }
+  }
+
+  // Fire-and-forget — errors are caught inside the loop
+  listen().catch(() => {});
+
+  return () => {
+    running = false;
+    controller.abort();
+  };
+}
+
 /**
  * Run the stdio→HTTP proxy. Blocks until stdin closes, then cleans up the session.
  */
@@ -141,6 +233,9 @@ export async function runProxy({ bridgeUrl, passKey }: ProxyOptions): Promise<vo
   let sessionId: string | undefined;
 
   log("info", `Proxy started → ${endpoint}`);
+
+  // Start SSE listener in background (uses sessionId via closure)
+  const stopSSE = openSSEListener(endpoint, passKey, () => sessionId);
 
   const rl = createInterface({ input: process.stdin, terminal: false });
 
@@ -219,7 +314,9 @@ export async function runProxy({ bridgeUrl, passKey }: ProxyOptions): Promise<vo
     }
   }
 
-  // Stdin closed — clean up session
+  // Stdin closed — clean up SSE stream and session
+  stopSSE();
+
   if (sessionId) {
     log("info", "Cleaning up session", sessionId);
     try {

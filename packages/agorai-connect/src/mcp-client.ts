@@ -20,6 +20,11 @@ export interface ToolCallResult {
   isError?: boolean;
 }
 
+export interface SSENotification {
+  method: string;
+  params: Record<string, unknown>;
+}
+
 export class McpClient {
   private readonly endpoint: string;
   private readonly passKey: string;
@@ -93,6 +98,132 @@ export class McpClient {
     } catch {
       // Best effort — bridge may already be down
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // SSE stream for push notifications
+  // -------------------------------------------------------------------------
+
+  /**
+   * Open a Server-Sent Events stream to receive push notifications.
+   *
+   * Requires an active session (call initialize() first).
+   * Auto-reconnects on disconnect with a 3s delay.
+   * Returns an AbortController — call .abort() to close the stream.
+   */
+  openSSEStream(onNotification: (notification: SSENotification) => void): AbortController {
+    const controller = new AbortController();
+
+    if (!this.sessionId) {
+      log("error", "Cannot open SSE stream without session ID. Call initialize() first.");
+      return controller;
+    }
+
+    const endpoint = this.endpoint;
+    const passKey = this.passKey;
+    const signal = controller.signal;
+    const getSessionId = () => this.sessionId;
+
+    const reconnectDelayMs = 3000;
+
+    const connect = async () => {
+      while (!signal.aborted) {
+        const sessionId = getSessionId();
+        if (!sessionId) {
+          log("debug", "SSE: no session ID, waiting before retry...");
+          await sleep(reconnectDelayMs);
+          continue;
+        }
+
+        try {
+          log("debug", "SSE: opening stream...");
+          const resp = await fetch(endpoint, {
+            method: "GET",
+            headers: {
+              "Accept": "text/event-stream",
+              "Authorization": `Bearer ${passKey}`,
+              "mcp-session-id": sessionId,
+            },
+            signal,
+          });
+
+          if (!resp.ok) {
+            log("info", `SSE: HTTP ${resp.status} — retrying in ${reconnectDelayMs / 1000}s`);
+            await sleep(reconnectDelayMs);
+            continue;
+          }
+
+          if (!resp.body) {
+            log("info", "SSE: no response body — retrying...");
+            await sleep(reconnectDelayMs);
+            continue;
+          }
+
+          log("info", "SSE: stream connected");
+
+          // Read SSE stream
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (!signal.aborted) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete lines
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? ""; // keep incomplete line in buffer
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const data = line.slice(6).trim();
+              if (!data) continue;
+
+              try {
+                const parsed = JSON.parse(data) as {
+                  jsonrpc?: string;
+                  method?: string;
+                  params?: Record<string, unknown>;
+                };
+
+                // Only process notifications (no id field = notification)
+                if (parsed.jsonrpc === "2.0" && parsed.method && !("id" in parsed)) {
+                  onNotification({
+                    method: parsed.method,
+                    params: parsed.params ?? {},
+                  });
+                }
+              } catch {
+                log("debug", `SSE: failed to parse data line: ${data.slice(0, 100)}`);
+              }
+            }
+          }
+
+          log("debug", "SSE: stream ended");
+        } catch (err: unknown) {
+          if (signal.aborted) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          log("debug", `SSE: connection error: ${msg}`);
+        }
+
+        // Reconnect after delay (unless aborted)
+        if (!signal.aborted) {
+          log("debug", `SSE: reconnecting in ${reconnectDelayMs / 1000}s...`);
+          await sleep(reconnectDelayMs);
+        }
+      }
+    };
+
+    // Start in background — don't block the caller
+    connect().catch((err) => {
+      if (!signal.aborted) {
+        log("error", `SSE: fatal error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+
+    return controller;
   }
 
   // -------------------------------------------------------------------------
@@ -212,4 +343,8 @@ export class McpClient {
       // Fire-and-forget — bridge may be down during notification
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

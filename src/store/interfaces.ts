@@ -22,8 +22,11 @@ import type {
   CreateMessage,
   GetMessagesOptions,
 } from "./types.js";
+import type { StoreEventBus } from "./events.js";
 
 export interface IStore {
+  /** Event bus for reactive notifications. Optional for backward compat. */
+  readonly eventBus?: StoreEventBus;
   // --- Agents ---
   registerAgent(agent: AgentRegistration): Promise<Agent>;
   getAgent(id: string): Promise<Agent | null>;

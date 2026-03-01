@@ -1,5 +1,25 @@
 # Features
 
+## SSE Push Notifications (v0.3)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Store EventBus** | `EventEmitter` on `SqliteStore`, emits `message:created` after DB insert | Done |
+| **Bridge SSE Dispatcher** | Pushes `notifications/message` JSON-RPC to subscribed agents via `transport.send()` | Done |
+| **Visibility gating** | Notifications only sent to agents with clearance >= message visibility | Done |
+| **Sender exclusion** | Agents are not notified of their own messages | Done |
+| **Content preview** | 200-char preview included in notification payload | Done |
+| **`initialize` instructions** | Server returns workflow instructions on handshake (mark_read, visibility) | Done |
+| **Enhanced tool descriptions** | `get_messages`, `mark_read`, `send_message` include workflow hints | Done |
+| **N+1 fix** | Batch agent lookup with `listAgents()` instead of per-subscriber `getAgent()` | Done |
+| **Session race fix** | `closedBeforeRegistered` flag prevents double-registration on early SSE close | Done |
+| **Proxy SSE listener** | `agorai-connect proxy` opens background SSE stream, forwards notifications to stdout | Done |
+| **Agent SSE fast-path** | `agorai-connect agent` uses SSE `pendingConversations` set for instant poll trigger | Done |
+| **`McpClient.openSSEStream()`** | Opens GET `/mcp` SSE stream, parses notifications, auto-reconnects | Done |
+| **`SSENotification` type** | Exported from `agorai-connect` for library consumers | Done |
+| **Internal agent EventBus** | Internal agent subscribes directly to `store.eventBus` (no HTTP round-trip) | Done |
+| **EventBus cleanup** | eventBusCleanup closure unsubscribes on shutdown | Done |
+
 ## Bridge / Collaboration (v0.2)
 
 | Feature | Description | Status |
@@ -152,8 +172,9 @@
 | v0.1 | Foundation — debate engine, CLI, MCP stdio, 3 adapters, consensus |
 | **v0.2** | **Bridge — shared workspace, projects, conversations, memory, visibility, auth, 16 tools** |
 | v0.2.x | Reliability & isolation — session recovery, heartbeat, data isolation, npm publish, internal agent runner |
-| v0.3 | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary), OpenAI-compat adapter, onboarding digests |
+| **v0.3** | **SSE Push Notifications — 3-layer EventBus→Dispatcher→Client, visibility gating, proxy SSE, agent fast-path** |
+| v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary), onboarding digests |
 | v0.4 | Debate via bridge — consensus by messages, smart routing, bridge-level passive agents, capability catalog, task claiming/pull queue (inspired by Mault) |
 | v0.5 | Sentinel AI + Classification — auto-tagger, redaction, security alerts |
-| v0.6 | Distribution — npm publish, web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol |
+| v0.6 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), A2A protocol |
 | v0.7+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
