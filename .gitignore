@@ -13,6 +13,9 @@ CHANGELOG.md
 FEATURES.md
 BUGFIXES.md
 HANDOFF_CLAUDE_CODE.md
+docs/debate-module-learnings.md
+docs/project-review-*.md
+docs/conversation-competitive-analysis-*.md
 
 # OS
 .DS_Store
