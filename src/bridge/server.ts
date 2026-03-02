@@ -1,7 +1,7 @@
 /**
  * Bridge HTTP server — Streamable HTTP transport for the MCP bridge.
  *
- * Exposes 16 bridge tools + debate tools over HTTP.
+ * Exposes 32 bridge tools + debate tools over HTTP.
  * Auth is handled via API key in Authorization header.
  * Each request is authenticated before being passed to the MCP handler.
  */
@@ -14,7 +14,7 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { IStore } from "../store/interfaces.js";
 import type { IAuthProvider, AuthResult } from "./auth.js";
 import type { Config } from "../config.js";
-import type { MessageCreatedEvent, AccessRequestCreatedEvent } from "../store/events.js";
+import type { MessageCreatedEvent, AccessRequestCreatedEvent, TaskCreatedEvent, TaskUpdatedEvent } from "../store/events.js";
 import { VISIBILITY_ORDER, type VisibilityLevel } from "../store/types.js";
 import { createLogger } from "../logger.js";
 import { readFileSync } from "node:fs";
@@ -29,6 +29,7 @@ const PKG_VERSION: string = JSON.parse(
 import {
   RegisterAgentSchema,
   ListBridgeAgentsSchema,
+  DiscoverCapabilitiesSchema,
   CreateProjectSchema,
   ListProjectsSchema,
   SetMemorySchema,
@@ -46,6 +47,18 @@ import {
   ListAccessRequestsSchema,
   RespondToAccessRequestSchema,
   GetMyAccessRequestsSchema,
+  CreateTaskSchema,
+  ListTasksSchema,
+  ClaimTaskSchema,
+  CompleteTaskSchema,
+  ReleaseTaskSchema,
+  UpdateTaskSchema,
+  SetInstructionsSchema,
+  ListInstructionsSchema,
+  DeleteInstructionsSchema,
+  SetAgentMemorySchema,
+  GetAgentMemorySchema,
+  DeleteAgentMemorySchema,
 } from "./tools.js";
 
 const log = createLogger("bridge");
@@ -208,6 +221,22 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     },
   );
 
+  server.tool(
+    "discover_capabilities",
+    "Find agents by capability. Without a filter, returns all agents and their capabilities.",
+    DiscoverCapabilitiesSchema.shape,
+    async (args) => {
+      let agents;
+      if (args.capability) {
+        agents = await store.findAgentsByCapability(args.capability);
+      } else {
+        agents = await store.listAgents();
+      }
+      const safe = agents.map(({ apiKeyHash: _, ...rest }) => rest);
+      return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
+    },
+  );
+
   // --- Project tools ---
 
   server.tool(
@@ -349,7 +378,25 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         await store.subscribe(args.conversation_id, agentId, {
           historyAccess: args.history_access,
         });
-        return { content: [{ type: "text" as const, text: JSON.stringify({ subscribed: true, conversation_id: args.conversation_id }) }] };
+
+        // Include matching instructions in subscribe response
+        const agent = await store.getAgent(agentId);
+        const matchingInstructions = agent
+          ? await store.getMatchingInstructions(
+              { type: agent.type, capabilities: agent.capabilities },
+              args.conversation_id,
+            )
+          : [];
+
+        return { content: [{ type: "text" as const, text: JSON.stringify({
+          subscribed: true,
+          conversation_id: args.conversation_id,
+          instructions: matchingInstructions.map((i) => ({
+            scope: i.scope,
+            selector: i.selector,
+            content: i.content,
+          })),
+        }) }] };
       }
 
       // No project access — fallback to access request
@@ -422,12 +469,31 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       const subscribed = await store.isSubscribed(args.conversation_id, agentId);
       if (!subscribed) return ACCESS_DENIED;
 
+      // Validate @mentions in whispers: mentioned agents must be in recipients list
+      if (args.recipients && args.recipients.length > 0) {
+        const allAgents = await store.listAgents();
+        const agentNameMap = new Map(allAgents.map((a) => [a.name.toLowerCase(), a.id]));
+        const mentionPattern = /@([\w-]+)/g;
+        let match;
+        while ((match = mentionPattern.exec(args.content)) !== null) {
+          const mentionedName = match[1].toLowerCase();
+          const mentionedId = agentNameMap.get(mentionedName);
+          if (mentionedId && mentionedId !== agentId && !args.recipients.includes(mentionedId)) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({
+              error: `@${match[1]} is mentioned but not in recipients — they won't see this whisper. Add them to recipients or remove the @mention.`,
+            }) }] };
+          }
+        }
+      }
+
       const message = await store.sendMessage({
         conversationId: args.conversation_id,
         fromAgent: agentId,
         type: args.type,
         visibility: args.visibility,
         content: args.content,
+        tags: args.tags,
+        recipients: args.recipients,
         metadata: args.metadata as Record<string, unknown> | undefined,
       });
 
@@ -450,6 +516,8 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         since: args.since,
         unreadOnly: args.unread_only,
         limit: args.limit,
+        tags: args.tags,
+        fromAgent: args.from_agent,
       });
 
       // Shape response: strip agentMetadata for non-sender, exclude deprecated metadata
@@ -463,6 +531,252 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify(shaped, null, 2) }] };
     },
   );
+
+  // --- Task tools ---
+
+  server.tool(
+    "create_task",
+    "Create a task in a project. Other agents can discover and claim it.",
+    CreateTaskSchema.shape,
+    async (args) => {
+      const project = await store.getProject(args.project_id, agentId);
+      if (!project) return ACCESS_DENIED;
+
+      const task = await store.createTask({
+        projectId: args.project_id,
+        conversationId: args.conversation_id,
+        title: args.title,
+        description: args.description,
+        requiredCapabilities: args.required_capabilities,
+        createdBy: agentId,
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "list_tasks",
+    "List tasks in a project, optionally filtered by status, capability, or claiming agent",
+    ListTasksSchema.shape,
+    async (args) => {
+      const tasks = await store.listTasks(args.project_id, agentId, {
+        status: args.status,
+        claimedBy: args.claimed_by,
+        capability: args.capability,
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(tasks, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "claim_task",
+    "Claim an open task. Atomic — only one agent can claim a task at a time.",
+    ClaimTaskSchema.shape,
+    async (args) => {
+      const task = await store.claimTask(args.task_id, agentId);
+      if (!task) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Task not available — it may already be claimed or does not exist" }) }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "complete_task",
+    "Mark a claimed task as completed with an optional result",
+    CompleteTaskSchema.shape,
+    async (args) => {
+      const task = await store.completeTask(args.task_id, agentId, args.result);
+      if (!task) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Cannot complete — task is not claimed by you or does not exist" }) }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "release_task",
+    "Release a claimed task back to open so another agent can claim it",
+    ReleaseTaskSchema.shape,
+    async (args) => {
+      const task = await store.releaseTask(args.task_id, agentId);
+      if (!task) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Cannot release — task is not claimed or you lack permission" }) }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "update_task",
+    "Update a task you created (title, description, or status). Only the creator can update.",
+    UpdateTaskSchema.shape,
+    async (args) => {
+      const task = await store.updateTask(args.task_id, agentId, {
+        title: args.title,
+        description: args.description,
+        status: args.status,
+      });
+      if (!task) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Cannot update — task not found or you are not the creator" }) }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    },
+  );
+
+  // --- Instruction tools ---
+
+  server.tool(
+    "set_instructions",
+    "Set instructions for agents in a scope. Only the project/conversation creator can set instructions for their scope. Use selector to target specific agent types or capabilities. Omit selector for instructions that apply to all agents.",
+    SetInstructionsSchema.shape,
+    async (args) => {
+      let scope: "bridge" | "project" | "conversation" = "bridge";
+      let scopeId: string | undefined;
+
+      if (args.conversation_id) {
+        scope = "conversation";
+        scopeId = args.conversation_id;
+        // Verify caller created the conversation
+        const conv = await store.getConversation(args.conversation_id);
+        if (!conv || conv.createdBy !== agentId) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the conversation creator can set instructions" }) }] };
+        }
+      } else if (args.project_id) {
+        scope = "project";
+        scopeId = args.project_id;
+        // Verify caller created the project
+        const project = await store.getProject(args.project_id, agentId);
+        if (!project || project.createdBy !== agentId) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the project creator can set instructions" }) }] };
+        }
+      } else {
+        // Bridge scope — not settable via MCP (future admin dashboard)
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Bridge-level instructions cannot be set via MCP. Provide project_id or conversation_id." }) }] };
+      }
+
+      const instr = await store.setInstruction({
+        scope,
+        scopeId,
+        selector: args.selector,
+        content: args.content,
+        createdBy: agentId,
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(instr, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "list_instructions",
+    "List instructions for a scope. No params = bridge-level. With project_id = project-level. With conversation_id = conversation-level.",
+    ListInstructionsSchema.shape,
+    async (args) => {
+      let scope: "bridge" | "project" | "conversation" = "bridge";
+      let scopeId: string | undefined;
+
+      if (args.conversation_id) {
+        scope = "conversation";
+        scopeId = args.conversation_id;
+        // Verify subscribed
+        const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+        if (!subscribed) return ACCESS_DENIED;
+      } else if (args.project_id) {
+        scope = "project";
+        scopeId = args.project_id;
+        const project = await store.getProject(args.project_id, agentId);
+        if (!project) return ACCESS_DENIED;
+      }
+
+      const instructions = await store.listInstructions(scope, scopeId);
+      return { content: [{ type: "text" as const, text: JSON.stringify(instructions, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "delete_instructions",
+    "Delete an instruction by ID. Only the creator can delete.",
+    DeleteInstructionsSchema.shape,
+    async (args) => {
+      const deleted = await store.deleteInstruction(args.instruction_id, agentId);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ deleted }) }] };
+    },
+  );
+
+  // --- Agent Memory tools ---
+
+  server.tool(
+    "set_agent_memory",
+    "Save private memory for yourself. No scope = global. With project_id = per-project. With conversation_id = per-conversation. Content overwrites previous.",
+    SetAgentMemorySchema.shape,
+    async (args) => {
+      let scope: "global" | "project" | "conversation" = "global";
+      let scopeId: string | undefined;
+
+      if (args.conversation_id) {
+        scope = "conversation";
+        scopeId = args.conversation_id;
+        // Verify subscribed to the conversation
+        const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+        if (!subscribed) return ACCESS_DENIED;
+      } else if (args.project_id) {
+        scope = "project";
+        scopeId = args.project_id;
+        // Verify project access
+        const project = await store.getProject(args.project_id, agentId);
+        if (!project) return ACCESS_DENIED;
+      }
+
+      const mem = await store.setAgentMemory(agentId, scope, args.content, scopeId);
+      return { content: [{ type: "text" as const, text: JSON.stringify(mem, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "get_agent_memory",
+    "Read your private memory. No scope = global. With project_id = per-project. With conversation_id = per-conversation.",
+    GetAgentMemorySchema.shape,
+    async (args) => {
+      let scope: "global" | "project" | "conversation" = "global";
+      let scopeId: string | undefined;
+
+      if (args.conversation_id) {
+        scope = "conversation";
+        scopeId = args.conversation_id;
+      } else if (args.project_id) {
+        scope = "project";
+        scopeId = args.project_id;
+      }
+
+      const mem = await store.getAgentMemory(agentId, scope, scopeId);
+      if (!mem) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ content: null, scope }) }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(mem, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "delete_agent_memory",
+    "Delete your private memory for a scope. No scope = global. With project_id = per-project. With conversation_id = per-conversation.",
+    DeleteAgentMemorySchema.shape,
+    async (args) => {
+      let scope: "global" | "project" | "conversation" = "global";
+      let scopeId: string | undefined;
+
+      if (args.conversation_id) {
+        scope = "conversation";
+        scopeId = args.conversation_id;
+      } else if (args.project_id) {
+        scope = "project";
+        scopeId = args.project_id;
+      }
+
+      const deleted = await store.deleteAgentMemory(agentId, scope, scopeId);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ deleted, scope }) }] };
+    },
+  );
+
+  // --- Status tools ---
 
   server.tool(
     "get_status",
@@ -753,6 +1067,8 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       if (eventBusListeners && store.eventBus) {
         store.eventBus.offMessage(eventBusListeners.messageListener);
         store.eventBus.offAccessRequest(eventBusListeners.accessRequestListener);
+        store.eventBus.offTaskCreated(eventBusListeners.taskCreatedListener);
+        store.eventBus.offTaskUpdated(eventBusListeners.taskUpdatedListener);
       }
 
       // Close all active transports (best-effort — some may already be closed)
@@ -800,6 +1116,8 @@ function removeSession(sessionId: string): void {
 function setupSSEDispatch(store: IStore): {
   messageListener: (event: MessageCreatedEvent) => void;
   accessRequestListener: (event: AccessRequestCreatedEvent) => void;
+  taskCreatedListener: (event: TaskCreatedEvent) => void;
+  taskUpdatedListener: (event: TaskUpdatedEvent) => void;
 } {
   const messageListener = (event: MessageCreatedEvent) => {
     dispatchMessageNotification(store, event).catch((err) => {
@@ -813,10 +1131,24 @@ function setupSSEDispatch(store: IStore): {
     });
   };
 
+  const taskCreatedListener = (event: TaskCreatedEvent) => {
+    dispatchTaskNotification(event.task, "created").catch((err) => {
+      log.error(`SSE task dispatch error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+
+  const taskUpdatedListener = (event: TaskUpdatedEvent) => {
+    dispatchTaskNotification(event.task, event.action).catch((err) => {
+      log.error(`SSE task dispatch error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+
   store.eventBus!.onMessage(messageListener);
   store.eventBus!.onAccessRequest(accessRequestListener);
+  store.eventBus!.onTaskCreated(taskCreatedListener);
+  store.eventBus!.onTaskUpdated(taskUpdatedListener);
   log.info("SSE push notifications enabled");
-  return { messageListener, accessRequestListener };
+  return { messageListener, accessRequestListener, taskCreatedListener, taskUpdatedListener };
 }
 
 async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent): Promise<void> {
@@ -862,6 +1194,9 @@ async function dispatchMessageNotification(store: IStore, event: MessageCreatedE
 
     const agentVisInt = VISIBILITY_ORDER[agent.clearanceLevel as VisibilityLevel];
     if (agentVisInt < messageVisInt) continue;
+
+    // Whisper gate: if message has recipients, agent must be in the list
+    if (message.recipients && !message.recipients.includes(sub.agentId)) continue;
 
     // Find all active sessions for this agent and push notification
     const sessions = agentSessions.get(sub.agentId);
@@ -911,6 +1246,38 @@ async function dispatchAccessRequestNotification(store: IStore, event: AccessReq
         await transport.send(notification);
       } catch {
         log.debug(`SSE access-request send failed for session ${sessionId}`);
+      }
+    }
+  }
+}
+
+async function dispatchTaskNotification(task: import("../store/types.js").Task, action: string): Promise<void> {
+  const notification: JSONRPCMessage = {
+    jsonrpc: "2.0",
+    method: "notifications/task",
+    params: {
+      taskId: task.id,
+      projectId: task.projectId,
+      conversationId: task.conversationId,
+      title: task.title,
+      status: task.status,
+      action,
+      createdBy: task.createdBy,
+      claimedBy: task.claimedBy,
+      updatedAt: task.updatedAt,
+    },
+  };
+
+  // Project-level notification: push to all agents with active sessions
+  for (const [, sessions] of agentSessions) {
+    for (const sessionId of sessions) {
+      const transport = transports.get(sessionId);
+      if (!transport) continue;
+
+      try {
+        await transport.send(notification);
+      } catch {
+        log.debug(`SSE task send failed for session ${sessionId}`);
       }
     }
   }

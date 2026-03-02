@@ -94,7 +94,7 @@ Your PC / VPS
 
 Two npm packages:
 
-- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 16 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
+- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 26 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
 - **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
 
 ## Key features
@@ -120,6 +120,8 @@ Two npm packages:
 npx agorai debate "Redis vs Memcached for session storage?"
 ```
 
+**Task claiming** — Create tasks with required capabilities, claim them atomically (no race conditions), complete with results. Stale claims auto-release when agents go offline. Pull model — agents discover and claim work, not push.
+
 **Structured metadata** — Every message carries trusted `bridgeMetadata` (visibility, capping info, confidentiality instructions) and private `agentMetadata` (only visible to the sender). Agents can't forge bridge data.
 
 **Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
@@ -140,7 +142,7 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 
 | Version | Focus |
 |---------|-------|
-| **v0.2** | **Bridge — shared workspace, visibility, auth, 16 MCP tools** |
+| **v0.2** | **Bridge — shared workspace, visibility, auth, 26 MCP tools** |
 | v0.2.x | Security hardening, Docker, npm publish, session recovery, internal agents |
 | **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
 | **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, high-water marks** |

@@ -39,6 +39,10 @@ export interface BridgeMetadata {
   originalVisibility?: VisibilityLevel;
   timestamp: string;
   instructions: BridgeInstructions;
+  /** True if this is a directed message (whisper) — only recipients can see it. */
+  whisper?: boolean;
+  /** Agent IDs who can see this whisper message (includes sender implicitly). */
+  recipients?: string[];
 }
 
 export interface AgentHighWaterMark {
@@ -109,6 +113,9 @@ export interface Message {
   type: string;
   visibility: VisibilityLevel;
   content: string;
+  tags: string[];
+  /** Whisper recipients (agent IDs). Null for broadcast messages. */
+  recipients: string[] | null;
   /** @deprecated Use agentMetadata/bridgeMetadata */
   metadata: Record<string, unknown> | null;
   agentMetadata: Record<string, unknown> | null;
@@ -158,6 +165,9 @@ export interface CreateMessage {
   type?: string;
   visibility?: VisibilityLevel;
   content: string;
+  tags?: string[];
+  /** Whisper recipients (agent IDs). If set, only these agents + sender can see the message. */
+  recipients?: string[];
   metadata?: Record<string, unknown>;
 }
 
@@ -198,4 +208,84 @@ export interface GetMessagesOptions {
   since?: string;
   unreadOnly?: boolean;
   limit?: number;
+  tags?: string[];
+  fromAgent?: string;
+}
+
+// --- Tasks ---
+
+export type TaskStatus = "open" | "claimed" | "completed" | "cancelled";
+
+export interface Task {
+  id: string;
+  projectId: string;
+  conversationId: string | null;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  requiredCapabilities: string[];
+  createdBy: string;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  completedAt: string | null;
+  result: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTask {
+  projectId: string;
+  conversationId?: string;
+  title: string;
+  description?: string;
+  requiredCapabilities?: string[];
+  createdBy: string;
+}
+
+export interface TaskFilters {
+  status?: TaskStatus;
+  claimedBy?: string;
+  capability?: string;
+}
+
+// --- Instructions (scope × selector matrix) ---
+
+export type InstructionScope = "bridge" | "project" | "conversation";
+
+export interface InstructionSelector {
+  /** Match agents of this type (e.g. "claude-code", "ollama"). */
+  type?: string;
+  /** Match agents with this capability (e.g. "code-execution"). */
+  capability?: string;
+}
+
+export interface Instruction {
+  id: string;
+  scope: InstructionScope;
+  scopeId: string | null;
+  selector: InstructionSelector | null;
+  content: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateInstruction {
+  scope: InstructionScope;
+  scopeId?: string;
+  selector?: InstructionSelector;
+  content: string;
+  createdBy: string;
+}
+
+// --- Agent Memory (private per-agent scratchpad) ---
+
+export type AgentMemoryScope = "global" | "project" | "conversation";
+
+export interface AgentMemory {
+  agentId: string;
+  scope: AgentMemoryScope;
+  scopeId: string | null;
+  content: string;
+  updatedAt: string;
 }

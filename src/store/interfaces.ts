@@ -25,6 +25,15 @@ import type {
   AccessRequest,
   AccessRequestStatus,
   CreateAccessRequest,
+  Task,
+  CreateTask,
+  TaskFilters,
+  TaskStatus,
+  AgentMemory,
+  AgentMemoryScope,
+  Instruction,
+  CreateInstruction,
+  InstructionScope,
 } from "./types.js";
 import type { StoreEventBus } from "./events.js";
 
@@ -36,6 +45,7 @@ export interface IStore {
   getAgent(id: string): Promise<Agent | null>;
   getAgentByApiKey(keyHash: string): Promise<Agent | null>;
   listAgents(): Promise<Agent[]>;
+  findAgentsByCapability(capability: string): Promise<Agent[]>;
   updateAgentLastSeen(id: string): Promise<void>;
   removeAgent(id: string): Promise<boolean>;
 
@@ -74,6 +84,26 @@ export interface IStore {
   listAccessRequestsByAgent(agentId: string): Promise<AccessRequest[]>;
   respondToAccessRequest(id: string, status: AccessRequestStatus, respondedBy: string): Promise<AccessRequest | null>;
   hasPendingAccessRequest(conversationId: string, agentId: string): Promise<boolean>;
+
+  // --- Tasks ---
+  createTask(task: CreateTask): Promise<Task>;
+  getTask(id: string): Promise<Task | null>;
+  listTasks(projectId: string, agentId: string, filters?: TaskFilters): Promise<Task[]>;
+  claimTask(id: string, agentId: string): Promise<Task | null>;
+  completeTask(id: string, agentId: string, result?: string): Promise<Task | null>;
+  releaseTask(id: string, agentId: string): Promise<Task | null>;
+  updateTask(id: string, agentId: string, updates: { title?: string; description?: string; status?: TaskStatus }): Promise<Task | null>;
+
+  // --- Instructions (scope × selector matrix) ---
+  setInstruction(instruction: CreateInstruction): Promise<Instruction>;
+  listInstructions(scope: InstructionScope, scopeId?: string): Promise<Instruction[]>;
+  getMatchingInstructions(agent: { type: string; capabilities: string[] }, conversationId: string): Promise<Instruction[]>;
+  deleteInstruction(id: string, agentId: string): Promise<boolean>;
+
+  // --- Agent Memory (private per-agent scratchpad) ---
+  setAgentMemory(agentId: string, scope: AgentMemoryScope, content: string, scopeId?: string): Promise<AgentMemory>;
+  getAgentMemory(agentId: string, scope: AgentMemoryScope, scopeId?: string): Promise<AgentMemory | null>;
+  deleteAgentMemory(agentId: string, scope: AgentMemoryScope, scopeId?: string): Promise<boolean>;
 
   // --- High-water marks (passive tracking) ---
   getHighWaterMark(agentId: string, projectId: string): Promise<AgentHighWaterMark | null>;

@@ -32,6 +32,16 @@ import type {
   AccessRequest,
   AccessRequestStatus,
   CreateAccessRequest,
+  Task,
+  CreateTask,
+  TaskFilters,
+  TaskStatus,
+  AgentMemory,
+  AgentMemoryScope,
+  Instruction,
+  CreateInstruction,
+  InstructionScope,
+  InstructionSelector,
 } from "./types.js";
 import { VISIBILITY_ORDER } from "./types.js";
 
@@ -167,6 +177,49 @@ export class SqliteStore implements IStore {
       );
       CREATE INDEX IF NOT EXISTS idx_access_requests_conv_status ON access_requests(conversation_id, status);
       CREATE INDEX IF NOT EXISTS idx_access_requests_agent_status ON access_requests(agent_id, status);
+
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        conversation_id TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        required_capabilities TEXT NOT NULL DEFAULT '[]',
+        created_by TEXT NOT NULL,
+        claimed_by TEXT,
+        claimed_at TEXT,
+        completed_at TEXT,
+        result TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (created_by) REFERENCES agents(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+
+      CREATE TABLE IF NOT EXISTS agent_memory (
+        agent_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        scope_id TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (agent_id, scope, scope_id),
+        FOREIGN KEY (agent_id) REFERENCES agents(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS instructions (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL,
+        scope_id TEXT NOT NULL DEFAULT '',
+        selector_json TEXT NOT NULL DEFAULT '{}',
+        content TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (created_by) REFERENCES agents(id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_instructions_scope_selector ON instructions(scope, scope_id, selector_json);
     `);
 
     // --- Schema migrations for existing databases ---
@@ -200,6 +253,16 @@ export class SqliteStore implements IStore {
     if (!projColNames.has("confidentiality_mode")) {
       this.db.exec("ALTER TABLE projects ADD COLUMN confidentiality_mode TEXT NOT NULL DEFAULT 'normal'");
     }
+
+    // Check if messages table has tags column
+    if (!msgColNames.has("tags")) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'");
+    }
+
+    // Check if messages table has recipients column (whisper support)
+    if (!msgColNames.has("recipients")) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN recipients TEXT");
+    }
   }
 
   // --- Agent helpers ---
@@ -222,6 +285,25 @@ export class SqliteStore implements IStore {
       apiKeyHash: row.api_key_hash as string,
       lastSeenAt: row.last_seen_at as string,
       createdAt: row.created_at as string,
+    };
+  }
+
+  private rowToTask(row: Record<string, unknown>): Task {
+    return {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      conversationId: (row.conversation_id as string) ?? null,
+      title: row.title as string,
+      description: (row.description as string) ?? null,
+      status: row.status as TaskStatus,
+      requiredCapabilities: JSON.parse((row.required_capabilities as string) || "[]"),
+      createdBy: row.created_by as string,
+      claimedBy: (row.claimed_by as string) ?? null,
+      claimedAt: (row.claimed_at as string) ?? null,
+      completedAt: (row.completed_at as string) ?? null,
+      result: (row.result as string) ?? null,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
     };
   }
 
@@ -300,6 +382,12 @@ export class SqliteStore implements IStore {
   async listAgents(): Promise<Agent[]> {
     const rows = this.db.prepare("SELECT * FROM agents ORDER BY name").all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToAgent(r));
+  }
+
+  async findAgentsByCapability(capability: string): Promise<Agent[]> {
+    const agents = await this.listAgents();
+    const lower = capability.toLowerCase();
+    return agents.filter((a) => a.capabilities.some((c) => c.toLowerCase() === lower));
   }
 
   async updateAgentLastSeen(id: string): Promise<void> {
@@ -533,6 +621,10 @@ export class SqliteStore implements IStore {
     this.db.prepare(`
       DELETE FROM conversation_agents WHERE conversation_id = ? AND agent_id = ?
     `).run(conversationId, agentId);
+    // Cleanup conversation-scoped agent memory on unsubscribe
+    this.db.prepare(
+      "DELETE FROM agent_memory WHERE agent_id = ? AND scope = 'conversation' AND scope_id = ?"
+    ).run(agentId, conversationId);
   }
 
   async getSubscribers(conversationId: string): Promise<Subscription[]> {
@@ -600,6 +692,7 @@ export class SqliteStore implements IStore {
 
     // Build bridge metadata (trusted, immutable by agents)
     const confMode = this.getProjectConfidentialityMode(msg.conversationId);
+    const recipients = msg.recipients && msg.recipients.length > 0 ? msg.recipients : null;
     const bridgeMeta: BridgeMetadata = {
       visibility: cappedVis,
       senderClearance,
@@ -607,6 +700,7 @@ export class SqliteStore implements IStore {
       ...(wasCapped ? { originalVisibility: requestedVis } : {}),
       timestamp: ts,
       instructions: this.getConfidentialityInstructions(cappedVis, confMode),
+      ...(recipients ? { whisper: true, recipients } : {}),
     };
 
     // Strip any _bridge / bridgeMetadata keys from agent-provided metadata (anti-forge)
@@ -621,9 +715,11 @@ export class SqliteStore implements IStore {
       if (Object.keys(cleanedAgentMeta).length === 0) cleanedAgentMeta = null;
     }
 
+    const tags = msg.tags ?? [];
+
     this.db.prepare(`
-      INSERT INTO messages (id, conversation_id, from_agent, type, visibility, content, metadata, agent_metadata, bridge_metadata, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, conversation_id, from_agent, type, visibility, content, tags, recipients, metadata, agent_metadata, bridge_metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       msg.conversationId,
@@ -631,6 +727,8 @@ export class SqliteStore implements IStore {
       msg.type ?? "message",
       cappedVis,
       msg.content,
+      JSON.stringify(tags),
+      recipients ? JSON.stringify(recipients) : null,
       cleanedAgentMeta ? JSON.stringify(cleanedAgentMeta) : null,
       cleanedAgentMeta ? JSON.stringify(cleanedAgentMeta) : null,
       JSON.stringify(bridgeMeta),
@@ -647,6 +745,8 @@ export class SqliteStore implements IStore {
       type: msg.type ?? "message",
       visibility: cappedVis,
       content: msg.content,
+      tags,
+      recipients,
       metadata: cleanedAgentMeta,
       agentMetadata: cleanedAgentMeta,
       bridgeMetadata: bridgeMeta,
@@ -676,14 +776,30 @@ export class SqliteStore implements IStore {
       params.push(agentId);
     }
 
+    if (opts?.fromAgent) {
+      sql += " AND from_agent = ?";
+      params.push(opts.fromAgent);
+    }
+
     sql += " ORDER BY created_at ASC";
 
-    // No SQL LIMIT — visibility filter runs in JS, so we need the full set first
+    // No SQL LIMIT — visibility and tag filters run in JS, so we need the full set first
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
 
     let results = rows
       .filter((r) => visibilityToInt(r.visibility as VisibilityLevel) <= maxVis)
-      .map((r) => this.rowToMessage(r));
+      .map((r) => this.rowToMessage(r))
+      .filter((msg) => {
+        // Whisper gate: if message has recipients, agent must be sender or in recipients list
+        if (msg.recipients) {
+          if (msg.fromAgent !== agentId && !msg.recipients.includes(agentId)) return false;
+        }
+        return true;
+      })
+      .filter((msg) => {
+        if (!opts?.tags || opts.tags.length === 0) return true;
+        return opts.tags.some((t) => msg.tags.includes(t));
+      });
 
     if (opts?.limit) {
       results = results.slice(0, opts.limit);
@@ -860,6 +976,324 @@ export class SqliteStore implements IStore {
     return row !== undefined;
   }
 
+  // --- Tasks ---
+
+  private releaseStaleTaskClaims(): void {
+    const threshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const stale = this.db.prepare(`
+      SELECT t.id FROM tasks t
+      JOIN agents a ON t.claimed_by = a.id
+      WHERE t.status = 'claimed' AND a.last_seen_at < ?
+    `).all(threshold) as { id: string }[];
+
+    if (stale.length > 0) {
+      const ts = now();
+      const release = this.db.prepare(
+        "UPDATE tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ?"
+      );
+      for (const { id } of stale) {
+        release.run(ts, id);
+        // Emit event for each released task
+        const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+        if (row) this.eventBus.emitTaskUpdated(this.rowToTask(row), "released");
+      }
+    }
+  }
+
+  async createTask(task: CreateTask): Promise<Task> {
+    const id = randomUUID();
+    const ts = now();
+    this.db.prepare(`
+      INSERT INTO tasks (id, project_id, conversation_id, title, description, status, required_capabilities, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+    `).run(
+      id,
+      task.projectId,
+      task.conversationId ?? null,
+      task.title,
+      task.description ?? null,
+      JSON.stringify(task.requiredCapabilities ?? []),
+      task.createdBy,
+      ts,
+      ts,
+    );
+
+    const created: Task = {
+      id,
+      projectId: task.projectId,
+      conversationId: task.conversationId ?? null,
+      title: task.title,
+      description: task.description ?? null,
+      status: "open",
+      requiredCapabilities: task.requiredCapabilities ?? [],
+      createdBy: task.createdBy,
+      claimedBy: null,
+      claimedAt: null,
+      completedAt: null,
+      result: null,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+
+    this.eventBus.emitTaskCreated(created);
+    return created;
+  }
+
+  async getTask(id: string): Promise<Task | null> {
+    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToTask(row) : null;
+  }
+
+  async listTasks(projectId: string, agentId: string, filters?: TaskFilters): Promise<Task[]> {
+    // Verify project access
+    const project = await this.getProject(projectId, agentId);
+    if (!project) return [];
+
+    // Release stale claims before listing
+    this.releaseStaleTaskClaims();
+
+    const rows = this.db.prepare(
+      "SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC"
+    ).all(projectId) as Record<string, unknown>[];
+
+    let results = rows.map((r) => this.rowToTask(r));
+
+    // JS-side filtering (consistent with existing visibility filtering pattern)
+    if (filters?.status) {
+      results = results.filter((t) => t.status === filters.status);
+    }
+    if (filters?.claimedBy) {
+      results = results.filter((t) => t.claimedBy === filters.claimedBy);
+    }
+    if (filters?.capability) {
+      const lower = filters.capability.toLowerCase();
+      results = results.filter((t) =>
+        t.requiredCapabilities.some((c) => c.toLowerCase() === lower)
+      );
+    }
+
+    return results;
+  }
+
+  async claimTask(id: string, agentId: string): Promise<Task | null> {
+    // Release stale claims before attempting
+    this.releaseStaleTaskClaims();
+
+    const ts = now();
+    const result = this.db.prepare(
+      "UPDATE tasks SET status = 'claimed', claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'open'"
+    ).run(agentId, ts, ts, id);
+
+    if (result.changes === 0) return null;
+
+    const task = await this.getTask(id);
+    if (task) this.eventBus.emitTaskUpdated(task, "claimed");
+    return task;
+  }
+
+  async completeTask(id: string, agentId: string, result?: string): Promise<Task | null> {
+    const ts = now();
+    const dbResult = this.db.prepare(
+      "UPDATE tasks SET status = 'completed', completed_at = ?, result = ?, updated_at = ? WHERE id = ? AND claimed_by = ? AND status = 'claimed'"
+    ).run(ts, result ?? null, ts, id, agentId);
+
+    if (dbResult.changes === 0) return null;
+
+    const task = await this.getTask(id);
+    if (task) this.eventBus.emitTaskUpdated(task, "completed");
+    return task;
+  }
+
+  async releaseTask(id: string, agentId: string): Promise<Task | null> {
+    const ts = now();
+    // Allow both the claimer and the creator to release
+    const dbResult = this.db.prepare(
+      "UPDATE tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ? AND status = 'claimed' AND (claimed_by = ? OR created_by = ?)"
+    ).run(ts, id, agentId, agentId);
+
+    if (dbResult.changes === 0) return null;
+
+    const task = await this.getTask(id);
+    if (task) this.eventBus.emitTaskUpdated(task, "released");
+    return task;
+  }
+
+  async updateTask(id: string, agentId: string, updates: { title?: string; description?: string; status?: TaskStatus }): Promise<Task | null> {
+    // Only the creator can update a task
+    const existing = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND created_by = ?").get(id, agentId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!existing) return null;
+
+    const ts = now();
+    const fields: string[] = ["updated_at = ?"];
+    const params: unknown[] = [ts];
+
+    if (updates.title !== undefined) {
+      fields.push("title = ?");
+      params.push(updates.title);
+    }
+    if (updates.description !== undefined) {
+      fields.push("description = ?");
+      params.push(updates.description);
+    }
+    if (updates.status !== undefined) {
+      fields.push("status = ?");
+      params.push(updates.status);
+      if (updates.status === "open") {
+        // Reopening: clear claim fields
+        fields.push("claimed_by = NULL", "claimed_at = NULL");
+      }
+    }
+
+    params.push(id);
+    this.db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+
+    const task = await this.getTask(id);
+    if (task) {
+      const action = updates.status === "cancelled" ? "cancelled" : "updated";
+      this.eventBus.emitTaskUpdated(task, action);
+    }
+    return task;
+  }
+
+  // --- Agent Memory ---
+
+  async setAgentMemory(agentId: string, scope: AgentMemoryScope, content: string, scopeId?: string): Promise<AgentMemory> {
+    const ts = now();
+    const resolvedScopeId = scope === "global" ? "" : (scopeId ?? "");
+
+    this.db.prepare(`
+      INSERT INTO agent_memory (agent_id, scope, scope_id, content, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (agent_id, scope, scope_id) DO UPDATE SET
+        content = excluded.content,
+        updated_at = excluded.updated_at
+    `).run(agentId, scope, resolvedScopeId, content, ts);
+
+    return {
+      agentId,
+      scope,
+      scopeId: resolvedScopeId || null,
+      content,
+      updatedAt: ts,
+    };
+  }
+
+  async getAgentMemory(agentId: string, scope: AgentMemoryScope, scopeId?: string): Promise<AgentMemory | null> {
+    const resolvedScopeId = scope === "global" ? "" : (scopeId ?? "");
+
+    const row = this.db.prepare(
+      "SELECT * FROM agent_memory WHERE agent_id = ? AND scope = ? AND scope_id = ?"
+    ).get(agentId, scope, resolvedScopeId) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    const rawScopeId = row.scope_id as string;
+    return {
+      agentId: row.agent_id as string,
+      scope: row.scope as AgentMemoryScope,
+      scopeId: rawScopeId || null,
+      content: row.content as string,
+      updatedAt: row.updated_at as string,
+    };
+  }
+
+  async deleteAgentMemory(agentId: string, scope: AgentMemoryScope, scopeId?: string): Promise<boolean> {
+    const resolvedScopeId = scope === "global" ? "" : (scopeId ?? "");
+
+    const result = this.db.prepare(
+      "DELETE FROM agent_memory WHERE agent_id = ? AND scope = ? AND scope_id = ?"
+    ).run(agentId, scope, resolvedScopeId);
+
+    return result.changes > 0;
+  }
+
+  // --- Instructions ---
+
+  private rowToInstruction(row: Record<string, unknown>): Instruction {
+    const selectorStr = row.selector_json as string;
+    const selector = selectorStr && selectorStr !== "{}" ? JSON.parse(selectorStr) as InstructionSelector : null;
+    const rawScopeId = row.scope_id as string;
+    return {
+      id: row.id as string,
+      scope: row.scope as InstructionScope,
+      scopeId: rawScopeId || null,
+      selector,
+      content: row.content as string,
+      createdBy: row.created_by as string,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    };
+  }
+
+  async setInstruction(instruction: CreateInstruction): Promise<Instruction> {
+    const id = randomUUID();
+    const ts = now();
+    const scopeId = instruction.scope === "bridge" ? "" : (instruction.scopeId ?? "");
+    const selectorJson = instruction.selector ? JSON.stringify(instruction.selector) : "{}";
+
+    this.db.prepare(`
+      INSERT INTO instructions (id, scope, scope_id, selector_json, content, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (scope, scope_id, selector_json) DO UPDATE SET
+        content = excluded.content,
+        updated_at = excluded.updated_at
+    `).run(id, instruction.scope, scopeId, selectorJson, instruction.content, instruction.createdBy, ts, ts);
+
+    // Re-read to get actual ID (upsert may have kept the original)
+    const row = this.db.prepare(
+      "SELECT * FROM instructions WHERE scope = ? AND scope_id = ? AND selector_json = ?"
+    ).get(instruction.scope, scopeId, selectorJson) as Record<string, unknown>;
+
+    return this.rowToInstruction(row);
+  }
+
+  async listInstructions(scope: InstructionScope, scopeId?: string): Promise<Instruction[]> {
+    const resolvedScopeId = scope === "bridge" ? "" : (scopeId ?? "");
+    const rows = this.db.prepare(
+      "SELECT * FROM instructions WHERE scope = ? AND scope_id = ? ORDER BY created_at ASC"
+    ).all(resolvedScopeId ? scope : scope, resolvedScopeId) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToInstruction(r));
+  }
+
+  async getMatchingInstructions(agent: { type: string; capabilities: string[] }, conversationId: string): Promise<Instruction[]> {
+    // Resolve project ID from conversation
+    const conv = await this.getConversation(conversationId);
+    if (!conv) return [];
+
+    // Fetch all instructions for bridge + project + conversation scopes
+    const rows = this.db.prepare(`
+      SELECT * FROM instructions
+      WHERE (scope = 'bridge' AND scope_id = '')
+         OR (scope = 'project' AND scope_id = ?)
+         OR (scope = 'conversation' AND scope_id = ?)
+      ORDER BY
+        CASE scope WHEN 'bridge' THEN 0 WHEN 'project' THEN 1 WHEN 'conversation' THEN 2 END,
+        created_at ASC
+    `).all(conv.projectId, conversationId) as Record<string, unknown>[];
+
+    const all = rows.map((r) => this.rowToInstruction(r));
+
+    // Filter by selector match
+    return all.filter((instr) => {
+      if (!instr.selector) return true; // no selector = applies to all
+      if (instr.selector.type && instr.selector.type.toLowerCase() !== agent.type.toLowerCase()) return false;
+      if (instr.selector.capability && !agent.capabilities.some((c) => c.toLowerCase() === instr.selector!.capability!.toLowerCase())) return false;
+      return true;
+    });
+  }
+
+  async deleteInstruction(id: string, agentId: string): Promise<boolean> {
+    // Only the creator can delete
+    const result = this.db.prepare(
+      "DELETE FROM instructions WHERE id = ? AND created_by = ?"
+    ).run(id, agentId);
+    return result.changes > 0;
+  }
+
   private rowToMessage(row: Record<string, unknown>): Message {
     const legacyMeta = row.metadata ? JSON.parse(row.metadata as string) : null;
     // For pre-migration rows, agent_metadata may be null but metadata has data
@@ -877,6 +1311,8 @@ export class SqliteStore implements IStore {
       type: row.type as string,
       visibility: row.visibility as VisibilityLevel,
       content: row.content as string,
+      tags: JSON.parse((row.tags as string) || "[]"),
+      recipients: row.recipients ? JSON.parse(row.recipients as string) : null,
       metadata: legacyMeta,
       agentMetadata: agentMeta,
       bridgeMetadata: bridgeMeta,

@@ -169,12 +169,13 @@
 | Debate protocol | Iterative synthesis with 30% dissent threshold | Done |
 | Quorum protocol | Confidence-weighted with persona bonus | Planned |
 
-### Bridge MCP Tools (19)
+### Bridge MCP Tools (26)
 
 | Tool | Description | Status |
 |------|-------------|--------|
 | `register_agent` | Register/update the calling agent | Done |
 | `list_agents` | List registered agents | Done |
+| `discover_capabilities` | Find agents by capability (case-insensitive filter or browse all) | Done (v0.5) |
 | `create_project` | Create a project | Done |
 | `list_projects` | List accessible projects | Done |
 | `set_memory` | Add/update memory entry | Done |
@@ -192,6 +193,12 @@
 | `list_access_requests` | List pending access requests for a conversation | Done (v0.4.3) |
 | `respond_to_access_request` | Approve/deny/silent_deny an access request | Done (v0.4.3) |
 | `get_my_access_requests` | Check own access request statuses | Done (v0.4.3) |
+| `create_task` | Create a task in a project with optional capabilities | Done (v0.5) |
+| `list_tasks` | List tasks filtered by status, capability, or claiming agent | Done (v0.5) |
+| `claim_task` | Atomically claim an open task (race-condition safe) | Done (v0.5) |
+| `complete_task` | Mark a claimed task as completed with optional result | Done (v0.5) |
+| `release_task` | Release a claim back to open (by claimer or creator) | Done (v0.5) |
+| `update_task` | Update task title/description/status (creator only) | Done (v0.5) |
 
 ### Debate MCP Tools (11)
 
@@ -209,12 +216,12 @@
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **Capability catalog** | Agents register capabilities (tags/skills), discoverability via `list_agents` or `discover_capabilities` tool | Planned |
-| **Task claiming** | `create_task`, `claim_task`, `complete_task` tools. Tasks linked to conversations/projects. Capability-aware routing | Planned |
-| **Structured conversation protocol** | New message types: `proposal`, `review`, `decision`. Enables peer review gates natively in bridge conversations | Planned |
-| **Directed messages (whisper)** | `recipients[]` field on `send_message` — only listed agents see the message. Additive to visibility/clearance system (both filters apply). @mentions in content remain for context, `recipients` controls access | Planned |
-| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned |
-| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned |
+| **Capability catalog** | `discover_capabilities` tool — filter agents by capability (case-insensitive) or browse all. `findAgentsByCapability()` store method | Done |
+| **Task claiming** | 6 tools: `create_task`, `list_tasks`, `claim_task`, `complete_task`, `release_task`, `update_task`. Atomic DB claim, auto-release on timeout, project-scoped, SSE notifications | Done |
+| **Structured conversation protocol** | New message types: `proposal`, `review`, `decision`. Enables peer review gates natively in bridge conversations | Done |
+| **Directed messages (whisper)** | `recipients[]` field on `send_message` — only listed agents + sender see the message. Additive to visibility/clearance (both filters apply). @mention validation: rejects whispers where @mentioned agents aren't recipients. `BridgeMetadata.whisper` + `BridgeMetadata.recipients` | Done |
+| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` (any-match) | Done |
+| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Done |
 
 ## Agent Memory (v0.5)
 
@@ -222,11 +229,12 @@ Private per-agent memory — each agent has its own scratchpad, invisible to oth
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **`set_agent_memory`** | `set_agent_memory(content, project_id?, conversation_id?)` — overwrites entire memory for the given scope. No scope = global memory | Planned |
-| **`get_agent_memory`** | `get_agent_memory(project_id?, conversation_id?)` — returns the agent's memory blob for the given scope | Planned |
-| **3 scopes** | Global (no params), per-project (`project_id`), per-conversation (`project_id` + `conversation_id`) | Planned |
+| **`set_agent_memory`** | `set_agent_memory(content, project_id?, conversation_id?)` — overwrites entire memory for the given scope. No scope = global memory | Done |
+| **`get_agent_memory`** | `get_agent_memory(project_id?, conversation_id?)` — returns the agent's memory blob for the given scope | Done |
+| **`delete_agent_memory`** | `delete_agent_memory(project_id?, conversation_id?)` — deletes the agent's memory for the given scope | Done |
+| **3 scopes** | Global (no params), per-project (`project_id`), per-conversation (`conversation_id`) | Done |
 | **Size limits** | Configurable max size per scope in bridge config (`maxGlobal`, `maxPerProject`, `maxPerConversation`). Bridge rejects if exceeded | Planned |
-| **Cleanup on unsubscribe** | Conversation-level memory deleted when agent unsubscribes. Project-level memory deleted when agent loses project access | Planned |
+| **Cleanup on unsubscribe** | Conversation-level memory auto-deleted when agent unsubscribes. Global and project memory preserved | Done |
 | **Persistent public agent memory** | Allow unsubscribed agents to retain memory (configurable) | Future |
 
 ## Instruction Matrix (v0.5)
@@ -235,12 +243,14 @@ Matrix-based instruction system — instructions are matched to agents by scope 
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **`set_instructions` tool** | `set_instructions(scope, content, selector?)` — scope = `bridge` / `project` / `conversation`. Optional selector = `{ type?, mode?, capability? }`. No selector = `*` (all agents). Bridge verifies caller's role | Planned |
-| **`list_instructions` tool** | `list_instructions(scope?)` — view instruction matrix entries. Admin sees all, project manager sees project+conversation, creator sees conversation only | Planned |
-| **Selector matching** | Agent receives concatenation of all entries matching its properties (type, mode, capabilities). `*` entries match everyone | Planned |
-| **Cascade model** | Final output = `[matching bridge entries] + [matching project entries] + [matching conversation entries]`. Pushed in `bridgeMetadata.instructions` on messages | Planned |
-| **Read-only for agents** | Agents consume instructions, they don't edit them. Editing is reserved for admins, project managers, and conversation creators (who may or may not be agents) | Planned |
-| **Subscribe response enriched** | On subscribe, agent receives the full matched+cascaded instructions for that conversation context | Planned |
+| **`set_instructions` tool** | `set_instructions(content, project_id?, conversation_id?, selector?)` — upsert instruction for project or conversation scope. Optional selector `{ type?, capability? }`. No selector = applies to all agents. Only creator can set | Done |
+| **`list_instructions` tool** | `list_instructions(project_id?, conversation_id?)` — view instructions for a scope. Bridge-level if no params, project/conversation otherwise | Done |
+| **`delete_instructions` tool** | `delete_instructions(instruction_id)` — delete an instruction by ID. Only the creator can delete | Done |
+| **Selector matching** | Runtime matching filters by agent type and capability (case-insensitive). No-selector entries match all agents | Done |
+| **Cascade model** | `getMatchingInstructions()` returns bridge → project → conversation ordered. Cascaded instructions pushed on subscribe response | Done |
+| **Read-only for agents** | Only project/conversation creators can set instructions. Other agents consume via `list_instructions` or subscribe response | Done |
+| **Subscribe response enriched** | On subscribe, agent receives matched+cascaded instructions as `instructions[]` in the response | Done |
+| **Bridge scope restricted** | Bridge-level instructions cannot be set via MCP (future admin dashboard). Can be queried with `list_instructions()` | Done |
 | **Client-type instructions** | Replaces playbook. E.g. selector `{ type: "claude-code" }` → "poll every 10s for 5 min"; selector `{ type: "openai-compat" }` → "you receive SSE notifications" | Planned |
 | **Mode instructions** | E.g. selector `{ mode: "active" }` → "respond to all messages"; selector `{ mode: "passive" }` → "only respond when @mentioned" | Planned |
 

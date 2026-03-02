@@ -1,5 +1,118 @@
 # Changelog
 
+## 2026-03-02 — v0.5 Phase 2 (Agent Memory, Instructions, Structured Protocol)
+
+### Added
+- **Agent memory**: Private per-agent scratchpad with 3 scopes (global, project, conversation). One text blob per scope, full overwrite on set. Conversation-scoped memory auto-deleted on unsubscribe.
+  - 3 new MCP tools: `set_agent_memory`, `get_agent_memory`, `delete_agent_memory`
+  - `agent_memory` table with composite primary key `(agent_id, scope, scope_id)`
+- **Instruction matrix**: Scope × selector instructions system. Creators set instructions at project or conversation level, optionally targeting specific agent types or capabilities.
+  - 3 new MCP tools: `set_instructions`, `list_instructions`, `delete_instructions`
+  - `instructions` table with unique constraint on `(scope, scope_id, selector_json)`
+  - Runtime matching: `getMatchingInstructions()` cascades bridge → project → conversation, filtered by agent type/capabilities (case-insensitive)
+  - Subscribe response now includes matching instructions for the subscribing agent
+- **Structured conversation protocol**: Extended message type enum with `proposal` and `decision` types
+
+### Changed
+- Tool count: 26 → 32 (6 new tools: 3 agent memory + 3 instructions)
+- `subscribe` response now includes `instructions` array with matching instruction content
+
+### Tests
+- 16 new tests in `agent-memory.test.ts`: global set/get, overwrite, null for non-existent, delete, delete non-existent, project-scoped, separate from global, conversation-scoped, privacy, cleanup on unsubscribe, scope isolation + 2 structured conversation protocol tests
+- 13 new tests in `instructions.test.ts`: CRUD, upsert, different selectors, delete by creator, delete fails for non-creator, type matching, capability matching, cascading scopes, unknown conversation, case-insensitive matching, scope isolation, bridge-level
+- Total: 315 server tests passing (was 288)
+
+---
+
+## 2026-03-02 — v0.5 Phase 1D (Directed Messages / Whisper)
+
+### Added
+- **Directed messages (whisper)**: `recipients` field on `send_message` — only listed agent IDs + sender can see the message. Omit for broadcast.
+  - `send_message` accepts optional `recipients` parameter (up to 20 agent IDs)
+  - Store-level enforcement: `getMessages()` filters out whispers where the reader is not sender or recipient
+  - SSE whisper gate: `dispatchMessageNotification()` skips non-recipients for whisper messages
+  - `BridgeMetadata` includes `whisper: true` and `recipients: [...]` on directed messages
+  - `Message.recipients`: `string[] | null` — null for broadcasts, array of agent IDs for whispers
+- **@mention validation**: `send_message` rejects whispers where @mentioned agents are not in the recipients list (they wouldn't see the message)
+- **Schema migration**: `ALTER TABLE messages ADD COLUMN recipients TEXT` — auto-applied on startup for existing databases
+
+### Changed
+- `Message` type: added `recipients: string[] | null`
+- `CreateMessage` type: added optional `recipients?: string[]`
+- `BridgeMetadata` type: added optional `whisper?: boolean` and `recipients?: string[]`
+- `SendMessageSchema`: added `recipients` field (optional, max 20 IDs)
+
+### Tests
+- 12 new tests in `whispers.test.ts`: whisper storage + bridgeMetadata, broadcast (no recipients), empty recipients = broadcast, recipient sees whisper, sender always sees own whisper, non-recipient blocked, mixed broadcast + whisper, multiple recipients, visibility + whisper (both apply), DB persistence, migration compat, event bus emission
+- Total: 288 server tests passing (was 276)
+
+---
+
+## 2026-03-02 — v0.5 Phase 1C (Message Tags + Filter by Agent)
+
+### Added
+- **Message tags**: `tags` field on messages — array of strings for categorization (e.g. `["urgent", "review"]`). Default `[]`.
+  - `send_message` now accepts a `tags` parameter (up to 20 tags, 50 chars each)
+  - `get_messages` filters by `tags` parameter (any-match: message included if it has at least one matching tag)
+- **Filter by agent**: `get_messages` now accepts a `from_agent` parameter to filter messages by sender agent ID
+- **Schema migration**: `ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'` — auto-applied on startup for existing databases
+- Combined filters work together: `tags` + `from_agent` + `since` + `unread_only` + `limit`
+
+### Changed
+- `CreateMessage` type: added optional `tags?: string[]`
+- `GetMessagesOptions` type: added optional `tags?: string[]` and `fromAgent?: string`
+- `SendMessageSchema`: added `tags` field (default `[]`)
+- `GetMessagesSchema`: added `tags` and `from_agent` fields
+
+### Tests
+- 11 new tests in `message-tags.test.ts`: tag storage, default empty array, tag filtering (single, multiple, non-matching, empty), fromAgent filtering, combined filters, migration compat
+- Total: 276 server tests passing (was 265)
+
+---
+
+## 2026-03-02 — v0.5 Phase 1B (Task Claiming)
+
+### Added
+- **Task claiming system** — 6 new MCP tools (20 → 26 total), enabling agents to create, discover, claim, complete, and release work items:
+  - `create_task` — create a task in a project, optionally linked to a conversation, with required capabilities
+  - `list_tasks` — list tasks with filters by status, claimed agent, or required capability
+  - `claim_task` — atomically claim an open task (DB-level `WHERE status='open'` + `changes > 0`)
+  - `complete_task` — mark a claimed task as completed with an optional result
+  - `release_task` — release a claim back to open (allowed by claimer or task creator)
+  - `update_task` — update title/description/status (only by creator)
+- **`tasks` table**: 14 columns with `(project_id, status)` index, foreign keys to projects and agents
+- **`Task`, `CreateTask`, `TaskFilters`, `TaskStatus` types** in `store/types.ts`
+- **7 store methods**: `createTask`, `getTask`, `listTasks`, `claimTask`, `completeTask`, `releaseTask`, `updateTask`
+- **Auto-release of stale claims**: `releaseStaleTaskClaims()` checks agent `last_seen_at` — claims from agents inactive >5 minutes are released lazily on `listTasks`/`claimTask`
+- **Task events**: `TaskCreatedEvent`, `TaskUpdatedEvent` (actions: claimed, completed, released, cancelled, updated) on `StoreEventBus`
+- **SSE push for tasks**: `dispatchTaskNotification()` pushes `notifications/task` to all agents with active sessions
+- **Public API exports**: `Task`, `CreateTask`, `TaskFilters`, `TaskStatus`, `TaskCreatedEvent`, `TaskUpdatedEvent` from `src/index.ts`
+
+### Tests
+- 23 new tests in `tasks.test.ts`: CRUD, atomic claims, race condition protection, auto-release, permissions (creator-only update, claimer-only complete), event bus emissions, project access check
+- Total: 265 server tests passing (was 242)
+
+### E2E Verified
+- 9 integration tests via live MCP against Docker container: create → list → filter → claim → double-claim (blocked) → complete → release → update/cancel → capability filter
+
+---
+
+## 2026-03-02 — v0.5 Phase 1A (Capability Catalog)
+
+### Added
+- **`discover_capabilities` MCP tool** (tool #20): Find agents by capability. Pass a `capability` string for filtered results (case-insensitive), or omit to browse all agents and their capabilities.
+- **`findAgentsByCapability(capability)` store method**: JS filter on `listAgents()` with case-insensitive matching. Added to `IStore` interface and `SqliteStore`.
+- **`DiscoverCapabilitiesSchema`**: Zod schema with optional `capability` parameter (max 50 chars).
+
+### Tests
+- 5 new tests in `capability-catalog.test.ts`: filter match, case-insensitive, unknown capability, multiple matches, browse mode.
+- Total: 242 server tests passing (was 237).
+
+### E2E Verified
+- All 4 scenarios tested against live bridge: filter by capability, case-insensitive match, unknown capability (empty result), browse mode (all agents).
+
+---
+
 ## 2026-03-02 — v0.4.3 (Smart Subscribe + Access Requests) + agorai-connect v0.0.7
 
 ### Added (agorai — v0.4.3)

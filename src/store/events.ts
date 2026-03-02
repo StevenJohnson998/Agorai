@@ -8,7 +8,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import type { Message, AccessRequest } from "./types.js";
+import type { Message, AccessRequest, Task } from "./types.js";
 
 export interface MessageCreatedEvent {
   message: Message;
@@ -16,6 +16,15 @@ export interface MessageCreatedEvent {
 
 export interface AccessRequestCreatedEvent {
   accessRequest: AccessRequest;
+}
+
+export interface TaskCreatedEvent {
+  task: Task;
+}
+
+export interface TaskUpdatedEvent {
+  task: Task;
+  action: "claimed" | "completed" | "released" | "cancelled" | "updated";
 }
 
 export class StoreEventBus extends EventEmitter {
@@ -52,5 +61,35 @@ export class StoreEventBus extends EventEmitter {
   /** Unsubscribe from access request events. */
   offAccessRequest(listener: (event: AccessRequestCreatedEvent) => void): this {
     return this.off("access-request:created", listener);
+  }
+
+  /** Emit after a task is created. */
+  emitTaskCreated(task: Task): void {
+    this.emit("task:created", { task } satisfies TaskCreatedEvent);
+  }
+
+  /** Emit after a task is updated (claimed, completed, released, cancelled, updated). */
+  emitTaskUpdated(task: Task, action: TaskUpdatedEvent["action"]): void {
+    this.emit("task:updated", { task, action } satisfies TaskUpdatedEvent);
+  }
+
+  /** Subscribe to task created events. */
+  onTaskCreated(listener: (event: TaskCreatedEvent) => void): this {
+    return this.on("task:created", listener);
+  }
+
+  /** Unsubscribe from task created events. */
+  offTaskCreated(listener: (event: TaskCreatedEvent) => void): this {
+    return this.off("task:created", listener);
+  }
+
+  /** Subscribe to task updated events. */
+  onTaskUpdated(listener: (event: TaskUpdatedEvent) => void): this {
+    return this.on("task:updated", listener);
+  }
+
+  /** Unsubscribe from task updated events. */
+  offTaskUpdated(listener: (event: TaskUpdatedEvent) => void): this {
+    return this.off("task:updated", listener);
   }
 }

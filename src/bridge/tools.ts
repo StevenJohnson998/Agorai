@@ -1,7 +1,7 @@
 /**
  * Bridge MCP tool schemas (Zod).
  *
- * 16 tools in 5 groups: agents, projects, memory, conversations, messages.
+ * 32 tools in 8 groups: agents, projects, memory, conversations, messages, tasks, instructions, agent memory.
  * All tool handlers are registered in bridge/server.ts.
  *
  * Size limits:
@@ -46,6 +46,11 @@ export const RegisterAgentSchema = z.object({
 
 export const ListBridgeAgentsSchema = z.object({
   project_id: z.string().max(MAX.id).optional().describe("Filter to agents subscribed to a project's conversations"),
+});
+
+export const DiscoverCapabilitiesSchema = z.object({
+  capability: z.string().max(MAX.tag).optional()
+    .describe("Filter agents by capability (case-insensitive). Omit to browse all agents and their capabilities."),
 });
 
 // --- Projects ---
@@ -113,8 +118,11 @@ export const ListSubscribersSchema = z.object({
 export const SendMessageSchema = z.object({
   conversation_id: z.string().max(MAX.id).describe("Conversation ID"),
   content: z.string().min(1).max(MAX.messageContent).describe("Message content"),
-  type: z.enum(["message", "spec", "result", "review", "status", "question"]).default("message").describe("Message type"),
+  type: z.enum(["message", "spec", "result", "review", "status", "question", "proposal", "decision"]).default("message").describe("Message type"),
   visibility: VisibilityParam,
+  tags: z.array(z.string().max(MAX.tag)).max(MAX.tagsArray).default([]).describe("Tags for categorizing/filtering this message"),
+  recipients: z.array(z.string().max(MAX.id)).max(20).optional()
+    .describe("Directed message (whisper): only these agent IDs + you can see the message. Omit for broadcast."),
   metadata: z.record(z.unknown()).optional().describe("Private metadata (only visible to you). Do not include keys starting with '_bridge'."),
 });
 
@@ -123,6 +131,8 @@ export const GetMessagesSchema = z.object({
   since: z.string().max(MAX.id).optional().describe("ISO timestamp — only messages after this time"),
   unread_only: z.boolean().default(false).describe("Only return unread messages"),
   limit: z.number().int().min(1).max(200).optional().describe("Max messages to return"),
+  tags: z.array(z.string().max(MAX.tag)).max(MAX.tagsArray).optional().describe("Filter by tags (any match)"),
+  from_agent: z.string().max(MAX.id).optional().describe("Filter by sender agent ID"),
 });
 
 export const GetStatusSchema = z.object({});
@@ -145,3 +155,80 @@ export const RespondToAccessRequestSchema = z.object({
 });
 
 export const GetMyAccessRequestsSchema = z.object({});
+
+// --- Tasks ---
+
+export const CreateTaskSchema = z.object({
+  project_id: z.string().max(MAX.id).describe("Project ID"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Link task to a conversation (optional)"),
+  title: z.string().min(1).max(MAX.title).describe("Task title"),
+  description: z.string().max(MAX.description).optional().describe("Task description"),
+  required_capabilities: z.array(z.string().max(MAX.tag)).max(MAX.capabilitiesArray).default([])
+    .describe("Capabilities needed to claim this task"),
+});
+
+export const ListTasksSchema = z.object({
+  project_id: z.string().max(MAX.id).describe("Project ID"),
+  status: z.enum(["open", "claimed", "completed", "cancelled"]).optional().describe("Filter by status"),
+  claimed_by: z.string().max(MAX.id).optional().describe("Filter by claiming agent ID"),
+  capability: z.string().max(MAX.tag).optional().describe("Filter by required capability"),
+});
+
+export const ClaimTaskSchema = z.object({
+  task_id: z.string().max(MAX.id).describe("Task ID to claim"),
+});
+
+export const CompleteTaskSchema = z.object({
+  task_id: z.string().max(MAX.id).describe("Task ID to complete"),
+  result: z.string().max(MAX.messageContent).optional().describe("Task result or output"),
+});
+
+export const ReleaseTaskSchema = z.object({
+  task_id: z.string().max(MAX.id).describe("Task ID to release back to open"),
+});
+
+export const UpdateTaskSchema = z.object({
+  task_id: z.string().max(MAX.id).describe("Task ID to update"),
+  title: z.string().min(1).max(MAX.title).optional().describe("New title"),
+  description: z.string().max(MAX.description).optional().describe("New description"),
+  status: z.enum(["open", "cancelled"]).optional().describe("Set status (only 'open' to reopen or 'cancelled' to cancel)"),
+});
+
+// --- Instructions ---
+
+export const SetInstructionsSchema = z.object({
+  content: z.string().min(1).max(MAX.memoryContent).describe("Instruction content. Overwrites any existing instruction with the same scope + selector."),
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped instructions"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped instructions"),
+  selector: z.object({
+    type: z.string().max(MAX.type).optional().describe("Target agent type (e.g. 'claude-code', 'ollama')"),
+    capability: z.string().max(MAX.tag).optional().describe("Target agent capability (e.g. 'code-execution')"),
+  }).optional().describe("Optional selector to target specific agents. Omit to apply to all agents in this scope."),
+});
+
+export const ListInstructionsSchema = z.object({
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped instructions"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped instructions"),
+});
+
+export const DeleteInstructionsSchema = z.object({
+  instruction_id: z.string().max(MAX.id).describe("Instruction ID to delete"),
+});
+
+// --- Agent Memory ---
+
+export const SetAgentMemorySchema = z.object({
+  content: z.string().max(MAX.memoryContent).describe("Memory content (overwrites previous content for this scope)"),
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped memory"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped memory (requires project_id)"),
+});
+
+export const GetAgentMemorySchema = z.object({
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped memory"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped memory"),
+});
+
+export const DeleteAgentMemorySchema = z.object({
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped memory"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped memory"),
+});

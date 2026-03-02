@@ -9,7 +9,7 @@
 // --- Store ---
 export { SqliteStore } from "./store/sqlite.js";
 export { StoreEventBus } from "./store/events.js";
-export type { MessageCreatedEvent, AccessRequestCreatedEvent } from "./store/events.js";
+export type { MessageCreatedEvent, AccessRequestCreatedEvent, TaskCreatedEvent, TaskUpdatedEvent } from "./store/events.js";
 export type { IStore } from "./store/interfaces.js";
 export type {
   Agent,
@@ -34,6 +34,16 @@ export type {
   AccessRequest,
   AccessRequestStatus,
   CreateAccessRequest,
+  Task,
+  CreateTask,
+  TaskFilters,
+  TaskStatus,
+  AgentMemory,
+  AgentMemoryScope,
+  Instruction,
+  CreateInstruction,
+  InstructionScope,
+  InstructionSelector,
 } from "./store/types.js";
 
 // --- Bridge ---
