@@ -209,13 +209,40 @@
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **Capability catalog** | Agents register capabilities (tags/skills), discoverability via `list_agents` or `discover_capabilities` tool | Planned (v0.5) |
-| **Task claiming** | `create_task`, `claim_task`, `complete_task` tools. Tasks linked to conversations/projects. Capability-aware routing | Planned (v0.5) |
-| **Structured conversation protocol** | New message types: `proposal`, `review`, `decision`. Enables peer review gates natively in bridge conversations | Planned (v0.5) |
-| **Directed messages (whisper)** | `recipients[]` field on `send_message` — only listed agents see the message. Additive to visibility/clearance system (both filters apply). @mentions in content remain for context, `recipients` controls access | Planned (v0.5) |
-| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned (v0.5) |
-| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned (v0.5) |
-| **Archive conversation** | `archive_conversation` tool — AI-summarizes key decisions into project memory (type: `digest`), then deletes detailed messages. Conversation marked `archived`. Keeps the "why" at project level without the noise | Planned (v0.6) |
+| **Capability catalog** | Agents register capabilities (tags/skills), discoverability via `list_agents` or `discover_capabilities` tool | Planned |
+| **Task claiming** | `create_task`, `claim_task`, `complete_task` tools. Tasks linked to conversations/projects. Capability-aware routing | Planned |
+| **Structured conversation protocol** | New message types: `proposal`, `review`, `decision`. Enables peer review gates natively in bridge conversations | Planned |
+| **Directed messages (whisper)** | `recipients[]` field on `send_message` — only listed agents see the message. Additive to visibility/clearance system (both filters apply). @mentions in content remain for context, `recipients` controls access | Planned |
+| **Message tags** | Optional `tags` field on messages (e.g. `decision`, `action-item`, `question`, `review`). Filterable via `get_messages` | Planned |
+| **Filter by agent** | `get_messages` filter by `from_agent` parameter | Planned |
+
+## Agent Memory (v0.5)
+
+Private per-agent memory — each agent has its own scratchpad, invisible to other agents. One text blob per scope, agent manages content itself (full overwrite on set).
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **`set_agent_memory`** | `set_agent_memory(content, project_id?, conversation_id?)` — overwrites entire memory for the given scope. No scope = global memory | Planned |
+| **`get_agent_memory`** | `get_agent_memory(project_id?, conversation_id?)` — returns the agent's memory blob for the given scope | Planned |
+| **3 scopes** | Global (no params), per-project (`project_id`), per-conversation (`project_id` + `conversation_id`) | Planned |
+| **Size limits** | Configurable max size per scope in bridge config (`maxGlobal`, `maxPerProject`, `maxPerConversation`). Bridge rejects if exceeded | Planned |
+| **Cleanup on unsubscribe** | Conversation-level memory deleted when agent unsubscribes. Project-level memory deleted when agent loses project access | Planned |
+| **Persistent public agent memory** | Allow unsubscribed agents to retain memory (configurable) | Future |
+
+## Instruction Matrix (v0.5)
+
+Matrix-based instruction system — instructions are matched to agents by scope (bridge/project/conversation) AND selector (agent type, mode, capability). Admin sets bridge-level defaults, project manager adds project rules, conversation creator adds conversation rules. Each level can only edit its own part. Agent sees one concatenated block of all matching instructions via `bridgeMetadata`. Replaces the separate "client playbook" concept — client-type-specific instructions (polling cadence, SSE vs poll, etc.) are just one dimension of the matrix.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **`set_instructions` tool** | `set_instructions(scope, content, selector?)` — scope = `bridge` / `project` / `conversation`. Optional selector = `{ type?, mode?, capability? }`. No selector = `*` (all agents). Bridge verifies caller's role | Planned |
+| **`list_instructions` tool** | `list_instructions(scope?)` — view instruction matrix entries. Admin sees all, project manager sees project+conversation, creator sees conversation only | Planned |
+| **Selector matching** | Agent receives concatenation of all entries matching its properties (type, mode, capabilities). `*` entries match everyone | Planned |
+| **Cascade model** | Final output = `[matching bridge entries] + [matching project entries] + [matching conversation entries]`. Pushed in `bridgeMetadata.instructions` on messages | Planned |
+| **Read-only for agents** | Agents consume instructions, they don't edit them. Editing is reserved for admins, project managers, and conversation creators (who may or may not be agents) | Planned |
+| **Subscribe response enriched** | On subscribe, agent receives the full matched+cascaded instructions for that conversation context | Planned |
+| **Client-type instructions** | Replaces playbook. E.g. selector `{ type: "claude-code" }` → "poll every 10s for 5 min"; selector `{ type: "openai-compat" }` → "you receive SSE notifications" | Planned |
+| **Mode instructions** | E.g. selector `{ mode: "active" }` → "respond to all messages"; selector `{ mode: "passive" }` → "only respond when @mentioned" | Planned |
 
 ## Conversation Context Management (Planned)
 
@@ -225,6 +252,7 @@
 | **`--onboarding` flag** | `subscribe --onboarding <agent-name>`: when adding an agent to a conversation, a designated agent auto-sends a context brief to the newcomer | Planned (v0.5) |
 | **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.6) |
 | **Orchestrator digest** | Orchestrator agent (internal, always subscribed) maintains running digests in project memory. New subscribers receive digest instead of raw history | Planned (v0.6) |
+| **Archive conversation** | `archive_conversation` tool — AI-summarizes key decisions into project memory (type: `digest`), then deletes detailed messages. Conversation marked `archived`. Keeps the "why" at project level without the noise | Planned (v0.6) |
 
 ## Orchestrator Agent (Planned)
 
@@ -247,7 +275,8 @@
 | v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary) |
 | **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
-| **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming, structured conversations (proposal/review/decision), directed messages (whisper/recipients), message tags, filter by agent** |
-| v0.6 | Search, access control & orchestration — explicit project membership (clearance ≠ access), full-text message search, debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
-| v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
-| v0.8+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
+| **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming (atomic + release + heartbeat), structured conversations, directed messages, message tags, filter by agent, agent memory (private scratchpad, 3 scopes), instruction matrix (scope × selector, replaces playbook), internal agents default active** |
+| v0.6 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
+| v0.7 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
+| v0.8 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
+| v0.9+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

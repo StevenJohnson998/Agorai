@@ -701,7 +701,7 @@ async function cmdServe(args: string[]) {
           adapter,
           agentId: `internal:${agentName}`,
           agentName,
-          mode: "passive",
+          mode: "active",
           signal: ac.signal,
         }),
       );
@@ -969,7 +969,7 @@ async function cmdAgentRun(args: string[]) {
     process.exit(1);
   }
 
-  const mode = (values.mode as "passive" | "active") ?? "passive";
+  const mode = (values.mode as "passive" | "active") ?? "active";
   if (mode !== "passive" && mode !== "active") {
     console.error(`Error: --mode must be "passive" or "active" (got "${values.mode}")`);
     process.exit(1);
