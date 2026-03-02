@@ -60,7 +60,9 @@ export class ApiKeyAuthProvider implements IAuthProvider {
     }
 
     for (const entry of apiKeys) {
-      const hash = hashApiKey(entry.key, salt);
+      const resolvedKey = entry.keyEnv ? process.env[entry.keyEnv] : entry.key;
+      if (!resolvedKey) continue; // skip entries with missing env var
+      const hash = hashApiKey(resolvedKey, salt);
       this.keyMap.set(hash, entry);
     }
   }

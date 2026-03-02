@@ -138,7 +138,10 @@ export const ConfigSchema = z.object({
       /** Max HTTP request body size in bytes. Default 512KB. */
       maxBodySize: z.number().int().min(1024).default(512 * 1024),
       apiKeys: z.array(z.object({
-        key: z.string(),
+        /** Pass-key in plaintext. Use keyEnv instead to keep secrets out of the config file. */
+        key: z.string().optional(),
+        /** Environment variable name containing the pass-key. Resolved at startup. */
+        keyEnv: z.string().optional(),
         agent: z.string(),
         type: z.string().default("custom"),
         capabilities: z.array(z.string()).default([]),

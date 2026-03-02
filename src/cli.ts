@@ -676,6 +676,15 @@ async function cmdServe(args: string[]) {
     }
   }
 
+  // Validate bridge API key entries
+  for (const keyEntry of config.bridge.apiKeys) {
+    if (!keyEntry.key && !keyEntry.keyEnv) {
+      console.log(`  ⚠ Warning: ${keyEntry.agent}: no key or keyEnv configured — agent cannot authenticate`);
+    } else if (keyEntry.keyEnv && !process.env[keyEntry.keyEnv]) {
+      console.log(`  ⚠ Warning: ${keyEntry.agent}: env var ${keyEntry.keyEnv} is not set`);
+    }
+  }
+
   const server = await startBridgeServer({ store, auth, config });
 
   // Spawn internal agents if --with-agent was specified

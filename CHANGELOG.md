@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-02 — v0.6.0 (post-release fixes)
+
+### Fixed
+- `subscribe` now returns skills metadata when already subscribed (was returning error)
+- `create_conversation` now includes matching skills metadata in response
+
+### Added
+- `keyEnv` support for bridge API keys — pass-keys can reference environment variables instead of cleartext in config
+- Startup validation warns when `keyEnv` env vars are missing
+- Bridge-level security skill: confidentiality policy delivered to all agents on subscribe
+
 ## 2026-03-02 — v0.6.0 (Skills System — Progressive Disclosure)
 
 ### Breaking Changes
