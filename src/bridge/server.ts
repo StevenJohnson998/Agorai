@@ -14,7 +14,7 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { IStore } from "../store/interfaces.js";
 import type { IAuthProvider, AuthResult } from "./auth.js";
 import type { Config } from "../config.js";
-import type { MessageCreatedEvent } from "../store/events.js";
+import type { MessageCreatedEvent, AccessRequestCreatedEvent } from "../store/events.js";
 import { VISIBILITY_ORDER, type VisibilityLevel } from "../store/types.js";
 import { createLogger } from "../logger.js";
 import { readFileSync } from "node:fs";
@@ -43,6 +43,9 @@ import {
   GetStatusSchema,
   MarkReadSchema,
   ListSubscribersSchema,
+  ListAccessRequestsSchema,
+  RespondToAccessRequestSchema,
+  GetMyAccessRequestsSchema,
 } from "./tools.js";
 
 const log = createLogger("bridge");
@@ -146,6 +149,11 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       "When you @mention an agent who hasn't been active in the conversation, YOU are responsible for providing them with the necessary context.",
       "They may not have seen previous messages. Include a brief summary of the situation, key decisions made, and what you need from them.",
       "Do NOT assume other agents have read the full conversation history.",
+      "",
+      "IMPORTANT — Access requests:",
+      "If you try to subscribe to a conversation you don't have access to, an access request is created automatically.",
+      "Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.",
+      "Check your request status with get_my_access_requests.",
     ].join("\n"),
   });
 
@@ -322,19 +330,42 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   server.tool(
     "subscribe",
-    "Subscribe to a conversation",
+    "Subscribe to a conversation. If you don't have access, an access request is created automatically — existing subscribers can approve it.",
     SubscribeSchema.shape,
     async (args) => {
+      // Check if already subscribed
+      const alreadySubscribed = await store.isSubscribed(args.conversation_id, agentId);
+      if (alreadySubscribed) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Already subscribed to this conversation" }) }] };
+      }
+
       // Verify conversation exists and caller can access its project
       const conv = await store.getConversation(args.conversation_id);
       if (!conv) return ACCESS_DENIED;
       const project = await store.getProject(conv.projectId, agentId);
-      if (!project) return ACCESS_DENIED;
 
-      await store.subscribe(args.conversation_id, agentId, {
-        historyAccess: args.history_access,
+      if (project) {
+        // Direct access — subscribe normally
+        await store.subscribe(args.conversation_id, agentId, {
+          historyAccess: args.history_access,
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify({ subscribed: true, conversation_id: args.conversation_id }) }] };
+      }
+
+      // No project access — fallback to access request
+      const hasPending = await store.hasPendingAccessRequest(args.conversation_id, agentId);
+      if (hasPending) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "You already have a pending access request for this conversation" }) }] };
+      }
+
+      const agent = await store.getAgent(agentId);
+      const accessRequest = await store.createAccessRequest({
+        conversationId: args.conversation_id,
+        agentId,
+        agentName: agent?.name ?? agentId,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify({ subscribed: true, conversation_id: args.conversation_id }) }] };
+
+      return { content: [{ type: "text" as const, text: JSON.stringify({ status: "access_requested", requestId: accessRequest.id, conversation_id: args.conversation_id }) }] };
     },
   );
 
@@ -480,6 +511,72 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       const ids = allMessages.map((m) => m.id);
       await store.markRead(ids, agentId);
       return { content: [{ type: "text" as const, text: JSON.stringify({ marked: ids.length }) }] };
+    },
+  );
+
+  // --- Access Request tools ---
+
+  server.tool(
+    "list_access_requests",
+    "List pending access requests for a conversation you're subscribed to",
+    ListAccessRequestsSchema.shape,
+    async (args) => {
+      // Verify caller is subscribed to the conversation
+      const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
+      const requests = await store.listAccessRequestsForConversation(args.conversation_id);
+      return { content: [{ type: "text" as const, text: JSON.stringify(requests, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "respond_to_access_request",
+    "Approve, deny, or silently deny an access request. On approve, the requesting agent is auto-subscribed.",
+    RespondToAccessRequestSchema.shape,
+    async (args) => {
+      const request = await store.getAccessRequest(args.request_id);
+      if (!request) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Access request not found" }) }] };
+      }
+
+      // Verify caller is subscribed to the conversation
+      const subscribed = await store.isSubscribed(request.conversationId, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
+      const statusMap: Record<string, "approved" | "denied" | "silent_denied"> = {
+        approve: "approved",
+        deny: "denied",
+        silent_deny: "silent_denied",
+      };
+      const newStatus = statusMap[args.action];
+
+      const updated = await store.respondToAccessRequest(args.request_id, newStatus, agentId);
+      if (!updated) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Request already responded to" }) }] };
+      }
+
+      // On approve: auto-subscribe the requesting agent
+      if (newStatus === "approved") {
+        await store.subscribe(request.conversationId, request.agentId);
+      }
+
+      return { content: [{ type: "text" as const, text: JSON.stringify({ ...updated, action: args.action }) }] };
+    },
+  );
+
+  server.tool(
+    "get_my_access_requests",
+    "Check the status of your own access requests. Note: silently denied requests appear as 'pending'.",
+    GetMyAccessRequestsSchema.shape,
+    async () => {
+      const requests = await store.listAccessRequestsByAgent(agentId);
+      // Mask silent_denied as pending — the requester should not know
+      const masked = requests.map((r) => ({
+        ...r,
+        status: r.status === "silent_denied" ? "pending" : r.status,
+      }));
+      return { content: [{ type: "text" as const, text: JSON.stringify(masked, null, 2) }] };
     },
   );
 
@@ -631,7 +728,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
 
   // --- SSE push notification dispatch ---
 
-  const eventBusListener = store.eventBus
+  const eventBusListeners = store.eventBus
     ? setupSSEDispatch(store)
     : (log.info("Store has no eventBus — SSE push notifications disabled, agents will use polling"), undefined);
 
@@ -648,8 +745,9 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   return {
     close: async () => {
       // Unsubscribe from event bus
-      if (eventBusListener && store.eventBus) {
-        store.eventBus.offMessage(eventBusListener);
+      if (eventBusListeners && store.eventBus) {
+        store.eventBus.offMessage(eventBusListeners.messageListener);
+        store.eventBus.offAccessRequest(eventBusListeners.accessRequestListener);
       }
 
       // Close all active transports (best-effort — some may already be closed)
@@ -694,17 +792,26 @@ function removeSession(sessionId: string): void {
 
 // --- SSE push notification dispatch ---
 
-function setupSSEDispatch(store: IStore): (event: MessageCreatedEvent) => void {
-  const listener = (event: MessageCreatedEvent) => {
-    // Fire-and-forget — errors are logged, not thrown
+function setupSSEDispatch(store: IStore): {
+  messageListener: (event: MessageCreatedEvent) => void;
+  accessRequestListener: (event: AccessRequestCreatedEvent) => void;
+} {
+  const messageListener = (event: MessageCreatedEvent) => {
     dispatchMessageNotification(store, event).catch((err) => {
       log.error(`SSE dispatch error: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
 
-  store.eventBus!.onMessage(listener);
+  const accessRequestListener = (event: AccessRequestCreatedEvent) => {
+    dispatchAccessRequestNotification(store, event).catch((err) => {
+      log.error(`SSE access-request dispatch error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+
+  store.eventBus!.onMessage(messageListener);
+  store.eventBus!.onAccessRequest(accessRequestListener);
   log.info("SSE push notifications enabled");
-  return listener;
+  return { messageListener, accessRequestListener };
 }
 
 async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent): Promise<void> {
@@ -764,6 +871,41 @@ async function dispatchMessageNotification(store: IStore, event: MessageCreatedE
       } catch {
         // Fire-and-forget: transport may have disconnected (agent will fall back to polling)
         log.debug(`SSE send failed for session ${sessionId} (agent: ${agent.name})`);
+      }
+    }
+  }
+}
+
+async function dispatchAccessRequestNotification(store: IStore, event: AccessRequestCreatedEvent): Promise<void> {
+  const { accessRequest } = event;
+
+  // Notify all subscribers of the conversation about the new access request
+  const subscribers = await store.getSubscribers(accessRequest.conversationId);
+
+  const notification: JSONRPCMessage = {
+    jsonrpc: "2.0",
+    method: "notifications/access_request",
+    params: {
+      conversationId: accessRequest.conversationId,
+      requestId: accessRequest.id,
+      agentId: accessRequest.agentId,
+      agentName: accessRequest.agentName,
+      createdAt: accessRequest.createdAt,
+    },
+  };
+
+  for (const sub of subscribers) {
+    const sessions = agentSessions.get(sub.agentId);
+    if (!sessions) continue;
+
+    for (const sessionId of sessions) {
+      const transport = transports.get(sessionId);
+      if (!transport) continue;
+
+      try {
+        await transport.send(notification);
+      } catch {
+        log.debug(`SSE access-request send failed for session ${sessionId}`);
       }
     }
   }

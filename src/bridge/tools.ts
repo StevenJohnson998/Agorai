@@ -131,3 +131,17 @@ export const MarkReadSchema = z.object({
   conversation_id: z.string().max(MAX.id).describe("Conversation ID"),
   up_to_message_id: z.string().max(MAX.id).optional().describe("Mark all messages up to this ID as read (default: all)"),
 });
+
+// --- Access Requests ---
+
+export const ListAccessRequestsSchema = z.object({
+  conversation_id: z.string().max(MAX.id).describe("Conversation ID"),
+});
+
+export const RespondToAccessRequestSchema = z.object({
+  request_id: z.string().max(MAX.id).describe("Access request ID"),
+  action: z.enum(["approve", "deny", "silent_deny"]).describe("Action: approve (subscribe agent), deny (reject with notification), silent_deny (reject silently — requester sees 'pending')"),
+  clearance: z.enum(["public", "team", "confidential", "restricted"]).optional().describe("Clearance level to grant the agent on approve (default: public)"),
+});
+
+export const GetMyAccessRequestsSchema = z.object({});

@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import {
   detectPlatform,
   findAllClaudeConfigs,
+  findClaudeCodeConfig,
   loadInstallMeta,
   removeInstallMeta,
 } from "./config-paths.js";
@@ -41,7 +42,12 @@ export async function runUninstall(options: UninstallOptions = {}): Promise<Unin
   }
 
   if (!configPath) {
+    // Also check Claude Code config
+    const ccConfig = findClaudeCodeConfig();
     const all = findAllClaudeConfigs(os);
+    if (ccConfig && !all.includes(ccConfig)) {
+      all.push(ccConfig);
+    }
 
     if (all.length === 1) {
       configPath = all[0];
@@ -100,8 +106,10 @@ export async function runUninstall(options: UninstallOptions = {}): Promise<Unin
   // Clean up install metadata
   removeInstallMeta();
 
+  const meta = loadInstallMeta();
+  const clientName = meta?.target === "claude-code" ? "Claude Code" : "Claude Desktop";
   console.log(`Removed agorai from: ${configPath}`);
-  console.log("Restart Claude Desktop to apply.");
+  console.log(`Restart ${clientName} to apply.`);
 
   return { configPath, removed: true };
 }

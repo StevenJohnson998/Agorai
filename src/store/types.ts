@@ -165,6 +165,29 @@ export interface SubscribeOptions {
   historyAccess?: "full" | "from_join";
 }
 
+// --- Access Requests ---
+
+export type AccessRequestStatus = "pending" | "approved" | "denied" | "silent_denied";
+
+export interface AccessRequest {
+  id: string;
+  conversationId: string;
+  agentId: string;
+  agentName: string;
+  message: string | null;
+  status: AccessRequestStatus;
+  respondedBy: string | null;
+  createdAt: string;
+  respondedAt: string | null;
+}
+
+export interface CreateAccessRequest {
+  conversationId: string;
+  agentId: string;
+  agentName: string;
+  message?: string;
+}
+
 export interface MemoryFilters {
   type?: string;
   tags?: string[];

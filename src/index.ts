@@ -9,7 +9,7 @@
 // --- Store ---
 export { SqliteStore } from "./store/sqlite.js";
 export { StoreEventBus } from "./store/events.js";
-export type { MessageCreatedEvent } from "./store/events.js";
+export type { MessageCreatedEvent, AccessRequestCreatedEvent } from "./store/events.js";
 export type { IStore } from "./store/interfaces.js";
 export type {
   Agent,
@@ -31,6 +31,9 @@ export type {
   BridgeMetadata,
   BridgeInstructions,
   ConfidentialityMode,
+  AccessRequest,
+  AccessRequestStatus,
+  CreateAccessRequest,
 } from "./store/types.js";
 
 // --- Bridge ---

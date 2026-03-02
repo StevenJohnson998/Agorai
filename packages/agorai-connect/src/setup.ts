@@ -18,7 +18,9 @@ import {
   defaultConfigPath,
   resolveNodePath,
   saveInstallMeta,
+  claudeCodeConfigPath,
   type Platform,
+  type SetupTarget,
 } from "./config-paths.js";
 import {
   prompt,
@@ -33,12 +35,14 @@ export interface SetupOptions {
   key?: string;
   agent?: string;
   configPath?: string;
+  target?: SetupTarget;
 }
 
 export interface SetupResult {
   configPath: string;
   bridgeUrl: string;
   agentName: string;
+  target: SetupTarget;
 }
 
 /**
@@ -81,17 +85,43 @@ async function resolveConfigPath(os: Platform, explicit?: string): Promise<strin
 }
 
 /**
+ * Resolve target: explicit --target, or interactive prompt.
+ */
+async function resolveTarget(explicit?: SetupTarget): Promise<SetupTarget> {
+  if (explicit) return explicit;
+
+  console.log("Which client do you want to configure?");
+  console.log("  1. Claude Desktop");
+  console.log("  2. Claude Code");
+  const choice = await prompt("Choice (1-2): ");
+  const idx = parseInt(choice.trim(), 10);
+  if (idx === 2) return "claude-code";
+  return "claude-desktop";
+}
+
+/**
  * Run the setup flow. Accepts optional CLI args — prompts for anything missing.
  */
 export async function runSetup(options: SetupOptions = {}): Promise<SetupResult> {
   const os = detectPlatform();
   console.log(`Detected platform: ${os}`);
 
-  const configPath = await resolveConfigPath(os, options.configPath);
+  const target = await resolveTarget(options.target);
+  const isClaudeCode = target === "claude-code";
+
+  // Resolve config path based on target
+  let configPath: string;
+  if (isClaudeCode) {
+    configPath = options.configPath ?? claudeCodeConfigPath();
+    console.log(`Claude Code config: ${configPath}`);
+  } else {
+    configPath = await resolveConfigPath(os, options.configPath);
+  }
 
   // Prompt for bridge details (use CLI args if provided)
+  const defaultAgentName = isClaudeCode ? "claude-code" : "claude-desktop";
   const bridgeUrl = options.bridge ?? await promptDefault("Bridge URL (default: http://localhost:3100)", "http://localhost:3100");
-  const agentName = options.agent ?? await promptDefault("Agent name (default: claude-desktop)", "claude-desktop");
+  const agentName = options.agent ?? await promptDefault(`Agent name (default: ${defaultAgentName})`, defaultAgentName);
 
   let passKey: string;
   if (options.key) {
@@ -160,11 +190,12 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 
   // Save install metadata so uninstall knows which config to modify
-  saveInstallMeta(configPath);
+  saveInstallMeta(configPath, target);
 
+  const clientName = isClaudeCode ? "Claude Code" : "Claude Desktop";
   console.log(`\nConfig written to: ${configPath}`);
   console.log(`Agent "${agentName}" configured with bridge at ${bridgeUrl}`);
-  console.log(`\nRestart Claude Desktop to connect.`);
+  console.log(`\nRestart ${clientName} to connect.`);
 
-  return { configPath, bridgeUrl, agentName };
+  return { configPath, bridgeUrl, agentName, target };
 }

@@ -22,6 +22,9 @@ import type {
   Message,
   CreateMessage,
   GetMessagesOptions,
+  AccessRequest,
+  AccessRequestStatus,
+  CreateAccessRequest,
 } from "./types.js";
 import type { StoreEventBus } from "./events.js";
 
@@ -63,6 +66,14 @@ export interface IStore {
   getMessages(conversationId: string, agentId: string, opts?: GetMessagesOptions): Promise<Message[]>;
   markRead(messageIds: string[], agentId: string): Promise<void>;
   getUnreadCount(agentId: string): Promise<number>;
+
+  // --- Access Requests ---
+  createAccessRequest(req: CreateAccessRequest): Promise<AccessRequest>;
+  getAccessRequest(id: string): Promise<AccessRequest | null>;
+  listAccessRequestsForConversation(conversationId: string): Promise<AccessRequest[]>;
+  listAccessRequestsByAgent(agentId: string): Promise<AccessRequest[]>;
+  respondToAccessRequest(id: string, status: AccessRequestStatus, respondedBy: string): Promise<AccessRequest | null>;
+  hasPendingAccessRequest(conversationId: string, agentId: string): Promise<boolean>;
 
   // --- High-water marks (passive tracking) ---
   getHighWaterMark(agentId: string, projectId: string): Promise<AgentHighWaterMark | null>;

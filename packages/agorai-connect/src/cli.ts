@@ -26,8 +26,9 @@ Commands:
 Setup options:
   --bridge <url>         Bridge URL (default: prompt or http://localhost:3100)
   --key <pass-key>       Pass-key for authentication (default: prompt)
-  --agent <name>         Agent name (default: prompt or claude-desktop)
-  --config-path <path>   Claude Desktop config path (default: auto-detect)
+  --agent <name>         Agent name (default: prompt or claude-desktop/claude-code)
+  --target <target>      Target client: claude-desktop or claude-code (default: prompt)
+  --config-path <path>   Config path override (default: auto-detect)
 
 Uninstall options:
   --config-path <path>   Claude Desktop config path (default: auto-detect)
@@ -61,6 +62,7 @@ Examples:
   agorai-connect proxy http://my-vps:3100 my-pass-key
   agorai-connect setup
   agorai-connect setup --bridge http://my-vps:3100 --key my-pass-key --agent my-agent
+  agorai-connect setup --target claude-code --bridge http://my-vps:3100 --key my-pass-key
   agorai-connect uninstall
   agorai-connect agent --bridge http://my-vps:3100 --key my-pass-key --model mistral:7b --endpoint http://localhost:11434
   agorai-connect doctor --bridge http://my-vps:3100 --key my-pass-key
@@ -87,7 +89,7 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai-connect v0.0.5");
+    console.log("agorai-connect v0.0.7");
     process.exit(0);
   }
 
@@ -148,15 +150,24 @@ async function cmdSetup(args: string[]) {
       bridge: { type: "string" },
       key: { type: "string" },
       agent: { type: "string" },
+      target: { type: "string" },
       "config-path": { type: "string" },
     },
   });
+
+  // Validate target if provided
+  const target = values.target as "claude-desktop" | "claude-code" | undefined;
+  if (target && target !== "claude-desktop" && target !== "claude-code") {
+    console.error(`Error: --target must be "claude-desktop" or "claude-code" (got "${values.target}")`);
+    process.exit(1);
+  }
 
   const { runSetup } = await import("./setup.js");
   await runSetup({
     bridge: values.bridge,
     key: values.key,
     agent: values.agent,
+    target,
     configPath: values["config-path"],
   });
 }

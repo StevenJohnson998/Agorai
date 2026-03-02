@@ -21,13 +21,16 @@ export {
 export {
   detectPlatform,
   findClaudeConfig,
+  findClaudeCodeConfig,
   findAllClaudeConfigs,
   searchClaudeConfig,
   configCandidates,
   defaultConfigPath,
+  claudeCodeConfigPath,
   resolveNodePath,
   saveInstallMeta,
   loadInstallMeta,
   removeInstallMeta,
   type Platform,
+  type SetupTarget,
 } from "./config-paths.js";

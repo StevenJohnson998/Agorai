@@ -8,6 +8,7 @@ import { join, dirname } from "node:path";
 import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 
 export type Platform = "windows" | "macos" | "linux";
+export type SetupTarget = "claude-desktop" | "claude-code";
 
 export function detectPlatform(): Platform {
   const p = platform();
@@ -161,6 +162,23 @@ export function defaultConfigPath(os?: Platform): string {
   return configCandidates(p)[0];
 }
 
+// --- Claude Code config ---
+
+/**
+ * Claude Code config path — ~/.claude.json on all platforms.
+ */
+export function claudeCodeConfigPath(): string {
+  return join(homedir(), ".claude.json");
+}
+
+/**
+ * Find Claude Code config if it exists.
+ */
+export function findClaudeCodeConfig(): string | null {
+  const p = claudeCodeConfigPath();
+  return existsSync(p) ? p : null;
+}
+
 /**
  * Resolve node executable path — on Windows, Claude Desktop doesn't inherit PATH,
  * so we need the absolute path to node.exe.
@@ -186,9 +204,9 @@ function installMetaPath(): string {
 /**
  * Save the config path used during setup so uninstall can find it.
  */
-export function saveInstallMeta(configPath: string): void {
+export function saveInstallMeta(configPath: string, target?: SetupTarget): void {
   try {
-    writeFileSync(installMetaPath(), JSON.stringify({ configPath }, null, 2) + "\n");
+    writeFileSync(installMetaPath(), JSON.stringify({ configPath, target: target ?? "claude-desktop" }, null, 2) + "\n");
   } catch {
     // Non-critical — uninstall will fall back to detection
   }
@@ -197,11 +215,11 @@ export function saveInstallMeta(configPath: string): void {
 /**
  * Load the config path saved during setup. Returns null if not found.
  */
-export function loadInstallMeta(): { configPath: string } | null {
+export function loadInstallMeta(): { configPath: string; target?: SetupTarget } | null {
   try {
     const data = JSON.parse(readFileSync(installMetaPath(), "utf-8"));
     if (data.configPath && typeof data.configPath === "string") {
-      return { configPath: data.configPath };
+      return { configPath: data.configPath, target: data.target };
     }
   } catch {
     // File doesn't exist or is corrupted

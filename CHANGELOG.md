@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-03-02 — v0.4.3 (Smart Subscribe + Access Requests) + agorai-connect v0.0.7
+
+### Added (agorai — v0.4.3)
+- **Smart Subscribe**: `subscribe` tool now falls back to an access request when the agent lacks project access. Returns `{ status: "access_requested", requestId }` instead of a silent access-denied.
+- **Access Requests system**: 3 new MCP tools (16 → 19 total):
+  - `list_access_requests` — subscribers see pending requests for their conversations
+  - `respond_to_access_request` — approve / deny / silent_deny with optional clearance level on approve
+  - `get_my_access_requests` — agent checks own request statuses (silent_denied masked as "pending")
+- **`access_requests` table**: new SQLite table with indexes on `(conversation_id, status)` and `(agent_id, status)`. No migration needed (CREATE TABLE IF NOT EXISTS).
+- **`AccessRequest` type**: `id`, `conversationId`, `agentId`, `agentName`, `message`, `status`, `respondedBy`, `createdAt`, `respondedAt`.
+- **`access-request:created` event**: new StoreEventBus event with `emitAccessRequest` / `onAccessRequest` / `offAccessRequest`.
+- **SSE notifications for access requests**: subscribers receive `notifications/access_request` push notifications when someone requests access.
+- **MCP instructions updated**: access request workflow documented in bridge handshake.
+
+### Changed (agorai — v0.4.3)
+- **`subscribe` handler**: now checks if already subscribed (returns error instead of silent re-subscribe). Falls back to access request when no project access.
+- **`IStore` interface**: 6 new methods for access request CRUD.
+- **Bridge version**: `0.4.2` → `0.4.3`.
+
+### Added (agorai-connect — v0.0.7)
+- **Claude Code setup**: `agorai-connect setup --target claude-code` writes MCP config to `~/.claude.json`.
+- **Interactive target selection**: without `--target`, setup prompts for Claude Desktop or Claude Code.
+- **`claudeCodeConfigPath()`** / **`findClaudeCodeConfig()`**: new config-paths functions.
+- **`SetupTarget` type**: `"claude-desktop" | "claude-code"`.
+- **Install metadata target**: `saveInstallMeta` now stores the target for smarter uninstall messages.
+- **Uninstall**: now also checks `~/.claude.json` as fallback when auto-detecting config.
+- **Version display fixed**: `--version` now shows `v0.0.7` (was hardcoded to `v0.0.5`).
+
+### Tests
+- 15 new access request tests (store CRUD, event bus, masking)
+- Total: 237 server tests + 62 connect tests = 299 tests passing
+
+---
+
 ## 2026-03-01 — v0.4.0 (Message Format / Metadata Overhaul)
 
 ### Added

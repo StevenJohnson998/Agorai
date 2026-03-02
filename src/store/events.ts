@@ -8,10 +8,14 @@
  */
 
 import { EventEmitter } from "node:events";
-import type { Message } from "./types.js";
+import type { Message, AccessRequest } from "./types.js";
 
 export interface MessageCreatedEvent {
   message: Message;
+}
+
+export interface AccessRequestCreatedEvent {
+  accessRequest: AccessRequest;
 }
 
 export class StoreEventBus extends EventEmitter {
@@ -33,5 +37,20 @@ export class StoreEventBus extends EventEmitter {
   /** Unsubscribe from new message events. */
   offMessage(listener: (event: MessageCreatedEvent) => void): this {
     return this.off("message:created", listener);
+  }
+
+  /** Emit after an access request is created. */
+  emitAccessRequest(accessRequest: AccessRequest): void {
+    this.emit("access-request:created", { accessRequest } satisfies AccessRequestCreatedEvent);
+  }
+
+  /** Subscribe to access request events. */
+  onAccessRequest(listener: (event: AccessRequestCreatedEvent) => void): this {
+    return this.on("access-request:created", listener);
+  }
+
+  /** Unsubscribe from access request events. */
+  offAccessRequest(listener: (event: AccessRequestCreatedEvent) => void): this {
+    return this.off("access-request:created", listener);
   }
 }

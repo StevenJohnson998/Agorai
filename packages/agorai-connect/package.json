@@ -1,6 +1,6 @@
 {
   "name": "agorai-connect",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Lightweight client to connect AI agents to an Agorai bridge",
   "type": "module",
   "license": "AGPL-3.0-only",

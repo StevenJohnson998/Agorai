@@ -29,6 +29,9 @@ import type {
   BridgeMetadata,
   BridgeInstructions,
   ConfidentialityMode,
+  AccessRequest,
+  AccessRequestStatus,
+  CreateAccessRequest,
 } from "./types.js";
 import { VISIBILITY_ORDER } from "./types.js";
 
@@ -148,6 +151,22 @@ export class SqliteStore implements IStore {
         FOREIGN KEY (agent_id) REFERENCES agents(id),
         FOREIGN KEY (project_id) REFERENCES projects(id)
       );
+
+      CREATE TABLE IF NOT EXISTS access_requests (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        message TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        responded_by TEXT,
+        created_at TEXT NOT NULL,
+        responded_at TEXT,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+        FOREIGN KEY (agent_id) REFERENCES agents(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_access_requests_conv_status ON access_requests(conversation_id, status);
+      CREATE INDEX IF NOT EXISTS idx_access_requests_agent_status ON access_requests(agent_id, status);
     `);
 
     // --- Schema migrations for existing databases ---
@@ -760,6 +779,85 @@ export class SqliteStore implements IStore {
     `).all(agentId, agentId) as Record<string, unknown>[];
 
     return rows.filter((r) => visibilityToInt(r.visibility as VisibilityLevel) <= maxVis).length;
+  }
+
+  // --- Access Requests ---
+
+  private rowToAccessRequest(row: Record<string, unknown>): AccessRequest {
+    return {
+      id: row.id as string,
+      conversationId: row.conversation_id as string,
+      agentId: row.agent_id as string,
+      agentName: row.agent_name as string,
+      message: row.message as string | null,
+      status: row.status as AccessRequestStatus,
+      respondedBy: row.responded_by as string | null,
+      createdAt: row.created_at as string,
+      respondedAt: row.responded_at as string | null,
+    };
+  }
+
+  async createAccessRequest(req: CreateAccessRequest): Promise<AccessRequest> {
+    const id = randomUUID();
+    const ts = now();
+    this.db.prepare(`
+      INSERT INTO access_requests (id, conversation_id, agent_id, agent_name, message, status, created_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?)
+    `).run(id, req.conversationId, req.agentId, req.agentName, req.message ?? null, ts);
+
+    const accessRequest: AccessRequest = {
+      id,
+      conversationId: req.conversationId,
+      agentId: req.agentId,
+      agentName: req.agentName,
+      message: req.message ?? null,
+      status: "pending",
+      respondedBy: null,
+      createdAt: ts,
+      respondedAt: null,
+    };
+
+    this.eventBus.emitAccessRequest(accessRequest);
+    return accessRequest;
+  }
+
+  async getAccessRequest(id: string): Promise<AccessRequest | null> {
+    const row = this.db.prepare("SELECT * FROM access_requests WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToAccessRequest(row) : null;
+  }
+
+  async listAccessRequestsForConversation(conversationId: string): Promise<AccessRequest[]> {
+    const rows = this.db.prepare(
+      "SELECT * FROM access_requests WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at ASC"
+    ).all(conversationId) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToAccessRequest(r));
+  }
+
+  async listAccessRequestsByAgent(agentId: string): Promise<AccessRequest[]> {
+    const rows = this.db.prepare(
+      "SELECT * FROM access_requests WHERE agent_id = ? ORDER BY created_at DESC"
+    ).all(agentId) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToAccessRequest(r));
+  }
+
+  async respondToAccessRequest(id: string, status: AccessRequestStatus, respondedBy: string): Promise<AccessRequest | null> {
+    const ts = now();
+    const result = this.db.prepare(`
+      UPDATE access_requests SET status = ?, responded_by = ?, responded_at = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(status, respondedBy, ts, id);
+
+    if (result.changes === 0) return null;
+    return this.getAccessRequest(id);
+  }
+
+  async hasPendingAccessRequest(conversationId: string, agentId: string): Promise<boolean> {
+    const row = this.db.prepare(
+      "SELECT 1 FROM access_requests WHERE conversation_id = ? AND agent_id = ? AND status = 'pending'"
+    ).get(conversationId, agentId);
+    return row !== undefined;
   }
 
   private rowToMessage(row: Record<string, unknown>): Message {

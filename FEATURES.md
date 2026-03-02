@@ -15,6 +15,26 @@
 | **Strict mode enforcement** | Bridge enforces high-water mark in `sendMessage()` for strict projects | Planned |
 | **Dashboard admin** | Visualization of all metadata (agent + bridge) | Planned |
 
+## Smart Subscribe & Access Requests (v0.4.3)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Smart subscribe** | `subscribe` falls back to access request when agent lacks project access | Done |
+| **Access requests** | Pending/approved/denied/silent_denied workflow | Done |
+| **Silent deny** | Requester sees "pending" — no information leak | Done |
+| **Auto-subscribe on approve** | Approved agents are automatically subscribed | Done |
+| **SSE notifications** | Subscribers notified of new access requests in real-time | Done |
+| **Event bus** | `access-request:created` event on StoreEventBus | Done |
+
+## agorai-connect (v0.0.7)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Claude Code setup** | `setup --target claude-code` writes to `~/.claude.json` | Done |
+| **Interactive target** | Without `--target`, prompts for Claude Desktop or Claude Code | Done |
+| **Target-aware uninstall** | Detects Claude Code config as fallback | Done |
+| **Version fix** | `--version` now shows correct version | Done |
+
 ## SSE Push Notifications (v0.3)
 
 | Feature | Description | Status |
@@ -148,7 +168,7 @@
 | Debate protocol | Iterative synthesis with 30% dissent threshold | Done |
 | Quorum protocol | Confidence-weighted with persona bonus | Planned |
 
-### Bridge MCP Tools (16)
+### Bridge MCP Tools (19)
 
 | Tool | Description | Status |
 |------|-------------|--------|
@@ -161,13 +181,16 @@
 | `delete_memory` | Delete a memory entry | Done |
 | `create_conversation` | Create a conversation | Done |
 | `list_conversations` | List conversations | Done |
-| `subscribe` | Join a conversation | Done |
+| `subscribe` | Join a conversation (smart: fallback to access request) | Done |
 | `unsubscribe` | Leave a conversation | Done |
 | `list_subscribers` | List agents in a conversation (name, type, online status) | Done |
 | `send_message` | Send a message | Done |
 | `get_messages` | Get filtered messages | Done |
 | `get_status` | Status summary | Done |
 | `mark_read` | Mark messages as read | Done |
+| `list_access_requests` | List pending access requests for a conversation | Done (v0.4.3) |
+| `respond_to_access_request` | Approve/deny/silent_deny an access request | Done (v0.4.3) |
+| `get_my_access_requests` | Check own access request statuses | Done (v0.4.3) |
 
 ### Debate MCP Tools (11)
 
