@@ -48,9 +48,10 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
     signal,
   } = options;
 
+  const baseIdentity = `You are ${agentName}, an AI agent participating in a multi-agent conversation on Agorai.`;
+  const passiveInstruction = ` You are in passive mode — only respond when someone @mentions you by name (@${agentName}). Otherwise, reply with exactly [NO_RESPONSE].`;
   const defaultSystem = systemPrompt ??
-    `You are ${agentName}, an AI agent participating in a multi-agent conversation on Agorai. ` +
-    `Be concise and helpful. When replying, focus on your area of expertise.`;
+    (mode === "passive" ? baseIdentity + passiveInstruction : baseIdentity);
 
   // Track subscribed conversations
   const subscribedConversations = new Set<string>();
@@ -213,15 +214,33 @@ async function processConversation(
     return;
   }
 
+  // Check for @mention
+  const mentionPattern = new RegExp(
+    `@${agentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    "i",
+  );
+  const hasMention = otherMessages.some((m) => mentionPattern.test(m.content));
+
   // Passive mode: only respond if @mentioned
-  if (mode === "passive") {
-    const mentionPattern = new RegExp(
-      `@${agentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-      "i",
-    );
-    const hasMention = otherMessages.some((m) => mentionPattern.test(m.content));
-    if (!hasMention) {
-      log.info(`Skipping ${otherMessages.length} message(s) in ${conversationId} (no @mention)`);
+  if (mode === "passive" && !hasMention) {
+    log.info(`Skipping ${otherMessages.length} message(s) in ${conversationId} (no @mention, passive)`);
+    await store.markRead(unreadMessages.map((m) => m.id), agentId);
+    return;
+  }
+
+  // Active mode: skip if all unread messages are from other internal agents (prevents ping-pong loops).
+  // Only respond if at least one message is from a non-internal agent (human/MCP client) or we're @mentioned.
+  if (mode === "active" && !hasMention) {
+    const hasNonInternalSender = await (async () => {
+      for (const msg of otherMessages) {
+        const sender = await store.getAgent(msg.fromAgent);
+        if (sender && sender.type !== "internal") return true;
+      }
+      return false;
+    })();
+
+    if (!hasNonInternalSender) {
+      log.info(`Skipping ${otherMessages.length} message(s) in ${conversationId} (internal-only, no @mention)`);
       await store.markRead(unreadMessages.map((m) => m.id), agentId);
       return;
     }
@@ -257,6 +276,14 @@ async function processConversation(
       systemPrompt,
     };
     const response = await adapter.invoke(invokeOpts);
+
+    // Let the LLM opt out of responding
+    const trimmed = response.content.trim();
+    if (!trimmed || trimmed === "[NO_RESPONSE]") {
+      log.debug(`No response needed for ${conversationId} — marking read`);
+      await store.markRead(unreadMessages.map((m) => m.id), agentId);
+      return;
+    }
 
     // Send response to store
     await store.sendMessage({

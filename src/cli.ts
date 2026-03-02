@@ -24,8 +24,10 @@ import { loadConfig, getUserDataDir, type PersonaConfig } from "./config.js";
 import { resolvePersonas } from "./personas.js";
 import { createAdapter } from "./adapters/index.js";
 import { DebateSession, type DebateMode } from "./orchestrator.js";
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { setLogLevel, initFileLogging } from "./logger.js";
 import {
   addAgent,
@@ -111,7 +113,9 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai v0.2.2");
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
+    console.log(`agorai v${pkg.version}`);
     process.exit(0);
   }
 

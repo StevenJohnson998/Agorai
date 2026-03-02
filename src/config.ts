@@ -146,6 +146,10 @@ export const ConfigSchema = z.object({
         type: z.string().default("custom"),
         capabilities: z.array(z.string()).default([]),
         clearanceLevel: z.enum(["public", "team", "confidential", "restricted"]).default("team"),
+        /** MCP tool groups exposed to this agent. Omit or ["all"] for all tools. */
+        toolGroups: z.array(
+          z.enum(["all", "core", "memory", "tasks", "skills", "access"])
+        ).optional(),
       })).default([]),
     })
     .optional()

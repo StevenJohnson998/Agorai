@@ -1,7 +1,7 @@
 /**
  * Bridge HTTP server — Streamable HTTP transport for the MCP bridge.
  *
- * Exposes 35 bridge tools + debate tools over HTTP.
+ * Exposes bridge tools (up to 35, filtered by per-agent tool groups) over HTTP.
  * Auth is handled via API key in Authorization header.
  * Each request is authenticated before being passed to the MCP handler.
  */
@@ -128,48 +128,87 @@ export interface BridgeServerOptions {
 
 const ACCESS_DENIED = { content: [{ type: "text" as const, text: JSON.stringify({ error: "Not found or access denied" }) }] };
 
-function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
-  const server = new McpServer({
-    name: "agorai-bridge",
-    version: PKG_VERSION,
-  }, {
-    instructions: [
-      "You are connected to Agorai, a multi-agent collaboration bridge.",
-      "",
-      "IMPORTANT — Message read tracking:",
-      "After you read messages with get_messages, you MUST call mark_read with the same conversation_id.",
-      "This prevents you from seeing the same messages again on the next poll.",
-      "Example: get_messages({conversation_id: \"abc\"}) → process messages → mark_read({conversation_id: \"abc\"})",
-      "",
-      "IMPORTANT — Visibility / confidentiality levels:",
-      "Messages have a visibility level: public < team < confidential < restricted.",
-      "When you send a message, set its visibility to the HIGHEST level among the messages you used as input.",
-      "For example, if you read messages at 'team' and 'confidential' level, your reply MUST be 'confidential'.",
-      "If unsure, default to the conversation's default visibility. Never downgrade confidentiality.",
-      "",
-      "IMPORTANT — Message metadata model:",
-      "Messages have two metadata fields:",
-      "- bridgeMetadata: trusted data injected by the bridge (visibility, capping info, confidentiality instructions). Always present. Read the 'instructions' field for guidance on how to handle confidentiality for this project.",
-      "- agentMetadata: your private operational data (cost, model, tokens, etc.). Only visible to you — other agents cannot see it.",
-      "When sending a message, pass any operational metadata in the 'metadata' field. Do NOT include keys starting with '_bridge'.",
-      "",
-      "Typical workflow:",
-      "1. get_status — check for unread messages",
-      "2. list_projects → list_conversations → subscribe to conversations you want to follow",
-      "3. get_messages({conversation_id, unread_only: true}) — fetch new messages",
-      "4. Process/respond with send_message (set visibility to max of input messages' visibility)",
-      "5. mark_read({conversation_id}) — ALWAYS do this after reading, even if you don't reply",
-      "",
-      "IMPORTANT — @mentions and context:",
-      "Use @agent-name to mention specific agents. Use list_subscribers to see who is in a conversation.",
-      "When you @mention an agent who hasn't been active in the conversation, YOU are responsible for providing them with the necessary context.",
-      "They may not have seen previous messages. Include a brief summary of the situation, key decisions made, and what you need from them.",
-      "Do NOT assume other agents have read the full conversation history.",
+/** Tool group definitions — maps group name to the tool names it contains. */
+export const TOOL_GROUPS: Record<string, string[]> = {
+  core: [
+    "register_agent", "list_agents", "discover_capabilities",
+    "create_project", "list_projects",
+    "create_conversation", "list_conversations",
+    "subscribe", "unsubscribe", "list_subscribers",
+    "send_message", "get_messages",
+    "get_status", "mark_read",
+  ],
+  memory: [
+    "set_memory", "get_memory", "delete_memory",
+    "set_agent_memory", "get_agent_memory", "delete_agent_memory",
+  ],
+  tasks: [
+    "create_task", "list_tasks", "claim_task",
+    "complete_task", "release_task", "update_task",
+  ],
+  skills: [
+    "set_skill", "list_skills", "get_skill",
+    "delete_skill", "set_skill_file", "get_skill_file",
+  ],
+  access: [
+    "list_access_requests", "respond_to_access_request", "get_my_access_requests",
+  ],
+};
+
+export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups?: string[]): McpServer {
+  // Resolve which tool groups are active
+  const activeGroups = new Set(
+    (!toolGroups || toolGroups.length === 0 || toolGroups.includes("all"))
+      ? Object.keys(TOOL_GROUPS)
+      : ["core", ...toolGroups]
+  );
+  // Build instructions dynamically — only include sections for active tool groups
+  const instructionParts: string[] = [
+    "You are connected to Agorai, a multi-agent collaboration bridge.",
+    "",
+    "IMPORTANT — Message read tracking:",
+    "After you read messages with get_messages, you MUST call mark_read with the same conversation_id.",
+    "This prevents you from seeing the same messages again on the next poll.",
+    "Example: get_messages({conversation_id: \"abc\"}) → process messages → mark_read({conversation_id: \"abc\"})",
+    "",
+    "IMPORTANT — Visibility / confidentiality levels:",
+    "Messages have a visibility level: public < team < confidential < restricted.",
+    "When you send a message, set its visibility to the HIGHEST level among the messages you used as input.",
+    "For example, if you read messages at 'team' and 'confidential' level, your reply MUST be 'confidential'.",
+    "If unsure, default to the conversation's default visibility. Never downgrade confidentiality.",
+    "",
+    "IMPORTANT — Message metadata model:",
+    "Messages have two metadata fields:",
+    "- bridgeMetadata: trusted data injected by the bridge (visibility, capping info, confidentiality instructions). Always present. Read the 'instructions' field for guidance on how to handle confidentiality for this project.",
+    "- agentMetadata: your private operational data (cost, model, tokens, etc.). Only visible to you — other agents cannot see it.",
+    "When sending a message, pass any operational metadata in the 'metadata' field. Do NOT include keys starting with '_bridge'.",
+    "",
+    "Typical workflow:",
+    "1. get_status — check for unread messages",
+    "2. list_projects → list_conversations → subscribe to conversations you want to follow",
+    "3. get_messages({conversation_id, unread_only: true}) — fetch new messages",
+    "4. Process/respond with send_message (set visibility to max of input messages' visibility)",
+    "5. mark_read({conversation_id}) — ALWAYS do this after reading, even if you don't reply",
+    "",
+    "IMPORTANT — @mentions and context:",
+    "Use @agent-name to mention specific agents. Use list_subscribers to see who is in a conversation.",
+    "When you @mention an agent who hasn't been active in the conversation, YOU are responsible for providing them with the necessary context.",
+    "They may not have seen previous messages. Include a brief summary of the situation, key decisions made, and what you need from them.",
+    "Do NOT assume other agents have read the full conversation history.",
+  ];
+
+  if (activeGroups.has("access")) {
+    instructionParts.push(
       "",
       "IMPORTANT — Access requests:",
       "If you try to subscribe to a conversation you don't have access to, an access request is created automatically.",
       "Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.",
       "Check your request status with get_my_access_requests.",
+    );
+  }
+
+  if (activeGroups.has("skills")) {
+    instructionParts.push(
       "",
       "IMPORTANT — Skills system (progressive disclosure):",
       "Skills provide behavioral instructions and context. They use 3-tier progressive disclosure to save context:",
@@ -177,7 +216,14 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       "- Tier 2 (content): Call get_skill(skill_id) to load the full content of a skill you need.",
       "- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.",
       "Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.",
-    ].join("\n"),
+    );
+  }
+
+  const server = new McpServer({
+    name: "agorai-bridge",
+    version: PKG_VERSION,
+  }, {
+    instructions: instructionParts.join("\n"),
   });
 
   // --- Agent tools ---
@@ -277,6 +323,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   // --- Memory tools ---
 
+  if (activeGroups.has("memory")) {
   server.tool(
     "set_memory",
     "Add or update a project memory entry",
@@ -330,6 +377,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify({ deleted }) }] };
     },
   );
+  } // memory (project memory)
 
   // --- Conversation tools ---
 
@@ -579,6 +627,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   // --- Task tools ---
 
+  if (activeGroups.has("tasks")) {
   server.tool(
     "create_task",
     "Create a task in a project. Other agents can discover and claim it.",
@@ -668,9 +717,11 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
     },
   );
+  } // tasks
 
   // --- Skill tools ---
 
+  if (activeGroups.has("skills")) {
   server.tool(
     "set_skill",
     "Create or update a skill in a scope. Creator can always create/edit. Listed agents (in agents[]) can edit existing skills. Use selector and agents[] to target specific agents.",
@@ -866,9 +917,11 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify(file, null, 2) }] };
     },
   );
+  } // skills
 
   // --- Agent Memory tools ---
 
+  if (activeGroups.has("memory")) {
   server.tool(
     "set_agent_memory",
     "Save private memory for yourself. No scope = global. With project_id = per-project. With conversation_id = per-conversation. Content overwrites previous.",
@@ -940,6 +993,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify({ deleted, scope }) }] };
     },
   );
+  } // memory (agent memory)
 
   // --- Status tools ---
 
@@ -997,6 +1051,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
 
   // --- Access Request tools ---
 
+  if (activeGroups.has("access")) {
   server.tool(
     "list_access_requests",
     "List pending access requests for a conversation you're subscribed to",
@@ -1063,6 +1118,7 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       return { content: [{ type: "text" as const, text: JSON.stringify(masked, null, 2) }] };
     },
   );
+  } // access
 
   return server;
 }
@@ -1175,7 +1231,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         sessionIdGenerator: () => randomUUID(),
       });
 
-      const mcpServer = createBridgeMcpServer(store, authResult.agentId!);
+      const mcpServer = createBridgeMcpServer(store, authResult.agentId!, authResult.toolGroups);
       await mcpServer.connect(transport);
 
       // Track whether onclose fired before we finish registration

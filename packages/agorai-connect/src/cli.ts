@@ -12,6 +12,9 @@
  */
 
 import { parseArgs } from "node:util";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { setLogLevel } from "./utils.js";
 
 const USAGE = `Usage: agorai-connect <command> [options]
@@ -89,7 +92,9 @@ async function main() {
   }
 
   if (args[0] === "--version" || args[0] === "-v") {
-    console.log("agorai-connect v0.0.7");
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
+    console.log(`agorai-connect v${pkg.version}`);
     process.exit(0);
   }
 

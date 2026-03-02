@@ -208,6 +208,93 @@ describe("Internal Agent — Passive Mode", () => {
   });
 });
 
+describe("Internal Agent — Anti-Ping-Pong", () => {
+  it("active mode: skips messages from other internal agents (no @mention)", async () => {
+    // Create an "internal" type sender (simulates another internal agent)
+    const otherInternal = await store.registerAgent({
+      name: "other-internal",
+      type: "internal",
+      capabilities: ["chat"],
+      clearanceLevel: "team",
+      apiKeyHash: "hash_other_internal",
+    });
+    const { conv } = await setupConversation(otherInternal.id);
+    await store.subscribe(conv.id, otherInternal.id);
+
+    // Send a message from the other internal agent
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: otherInternal.id,
+      content: "I just responded to something",
+    });
+
+    let invokeCount = 0;
+    const adapter: IAgentAdapter = {
+      name: "anti-loop-bot",
+      async isAvailable() { return true; },
+      async invoke(): Promise<AgentResponse> {
+        invokeCount++;
+        return { content: "I should not be called", confidence: 0.8, durationMs: 10 };
+      },
+    };
+
+    await runAgentBriefly({
+      store,
+      adapter,
+      agentId: "internal:anti-loop-bot",
+      agentName: "anti-loop-bot",
+      mode: "active",
+      pollIntervalMs: 50,
+    }, 300);
+
+    // Should NOT have invoked — message is from another internal agent, no @mention
+    expect(invokeCount).toBe(0);
+
+    // Messages should still be marked read (not left unread for infinite retry)
+    const agentRecord = await store.getAgentByApiKey("internal:anti-loop-bot");
+    const unread = await store.getMessages(conv.id, agentRecord!.id, { unreadOnly: true });
+    const fromOther = unread.filter((m) => m.fromAgent === otherInternal.id);
+    expect(fromOther).toHaveLength(0);
+  });
+
+  it("active mode: responds to @mention from internal agents", async () => {
+    const otherInternal = await store.registerAgent({
+      name: "mentioning-internal",
+      type: "internal",
+      capabilities: ["chat"],
+      clearanceLevel: "team",
+      apiKeyHash: "hash_mentioning_internal",
+    });
+    const { conv } = await setupConversation(otherInternal.id);
+    await store.subscribe(conv.id, otherInternal.id);
+
+    // Send a message with @mention from internal agent
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: otherInternal.id,
+      content: "Hey @mention-active-bot can you help?",
+    });
+
+    const adapter = createMockAdapter("mention-active-bot", "Sure, happy to help!");
+
+    await runAgentBriefly({
+      store,
+      adapter,
+      agentId: "internal:mention-active-bot",
+      agentName: "mention-active-bot",
+      mode: "active",
+      pollIntervalMs: 50,
+    }, 300);
+
+    // SHOULD have responded — @mentioned even though sender is internal
+    const agentRecord = await store.getAgentByApiKey("internal:mention-active-bot");
+    const messages = await store.getMessages(conv.id, agentRecord!.id);
+    const agentMessages = messages.filter((m) => m.fromAgent === agentRecord!.id);
+    expect(agentMessages.length).toBeGreaterThanOrEqual(1);
+    expect(agentMessages[0].content).toBe("Sure, happy to help!");
+  });
+});
+
 describe("Internal Agent — Self-filtering", () => {
   it("does not respond to its own messages", async () => {
     const other = await createTestAgent("starter");

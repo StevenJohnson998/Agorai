@@ -30,6 +30,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
 # Branding sources (Canva exports — keep locally, publish cropped versions only)
 assets/branding/2026-02-27_*
 

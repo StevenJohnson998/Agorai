@@ -259,6 +259,14 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Migration** | Auto-migrates v0.5 instructions → skills with auto-generated titles. Preserves IDs | Done |
 | **Breaking change** | `set_instructions`, `list_instructions`, `delete_instructions` removed. v0.5 → v0.6 | Done |
 
+## Context Optimization (v0.6.1+)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Per-agent tool groups** | `toolGroups` in apiKey config filters MCP tools per agent. Groups: core (14), memory (6), tasks (6), skills (6), access (3). Core always included. Saves 26-60% of tool definition overhead | Done (v0.6.1) |
+| **Conditional instructions** | MCP server instructions omit sections for disabled groups (access, skills). Reduces instruction overhead ~30% for lightweight agents | Done (v0.6.1) |
+| **Meta-tool pattern** | Replace 35 tool definitions with 2: `discover_tools` (list names + 1-line summary) and `execute_tool` (proxy with name + params). Agent discovers on-demand, executes via proxy. ~85-95% context savings. Trade-off: extra round-trip per call, no client-side schema validation | Planned |
+
 ## Conversation Context Management (Planned)
 
 | Feature | Description | Status |
@@ -292,6 +300,7 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming (atomic + release + heartbeat), structured conversations, directed messages, message tags, filter by agent, agent memory (private scratchpad, 3 scopes), instruction matrix (scope × selector, replaces playbook), internal agents default active** |
 | **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting by name, skill files, tag filtering. Replaces instruction matrix. 35 tools** |
+| v0.6.x | Context optimization — per-agent tool groups (done), meta-tool pattern (2 tools replace 35, ~90% savings), description trimming |
 | v0.7 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
 | v0.8 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
 | v0.9 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
