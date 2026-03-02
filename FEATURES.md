@@ -106,6 +106,7 @@
 | **Opaque error responses** | Access failures return "Not found or access denied" (no resource leak) | Done (v0.2.2) |
 | Permission matrix | Per-project agent × resource × action | Planned (v0.3) |
 | **Config isolation** | Protect `agorai.config.json` from filesystem-capable agents — restricted dir permissions, env var pass-keys, sandboxed agent scope | Planned (v0.5) |
+| **Project access control** | Explicit project membership (invite/request) independent of clearance. Clearance only affects message visibility, not project/conversation access | Planned (v0.6) |
 | Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.6) |
 | Redaction | Replace sensitive data with tokens instead of blocking | Planned (v0.6+) |
 
@@ -247,6 +248,6 @@
 | **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming, structured conversations (proposal/review/decision), directed messages (whisper/recipients), message tags, filter by agent** |
-| v0.6 | Search & orchestration — full-text message search, debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
+| v0.6 | Search, access control & orchestration — explicit project membership (clearance ≠ access), full-text message search, debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
 | v0.7 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
 | v0.8+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

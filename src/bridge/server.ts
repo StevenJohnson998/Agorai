@@ -353,6 +353,8 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       }
 
       // No project access — fallback to access request
+      // NOTE: Currently triggered by clearance < project visibility. In v0.6, access control
+      // will be separated from clearance (clearance = message visibility, access = project membership).
       const hasPending = await store.hasPendingAccessRequest(args.conversation_id, agentId);
       if (hasPending) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "You already have a pending access request for this conversation" }) }] };
@@ -572,10 +574,13 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     async () => {
       const requests = await store.listAccessRequestsByAgent(agentId);
       // Mask silent_denied as pending — the requester should not know
-      const masked = requests.map((r) => ({
-        ...r,
-        status: r.status === "silent_denied" ? "pending" : r.status,
-      }));
+      const masked = requests.map((r) => {
+        if (r.status === "silent_denied") {
+          const { respondedBy, respondedAt, ...rest } = r;
+          return { ...rest, status: "pending" as const, respondedBy: null, respondedAt: null };
+        }
+        return r;
+      });
       return { content: [{ type: "text" as const, text: JSON.stringify(masked, null, 2) }] };
     },
   );
