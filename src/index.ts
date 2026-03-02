@@ -40,10 +40,13 @@ export type {
   TaskStatus,
   AgentMemory,
   AgentMemoryScope,
-  Instruction,
-  CreateInstruction,
-  InstructionScope,
-  InstructionSelector,
+  Skill,
+  CreateSkill,
+  SkillScope,
+  SkillSelector,
+  SkillMetadata,
+  SkillFile,
+  SkillFilters,
 } from "./store/types.js";
 
 // --- Bridge ---

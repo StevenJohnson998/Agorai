@@ -1,7 +1,7 @@
 /**
  * Bridge MCP tool schemas (Zod).
  *
- * 32 tools in 8 groups: agents, projects, memory, conversations, messages, tasks, instructions, agent memory.
+ * 35 tools in 9 groups: agents, projects, memory, conversations, messages, tasks, skills, skill files, agent memory.
  * All tool handlers are registered in bridge/server.ts.
  *
  * Size limits:
@@ -194,25 +194,48 @@ export const UpdateTaskSchema = z.object({
   status: z.enum(["open", "cancelled"]).optional().describe("Set status (only 'open' to reopen or 'cancelled' to cancel)"),
 });
 
-// --- Instructions ---
+// --- Skills ---
 
-export const SetInstructionsSchema = z.object({
-  content: z.string().min(1).max(MAX.memoryContent).describe("Instruction content. Overwrites any existing instruction with the same scope + selector."),
-  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped instructions"),
-  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped instructions"),
+export const SetSkillSchema = z.object({
+  title: z.string().min(1).max(MAX.title).describe("Skill title (unique within scope)"),
+  content: z.string().min(1).max(MAX.memoryContent).describe("Full skill content (loaded on demand via get_skill)"),
+  summary: z.string().max(MAX.description).optional().describe("Short description (~1 line) shown in skill listings"),
+  instructions: z.string().max(MAX.description).optional().describe("Behavioral hint for agents receiving this skill"),
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped skills"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped skills"),
   selector: z.object({
     type: z.string().max(MAX.type).optional().describe("Target agent type (e.g. 'claude-code', 'ollama')"),
     capability: z.string().max(MAX.tag).optional().describe("Target agent capability (e.g. 'code-execution')"),
-  }).optional().describe("Optional selector to target specific agents. Omit to apply to all agents in this scope."),
+  }).optional().describe("Optional selector to target specific agent types or capabilities."),
+  agents: z.array(z.string().max(MAX.name)).max(MAX.tagsArray).optional().describe("Agent names this skill applies to. Empty = everyone."),
+  tags: z.array(z.string().max(MAX.tag)).max(MAX.tagsArray).optional().describe("Tags for filtering skills"),
 });
 
-export const ListInstructionsSchema = z.object({
-  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped instructions"),
-  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped instructions"),
+export const ListSkillsSchema = z.object({
+  project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped skills"),
+  conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped skills"),
+  tags: z.array(z.string().max(MAX.tag)).max(MAX.tagsArray).optional().describe("Filter by tags (any match)"),
 });
 
-export const DeleteInstructionsSchema = z.object({
-  instruction_id: z.string().max(MAX.id).describe("Instruction ID to delete"),
+export const GetSkillSchema = z.object({
+  skill_id: z.string().max(MAX.id).describe("Skill ID to retrieve (returns full content)"),
+});
+
+export const DeleteSkillSchema = z.object({
+  skill_id: z.string().max(MAX.id).describe("Skill ID to delete"),
+});
+
+// --- Skill Files ---
+
+export const SetSkillFileSchema = z.object({
+  skill_id: z.string().max(MAX.id).describe("Parent skill ID"),
+  filename: z.string().min(1).max(MAX.name).describe("Filename for the skill file"),
+  content: z.string().max(MAX.memoryContent).describe("File content"),
+});
+
+export const GetSkillFileSchema = z.object({
+  skill_id: z.string().max(MAX.id).describe("Parent skill ID"),
+  filename: z.string().min(1).max(MAX.name).describe("Filename to retrieve"),
 });
 
 // --- Agent Memory ---

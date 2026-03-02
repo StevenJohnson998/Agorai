@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-03-02 — v0.6.0 (Skills System — Progressive Disclosure)
+
+### Breaking Changes
+- **Removed**: `set_instructions`, `list_instructions`, `delete_instructions` MCP tools
+- **Removed**: `Instruction`, `CreateInstruction`, `InstructionScope`, `InstructionSelector` types from public API
+- **Removed**: `setInstruction()`, `listInstructions()`, `getMatchingInstructions()`, `deleteInstruction()` store methods
+- **Replaced by**: Skills system with 6 new tools and progressive disclosure
+
+### Added
+- **Skills system**: Progressive disclosure skills replace the instruction matrix. 3-tier loading:
+  - Tier 1 (metadata): title, summary, instructions hint, tags, agents, files list — sent on subscribe
+  - Tier 2 (content): full skill body — loaded on demand via `get_skill`
+  - Tier 3 (files): supporting files — loaded on demand via `get_skill_file`
+- **6 new MCP tools** (32 → 35 total):
+  - `set_skill` — create/update a skill with title, content, summary, instructions, selector, agents, tags
+  - `list_skills` — returns metadata only (no content). Filterable by tags
+  - `get_skill` — returns full content + file list
+  - `delete_skill` — creator or listed agents can delete
+  - `set_skill_file` — attach/update a supporting file to a skill
+  - `get_skill_file` — load a supporting file by name
+- **Agent targeting**: `agents[]` field on skills — target to specific agent names. AND with selector
+- **Tag filtering**: `tags[]` on skills, filterable in `list_skills` (any-match, case-insensitive)
+- **Skill files**: Supporting files per skill with upsert, listing (names only), and full content retrieval
+- **Auto-migration**: v0.5 `instructions` table rows migrated to `skills` with auto-generated titles. Original IDs preserved
+- **`skills` table**: `(scope, scope_id, title)` unique constraint, selector_json, agents_json, tags_json, summary, instructions columns
+- **`skill_files` table**: `(skill_id, filename)` unique constraint, CASCADE delete with parent skill
+
+### Changed
+- Tool count: 32 → 35 (removed 3 instruction tools, added 6 skill tools)
+- `subscribe` response: `instructions[]` replaced by `skills[]` containing metadata only (progressive disclosure)
+- MCP `initialize` instructions: added skills system section explaining 3-tier progressive disclosure
+- Public API: exports `Skill`, `CreateSkill`, `SkillScope`, `SkillSelector`, `SkillMetadata`, `SkillFile`, `SkillFilters`
+
+### Tests
+- 35 new tests in `skills.test.ts`: CRUD (8), progressive disclosure (3), agent targeting (4), selector matching (5), tags (3), instructions field (2), scope isolation (2), skill files (6), migration (3)
+- Deleted `instructions.test.ts` (13 tests)
+- Total: 337 tests passing (was 315)
+
+---
+
 ## 2026-03-02 — v0.5 Phase 2 (Agent Memory, Instructions, Structured Protocol)
 
 ### Added

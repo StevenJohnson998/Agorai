@@ -1,7 +1,7 @@
 /**
  * Bridge HTTP server — Streamable HTTP transport for the MCP bridge.
  *
- * Exposes 32 bridge tools + debate tools over HTTP.
+ * Exposes 35 bridge tools + debate tools over HTTP.
  * Auth is handled via API key in Authorization header.
  * Each request is authenticated before being passed to the MCP handler.
  */
@@ -53,9 +53,12 @@ import {
   CompleteTaskSchema,
   ReleaseTaskSchema,
   UpdateTaskSchema,
-  SetInstructionsSchema,
-  ListInstructionsSchema,
-  DeleteInstructionsSchema,
+  SetSkillSchema,
+  ListSkillsSchema,
+  GetSkillSchema,
+  DeleteSkillSchema,
+  SetSkillFileSchema,
+  GetSkillFileSchema,
   SetAgentMemorySchema,
   GetAgentMemorySchema,
   DeleteAgentMemorySchema,
@@ -167,6 +170,13 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       "If you try to subscribe to a conversation you don't have access to, an access request is created automatically.",
       "Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.",
       "Check your request status with get_my_access_requests.",
+      "",
+      "IMPORTANT — Skills system (progressive disclosure):",
+      "Skills provide behavioral instructions and context. They use 3-tier progressive disclosure to save context:",
+      "- Tier 1 (metadata): When you subscribe, you receive skill metadata (title, summary, instructions, tags) — NOT the full content.",
+      "- Tier 2 (content): Call get_skill(skill_id) to load the full content of a skill you need.",
+      "- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.",
+      "Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.",
     ].join("\n"),
   });
 
@@ -338,9 +348,23 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         defaultVisibility: args.default_visibility,
         createdBy: agentId,
       });
-      // Auto-subscribe the creator
+      // Auto-subscribe the creator and include skills metadata
       await store.subscribe(conv.id, agentId);
-      return { content: [{ type: "text" as const, text: JSON.stringify(conv, null, 2) }] };
+      const agent = await store.getAgent(agentId);
+      const matchingSkills = agent
+        ? await store.getMatchingSkills(
+            { name: agent.name, type: agent.type, capabilities: agent.capabilities },
+            conv.id,
+          )
+        : [];
+      return { content: [{ type: "text" as const, text: JSON.stringify({
+        ...conv,
+        skills: matchingSkills.map((s) => ({
+          id: s.id, title: s.title, summary: s.summary,
+          instructions: s.instructions, tags: s.tags,
+          scope: s.scope, agents: s.agents, files: s.files,
+        })),
+      }, null, 2) }] };
     },
   );
 
@@ -362,10 +386,26 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     "Subscribe to a conversation. If you don't have access, an access request is created automatically — existing subscribers can approve it.",
     SubscribeSchema.shape,
     async (args) => {
-      // Check if already subscribed
+      // If already subscribed, return current skills metadata (not an error)
       const alreadySubscribed = await store.isSubscribed(args.conversation_id, agentId);
       if (alreadySubscribed) {
-        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Already subscribed to this conversation" }) }] };
+        const agent = await store.getAgent(agentId);
+        const matchingSkills = agent
+          ? await store.getMatchingSkills(
+              { name: agent.name, type: agent.type, capabilities: agent.capabilities },
+              args.conversation_id,
+            )
+          : [];
+        return { content: [{ type: "text" as const, text: JSON.stringify({
+          subscribed: true,
+          already_subscribed: true,
+          conversation_id: args.conversation_id,
+          skills: matchingSkills.map((s) => ({
+            id: s.id, title: s.title, summary: s.summary,
+            instructions: s.instructions, tags: s.tags,
+            scope: s.scope, agents: s.agents, files: s.files,
+          })),
+        }) }] };
       }
 
       // Verify conversation exists and caller can access its project
@@ -379,11 +419,11 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
           historyAccess: args.history_access,
         });
 
-        // Include matching instructions in subscribe response
+        // Include matching skill metadata in subscribe response (progressive disclosure: tier 1 only)
         const agent = await store.getAgent(agentId);
-        const matchingInstructions = agent
-          ? await store.getMatchingInstructions(
-              { type: agent.type, capabilities: agent.capabilities },
+        const matchingSkills = agent
+          ? await store.getMatchingSkills(
+              { name: agent.name, type: agent.type, capabilities: agent.capabilities },
               args.conversation_id,
             )
           : [];
@@ -391,10 +431,15 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         return { content: [{ type: "text" as const, text: JSON.stringify({
           subscribed: true,
           conversation_id: args.conversation_id,
-          instructions: matchingInstructions.map((i) => ({
-            scope: i.scope,
-            selector: i.selector,
-            content: i.content,
+          skills: matchingSkills.map((s) => ({
+            id: s.id,
+            title: s.title,
+            summary: s.summary,
+            instructions: s.instructions,
+            tags: s.tags,
+            scope: s.scope,
+            agents: s.agents,
+            files: s.files,
           })),
         }) }] };
       }
@@ -624,12 +669,12 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
     },
   );
 
-  // --- Instruction tools ---
+  // --- Skill tools ---
 
   server.tool(
-    "set_instructions",
-    "Set instructions for agents in a scope. Only the project/conversation creator can set instructions for their scope. Use selector to target specific agent types or capabilities. Omit selector for instructions that apply to all agents.",
-    SetInstructionsSchema.shape,
+    "set_skill",
+    "Create or update a skill in a scope. Creator can always create/edit. Listed agents (in agents[]) can edit existing skills. Use selector and agents[] to target specific agents.",
+    SetSkillSchema.shape,
     async (args) => {
       let scope: "bridge" | "project" | "conversation" = "bridge";
       let scopeId: string | undefined;
@@ -637,39 +682,65 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       if (args.conversation_id) {
         scope = "conversation";
         scopeId = args.conversation_id;
-        // Verify caller created the conversation
         const conv = await store.getConversation(args.conversation_id);
-        if (!conv || conv.createdBy !== agentId) {
-          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the conversation creator can set instructions" }) }] };
+        if (!conv) return ACCESS_DENIED;
+        // Creator can always set. Listed agents can edit existing.
+        if (conv.createdBy !== agentId) {
+          // Check if caller is a listed agent on an existing skill with this title
+          const existing = (await store.listSkills("conversation", args.conversation_id)).find(
+            (s) => s.title === args.title
+          );
+          if (!existing) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the conversation creator can create new skills" }) }] };
+          }
+          const agent = await store.getAgent(agentId);
+          const agentName = agent?.name ?? "";
+          if (!existing.agents.some((a) => a.toLowerCase() === agentName.toLowerCase())) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the creator or listed agents can edit this skill" }) }] };
+          }
         }
       } else if (args.project_id) {
         scope = "project";
         scopeId = args.project_id;
-        // Verify caller created the project
         const project = await store.getProject(args.project_id, agentId);
-        if (!project || project.createdBy !== agentId) {
-          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the project creator can set instructions" }) }] };
+        if (!project) return ACCESS_DENIED;
+        if (project.createdBy !== agentId) {
+          const existing = (await store.listSkills("project", args.project_id)).find(
+            (s) => s.title === args.title
+          );
+          if (!existing) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the project creator can create new skills" }) }] };
+          }
+          const agent = await store.getAgent(agentId);
+          const agentName = agent?.name ?? "";
+          if (!existing.agents.some((a) => a.toLowerCase() === agentName.toLowerCase())) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the creator or listed agents can edit this skill" }) }] };
+          }
         }
       } else {
-        // Bridge scope — not settable via MCP (future admin dashboard)
-        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Bridge-level instructions cannot be set via MCP. Provide project_id or conversation_id." }) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Bridge-level skills cannot be set via MCP. Provide project_id or conversation_id." }) }] };
       }
 
-      const instr = await store.setInstruction({
+      const skill = await store.setSkill({
         scope,
         scopeId,
+        title: args.title,
+        summary: args.summary,
+        instructions: args.instructions,
         selector: args.selector,
+        agents: args.agents,
+        tags: args.tags,
         content: args.content,
         createdBy: agentId,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(instr, null, 2) }] };
+      return { content: [{ type: "text" as const, text: JSON.stringify(skill, null, 2) }] };
     },
   );
 
   server.tool(
-    "list_instructions",
-    "List instructions for a scope. No params = bridge-level. With project_id = project-level. With conversation_id = conversation-level.",
-    ListInstructionsSchema.shape,
+    "list_skills",
+    "List skills for a scope (returns metadata only — no content). No params = bridge-level. With project_id = project-level. With conversation_id = conversation-level.",
+    ListSkillsSchema.shape,
     async (args) => {
       let scope: "bridge" | "project" | "conversation" = "bridge";
       let scopeId: string | undefined;
@@ -677,7 +748,6 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
       if (args.conversation_id) {
         scope = "conversation";
         scopeId = args.conversation_id;
-        // Verify subscribed
         const subscribed = await store.isSubscribed(args.conversation_id, agentId);
         if (!subscribed) return ACCESS_DENIED;
       } else if (args.project_id) {
@@ -687,18 +757,113 @@ function createBridgeMcpServer(store: IStore, agentId: string): McpServer {
         if (!project) return ACCESS_DENIED;
       }
 
-      const instructions = await store.listInstructions(scope, scopeId);
-      return { content: [{ type: "text" as const, text: JSON.stringify(instructions, null, 2) }] };
+      const skills = await store.listSkills(scope, scopeId, { tags: args.tags });
+
+      // Filter by agent visibility
+      const agent = await store.getAgent(agentId);
+      const agentName = agent?.name ?? "";
+      const visible = skills.filter((s) => {
+        if (s.agents.length === 0) return true;
+        return s.agents.some((a) => a.toLowerCase() === agentName.toLowerCase());
+      });
+
+      // Return metadata only (progressive disclosure tier 1)
+      const metadata = visible.map(({ content: _, ...rest }) => rest);
+      return { content: [{ type: "text" as const, text: JSON.stringify(metadata, null, 2) }] };
     },
   );
 
   server.tool(
-    "delete_instructions",
-    "Delete an instruction by ID. Only the creator can delete.",
-    DeleteInstructionsSchema.shape,
+    "get_skill",
+    "Get a skill's full content by ID (progressive disclosure tier 2). Returns content + file list.",
+    GetSkillSchema.shape,
     async (args) => {
-      const deleted = await store.deleteInstruction(args.instruction_id, agentId);
+      const skill = await store.getSkill(args.skill_id);
+      if (!skill) return ACCESS_DENIED;
+
+      // Check agent visibility (agents[] + selector)
+      const agent = await store.getAgent(agentId);
+      if (agent && skill.agents.length > 0) {
+        if (!skill.agents.some((a) => a.toLowerCase() === agent.name.toLowerCase())) {
+          return ACCESS_DENIED;
+        }
+      }
+      if (agent && skill.selector) {
+        if (skill.selector.type && skill.selector.type.toLowerCase() !== agent.type.toLowerCase()) return ACCESS_DENIED;
+        if (skill.selector.capability && !agent.capabilities.some((c) => c.toLowerCase() === skill.selector!.capability!.toLowerCase())) return ACCESS_DENIED;
+      }
+
+      return { content: [{ type: "text" as const, text: JSON.stringify(skill, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "delete_skill",
+    "Delete a skill by ID. Creator or listed agents can delete.",
+    DeleteSkillSchema.shape,
+    async (args) => {
+      const skill = await store.getSkill(args.skill_id);
+      if (!skill) return ACCESS_DENIED;
+
+      // Authorization: creator OR listed agent
+      if (skill.createdBy !== agentId) {
+        const agent = await store.getAgent(agentId);
+        const agentName = agent?.name ?? "";
+        if (!skill.agents.some((a) => a.toLowerCase() === agentName.toLowerCase())) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the creator or listed agents can delete this skill" }) }] };
+        }
+      }
+
+      const deleted = await store.deleteSkill(args.skill_id);
       return { content: [{ type: "text" as const, text: JSON.stringify({ deleted }) }] };
+    },
+  );
+
+  // --- Skill File tools ---
+
+  server.tool(
+    "set_skill_file",
+    "Add or update a file attached to a skill. Creator or listed agents can manage files.",
+    SetSkillFileSchema.shape,
+    async (args) => {
+      const skill = await store.getSkill(args.skill_id);
+      if (!skill) return ACCESS_DENIED;
+
+      // Authorization: creator OR listed agent
+      if (skill.createdBy !== agentId) {
+        const agent = await store.getAgent(agentId);
+        const agentName = agent?.name ?? "";
+        if (!skill.agents.some((a) => a.toLowerCase() === agentName.toLowerCase())) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the creator or listed agents can manage skill files" }) }] };
+        }
+      }
+
+      const file = await store.setSkillFile(args.skill_id, args.filename, args.content);
+      return { content: [{ type: "text" as const, text: JSON.stringify(file, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "get_skill_file",
+    "Get a file attached to a skill (progressive disclosure tier 3).",
+    GetSkillFileSchema.shape,
+    async (args) => {
+      // Check parent skill visibility first
+      const skill = await store.getSkill(args.skill_id);
+      if (!skill) return ACCESS_DENIED;
+
+      const agent = await store.getAgent(agentId);
+      if (agent && skill.agents.length > 0) {
+        if (!skill.agents.some((a) => a.toLowerCase() === agent.name.toLowerCase())) {
+          return ACCESS_DENIED;
+        }
+      }
+
+      const file = await store.getSkillFile(args.skill_id, args.filename);
+      if (!file) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "File not found" }) }] };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(file, null, 2) }] };
     },
   );
 

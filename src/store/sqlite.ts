@@ -38,10 +38,12 @@ import type {
   TaskStatus,
   AgentMemory,
   AgentMemoryScope,
-  Instruction,
-  CreateInstruction,
-  InstructionScope,
-  InstructionSelector,
+  Skill,
+  CreateSkill,
+  SkillScope,
+  SkillSelector,
+  SkillFilters,
+  SkillFile,
 } from "./types.js";
 import { VISIBILITY_ORDER } from "./types.js";
 
@@ -208,18 +210,34 @@ export class SqliteStore implements IStore {
         FOREIGN KEY (agent_id) REFERENCES agents(id)
       );
 
-      CREATE TABLE IF NOT EXISTS instructions (
+      CREATE TABLE IF NOT EXISTS skills (
         id TEXT PRIMARY KEY,
         scope TEXT NOT NULL,
         scope_id TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL DEFAULT '',
         selector_json TEXT NOT NULL DEFAULT '{}',
+        agents_json TEXT NOT NULL DEFAULT '[]',
+        tags_json TEXT NOT NULL DEFAULT '[]',
         content TEXT NOT NULL,
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (created_by) REFERENCES agents(id)
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_instructions_scope_selector ON instructions(scope, scope_id, selector_json);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_scope_title ON skills(scope, scope_id, title);
+
+      CREATE TABLE IF NOT EXISTS skill_files (
+        id TEXT PRIMARY KEY,
+        skill_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_files_skill_filename ON skill_files(skill_id, filename);
     `);
 
     // --- Schema migrations for existing databases ---
@@ -263,6 +281,77 @@ export class SqliteStore implements IStore {
     if (!msgColNames.has("recipients")) {
       this.db.exec("ALTER TABLE messages ADD COLUMN recipients TEXT");
     }
+
+    // Migrate instructions → skills
+    this.migrateInstructionsToSkills();
+  }
+
+  private migrateInstructionsToSkills(): void {
+    // Check if old instructions table exists and skills table is empty
+    const tables = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('instructions', 'skills')"
+    ).all() as { name: string }[];
+    const tableNames = new Set(tables.map((t) => t.name));
+
+    if (tableNames.has("instructions") && tableNames.has("skills")) {
+      const skillCount = (this.db.prepare("SELECT COUNT(*) as c FROM skills").get() as { c: number }).c;
+      if (skillCount === 0) {
+        // Migrate rows with auto-generated titles
+        const rows = this.db.prepare("SELECT * FROM instructions").all() as Record<string, unknown>[];
+        for (const row of rows) {
+          const selectorJson = row.selector_json as string;
+          const scope = row.scope as string;
+          const scopeId = row.scope_id as string;
+          // Auto-generate title from scope + selector
+          let title = `${scope} instruction`;
+          if (selectorJson && selectorJson !== "{}") {
+            const sel = JSON.parse(selectorJson);
+            if (sel.type) title += ` (type: ${sel.type})`;
+            if (sel.capability) title += ` (cap: ${sel.capability})`;
+          }
+          // Ensure unique title within scope
+          const existing = this.db.prepare(
+            "SELECT 1 FROM skills WHERE scope = ? AND scope_id = ? AND title = ?"
+          ).get(scope, scopeId, title);
+          if (existing) {
+            title += ` [${(row.id as string).slice(0, 8)}]`;
+          }
+
+          this.db.prepare(`
+            INSERT INTO skills (id, scope, scope_id, title, summary, instructions, selector_json, agents_json, tags_json, content, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, '', '', ?, '[]', '[]', ?, ?, ?, ?)
+          `).run(
+            row.id,
+            scope,
+            scopeId,
+            title,
+            selectorJson || "{}",
+            row.content,
+            row.created_by,
+            row.created_at,
+            row.updated_at,
+          );
+        }
+        // Drop old table
+        this.db.exec("DROP TABLE IF EXISTS instructions");
+      }
+    } else if (tableNames.has("instructions") && !tableNames.has("skills")) {
+      // Skills table doesn't exist yet (shouldn't happen with DDL above, but safety)
+    }
+
+    // Ensure skill_files table exists (for existing DBs that have skills but not skill_files)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS skill_files (
+        id TEXT PRIMARY KEY,
+        skill_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_files_skill_filename ON skill_files(skill_id, filename);
+    `);
   }
 
   // --- Agent helpers ---
@@ -1211,62 +1300,100 @@ export class SqliteStore implements IStore {
     return result.changes > 0;
   }
 
-  // --- Instructions ---
+  // --- Skills ---
 
-  private rowToInstruction(row: Record<string, unknown>): Instruction {
+  private rowToSkill(row: Record<string, unknown>, files?: string[]): Skill {
     const selectorStr = row.selector_json as string;
-    const selector = selectorStr && selectorStr !== "{}" ? JSON.parse(selectorStr) as InstructionSelector : null;
+    const selector = selectorStr && selectorStr !== "{}" ? JSON.parse(selectorStr) as SkillSelector : null;
     const rawScopeId = row.scope_id as string;
     return {
       id: row.id as string,
-      scope: row.scope as InstructionScope,
+      title: row.title as string,
+      summary: (row.summary as string) || "",
+      instructions: (row.instructions as string) || "",
+      scope: row.scope as SkillScope,
       scopeId: rawScopeId || null,
       selector,
+      agents: JSON.parse((row.agents_json as string) || "[]"),
+      tags: JSON.parse((row.tags_json as string) || "[]"),
       content: row.content as string,
+      files: files ?? this.getSkillFileNames(row.id as string),
       createdBy: row.created_by as string,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
   }
 
-  async setInstruction(instruction: CreateInstruction): Promise<Instruction> {
+  private getSkillFileNames(skillId: string): string[] {
+    const rows = this.db.prepare(
+      "SELECT filename FROM skill_files WHERE skill_id = ? ORDER BY filename"
+    ).all(skillId) as { filename: string }[];
+    return rows.map((r) => r.filename);
+  }
+
+  async setSkill(skill: CreateSkill): Promise<Skill> {
     const id = randomUUID();
     const ts = now();
-    const scopeId = instruction.scope === "bridge" ? "" : (instruction.scopeId ?? "");
-    const selectorJson = instruction.selector ? JSON.stringify(instruction.selector) : "{}";
+    const scopeId = skill.scope === "bridge" ? "" : (skill.scopeId ?? "");
+    const selectorJson = skill.selector ? JSON.stringify(skill.selector) : "{}";
+    const agentsJson = JSON.stringify(skill.agents ?? []);
+    const tagsJson = JSON.stringify(skill.tags ?? []);
 
     this.db.prepare(`
-      INSERT INTO instructions (id, scope, scope_id, selector_json, content, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (scope, scope_id, selector_json) DO UPDATE SET
+      INSERT INTO skills (id, scope, scope_id, title, summary, instructions, selector_json, agents_json, tags_json, content, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (scope, scope_id, title) DO UPDATE SET
+        summary = excluded.summary,
+        instructions = excluded.instructions,
+        selector_json = excluded.selector_json,
+        agents_json = excluded.agents_json,
+        tags_json = excluded.tags_json,
         content = excluded.content,
         updated_at = excluded.updated_at
-    `).run(id, instruction.scope, scopeId, selectorJson, instruction.content, instruction.createdBy, ts, ts);
+    `).run(id, skill.scope, scopeId, skill.title, skill.summary ?? "", skill.instructions ?? "", selectorJson, agentsJson, tagsJson, skill.content, skill.createdBy, ts, ts);
 
     // Re-read to get actual ID (upsert may have kept the original)
     const row = this.db.prepare(
-      "SELECT * FROM instructions WHERE scope = ? AND scope_id = ? AND selector_json = ?"
-    ).get(instruction.scope, scopeId, selectorJson) as Record<string, unknown>;
+      "SELECT * FROM skills WHERE scope = ? AND scope_id = ? AND title = ?"
+    ).get(skill.scope, scopeId, skill.title) as Record<string, unknown>;
 
-    return this.rowToInstruction(row);
+    return this.rowToSkill(row);
   }
 
-  async listInstructions(scope: InstructionScope, scopeId?: string): Promise<Instruction[]> {
+  async getSkill(id: string): Promise<Skill | null> {
+    const row = this.db.prepare("SELECT * FROM skills WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToSkill(row) : null;
+  }
+
+  async listSkills(scope: SkillScope, scopeId?: string, filters?: SkillFilters): Promise<Skill[]> {
     const resolvedScopeId = scope === "bridge" ? "" : (scopeId ?? "");
     const rows = this.db.prepare(
-      "SELECT * FROM instructions WHERE scope = ? AND scope_id = ? ORDER BY created_at ASC"
-    ).all(resolvedScopeId ? scope : scope, resolvedScopeId) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToInstruction(r));
+      "SELECT * FROM skills WHERE scope = ? AND scope_id = ? ORDER BY created_at ASC"
+    ).all(scope, resolvedScopeId) as Record<string, unknown>[];
+
+    let results = rows.map((r) => this.rowToSkill(r));
+
+    // Tag filtering (any-match, case-insensitive)
+    if (filters?.tags && filters.tags.length > 0) {
+      const lowerTags = filters.tags.map((t) => t.toLowerCase());
+      results = results.filter((s) =>
+        s.tags.some((t) => lowerTags.includes(t.toLowerCase()))
+      );
+    }
+
+    return results;
   }
 
-  async getMatchingInstructions(agent: { type: string; capabilities: string[] }, conversationId: string): Promise<Instruction[]> {
+  async getMatchingSkills(agent: { name: string; type: string; capabilities: string[] }, conversationId: string): Promise<Skill[]> {
     // Resolve project ID from conversation
     const conv = await this.getConversation(conversationId);
     if (!conv) return [];
 
-    // Fetch all instructions for bridge + project + conversation scopes
+    // Fetch all skills for bridge + project + conversation scopes
     const rows = this.db.prepare(`
-      SELECT * FROM instructions
+      SELECT * FROM skills
       WHERE (scope = 'bridge' AND scope_id = '')
          OR (scope = 'project' AND scope_id = ?)
          OR (scope = 'conversation' AND scope_id = ?)
@@ -1275,23 +1402,85 @@ export class SqliteStore implements IStore {
         created_at ASC
     `).all(conv.projectId, conversationId) as Record<string, unknown>[];
 
-    const all = rows.map((r) => this.rowToInstruction(r));
+    const all = rows.map((r) => this.rowToSkill(r));
 
-    // Filter by selector match
-    return all.filter((instr) => {
-      if (!instr.selector) return true; // no selector = applies to all
-      if (instr.selector.type && instr.selector.type.toLowerCase() !== agent.type.toLowerCase()) return false;
-      if (instr.selector.capability && !agent.capabilities.some((c) => c.toLowerCase() === instr.selector!.capability!.toLowerCase())) return false;
+    // Filter by agents[] (name-based, AND) and selector (type/capability, AND)
+    return all.filter((skill) => {
+      // Agents filter: empty = everyone, otherwise agent name must be in list (case-insensitive)
+      if (skill.agents.length > 0) {
+        const lowerAgents = skill.agents.map((a) => a.toLowerCase());
+        if (!lowerAgents.includes(agent.name.toLowerCase())) return false;
+      }
+      // Selector filter: null = everyone
+      if (skill.selector) {
+        if (skill.selector.type && skill.selector.type.toLowerCase() !== agent.type.toLowerCase()) return false;
+        if (skill.selector.capability && !agent.capabilities.some((c) => c.toLowerCase() === skill.selector!.capability!.toLowerCase())) return false;
+      }
       return true;
     });
   }
 
-  async deleteInstruction(id: string, agentId: string): Promise<boolean> {
-    // Only the creator can delete
-    const result = this.db.prepare(
-      "DELETE FROM instructions WHERE id = ? AND created_by = ?"
-    ).run(id, agentId);
+  async deleteSkill(id: string): Promise<boolean> {
+    // CASCADE deletes files too
+    const result = this.db.prepare("DELETE FROM skills WHERE id = ?").run(id);
     return result.changes > 0;
+  }
+
+  // --- Skill Files ---
+
+  async setSkillFile(skillId: string, filename: string, content: string): Promise<SkillFile> {
+    const id = randomUUID();
+    const ts = now();
+
+    this.db.prepare(`
+      INSERT INTO skill_files (id, skill_id, filename, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (skill_id, filename) DO UPDATE SET
+        content = excluded.content,
+        updated_at = excluded.updated_at
+    `).run(id, skillId, filename, content, ts, ts);
+
+    // Re-read to get actual ID
+    const row = this.db.prepare(
+      "SELECT * FROM skill_files WHERE skill_id = ? AND filename = ?"
+    ).get(skillId, filename) as Record<string, unknown>;
+
+    return {
+      id: row.id as string,
+      skillId: row.skill_id as string,
+      filename: row.filename as string,
+      content: row.content as string,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    };
+  }
+
+  async getSkillFile(skillId: string, filename: string): Promise<SkillFile | null> {
+    const row = this.db.prepare(
+      "SELECT * FROM skill_files WHERE skill_id = ? AND filename = ?"
+    ).get(skillId, filename) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id as string,
+      skillId: row.skill_id as string,
+      filename: row.filename as string,
+      content: row.content as string,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    };
+  }
+
+  async listSkillFiles(skillId: string): Promise<{ filename: string; updatedAt: string }[]> {
+    const rows = this.db.prepare(
+      "SELECT filename, updated_at FROM skill_files WHERE skill_id = ? ORDER BY filename"
+    ).all(skillId) as { filename: string; updated_at: string }[];
+
+    return rows.map((r) => ({
+      filename: r.filename,
+      updatedAt: r.updated_at,
+    }));
   }
 
   private rowToMessage(row: Record<string, unknown>): Message {

@@ -169,7 +169,7 @@
 | Debate protocol | Iterative synthesis with 30% dissent threshold | Done |
 | Quorum protocol | Confidence-weighted with persona bonus | Planned |
 
-### Bridge MCP Tools (26)
+### Bridge MCP Tools (29)
 
 | Tool | Description | Status |
 |------|-------------|--------|
@@ -237,22 +237,27 @@ Private per-agent memory — each agent has its own scratchpad, invisible to oth
 | **Cleanup on unsubscribe** | Conversation-level memory auto-deleted when agent unsubscribes. Global and project memory preserved | Done |
 | **Persistent public agent memory** | Allow unsubscribed agents to retain memory (configurable) | Future |
 
-## Instruction Matrix (v0.5)
+## Skills System (v0.6)
 
-Matrix-based instruction system — instructions are matched to agents by scope (bridge/project/conversation) AND selector (agent type, mode, capability). Admin sets bridge-level defaults, project manager adds project rules, conversation creator adds conversation rules. Each level can only edit its own part. Agent sees one concatenated block of all matching instructions via `bridgeMetadata`. Replaces the separate "client playbook" concept — client-type-specific instructions (polling cadence, SSE vs poll, etc.) are just one dimension of the matrix.
+Progressive disclosure skills replace the v0.5 instruction matrix. Skills have rich metadata (title, summary, instructions hint), full content, and supporting files. Agents receive only metadata (tier 1) on subscribe — load full content (tier 2) and files (tier 3) on demand. ~80-90% context savings for agents with many skills.
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **`set_instructions` tool** | `set_instructions(content, project_id?, conversation_id?, selector?)` — upsert instruction for project or conversation scope. Optional selector `{ type?, capability? }`. No selector = applies to all agents. Only creator can set | Done |
-| **`list_instructions` tool** | `list_instructions(project_id?, conversation_id?)` — view instructions for a scope. Bridge-level if no params, project/conversation otherwise | Done |
-| **`delete_instructions` tool** | `delete_instructions(instruction_id)` — delete an instruction by ID. Only the creator can delete | Done |
-| **Selector matching** | Runtime matching filters by agent type and capability (case-insensitive). No-selector entries match all agents | Done |
-| **Cascade model** | `getMatchingInstructions()` returns bridge → project → conversation ordered. Cascaded instructions pushed on subscribe response | Done |
-| **Read-only for agents** | Only project/conversation creators can set instructions. Other agents consume via `list_instructions` or subscribe response | Done |
-| **Subscribe response enriched** | On subscribe, agent receives matched+cascaded instructions as `instructions[]` in the response | Done |
-| **Bridge scope restricted** | Bridge-level instructions cannot be set via MCP (future admin dashboard). Can be queried with `list_instructions()` | Done |
-| **Client-type instructions** | Replaces playbook. E.g. selector `{ type: "claude-code" }` → "poll every 10s for 5 min"; selector `{ type: "openai-compat" }` → "you receive SSE notifications" | Planned |
-| **Mode instructions** | E.g. selector `{ mode: "active" }` → "respond to all messages"; selector `{ mode: "passive" }` → "only respond when @mentioned" | Planned |
+| **`set_skill` tool** | `set_skill(title, content, summary?, instructions?, project_id?, conversation_id?, selector?, agents?, tags?)` — upsert skill by title within scope. Creator can always set. Listed agents can edit existing skills | Done |
+| **`list_skills` tool** | `list_skills(project_id?, conversation_id?, tags?)` — returns metadata only (no content). Progressive disclosure tier 1 | Done |
+| **`get_skill` tool** | `get_skill(skill_id)` — returns full content + file list. Progressive disclosure tier 2 | Done |
+| **`delete_skill` tool** | `delete_skill(skill_id)` — creator or listed agents can delete | Done |
+| **`set_skill_file` tool** | `set_skill_file(skill_id, filename, content)` — attach/update a supporting file. Creator or listed agents | Done |
+| **`get_skill_file` tool** | `get_skill_file(skill_id, filename)` — load a supporting file. Progressive disclosure tier 3 | Done |
+| **Progressive disclosure** | 3-tier: metadata on subscribe (tier 1), content on demand (tier 2), files on demand (tier 3). Reduces context waste ~80-90% | Done |
+| **Agent targeting** | `agents[]` field — target skills to specific agents by name. Empty = everyone. Case-insensitive | Done |
+| **Selector matching** | `selector { type?, capability? }` — filter by agent type/capability. AND with agents[]. Case-insensitive | Done |
+| **Tag filtering** | `tags[]` on skills, filterable in list_skills (any-match, case-insensitive) | Done |
+| **Cascade model** | `getMatchingSkills()` returns bridge → project → conversation ordered. Skill metadata pushed on subscribe response | Done |
+| **Subscribe enrichment** | On subscribe, agent receives matched skill metadata (not content) as `skills[]` | Done |
+| **Skill files** | Supporting files attached to skills. Upsert by filename, cascade-delete with parent skill | Done |
+| **Migration** | Auto-migrates v0.5 instructions → skills with auto-generated titles. Preserves IDs | Done |
+| **Breaking change** | `set_instructions`, `list_instructions`, `delete_instructions` removed. v0.5 → v0.6 | Done |
 
 ## Conversation Context Management (Planned)
 
@@ -286,7 +291,8 @@ Matrix-based instruction system — instructions are matched to agents by scope 
 | **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming (atomic + release + heartbeat), structured conversations, directed messages, message tags, filter by agent, agent memory (private scratchpad, 3 scopes), instruction matrix (scope × selector, replaces playbook), internal agents default active** |
-| v0.6 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
-| v0.7 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
-| v0.8 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
-| v0.9+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
+| **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting by name, skill files, tag filtering. Replaces instruction matrix. 35 tools** |
+| v0.7 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
+| v0.8 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
+| v0.9 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
+| v1.0+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

@@ -248,34 +248,72 @@ export interface TaskFilters {
   capability?: string;
 }
 
-// --- Instructions (scope × selector matrix) ---
+// --- Skills (progressive disclosure) ---
 
-export type InstructionScope = "bridge" | "project" | "conversation";
+export type SkillScope = "bridge" | "project" | "conversation";
 
-export interface InstructionSelector {
-  /** Match agents of this type (e.g. "claude-code", "ollama"). */
+export interface SkillSelector {
   type?: string;
-  /** Match agents with this capability (e.g. "code-execution"). */
   capability?: string;
 }
 
-export interface Instruction {
+export interface Skill {
   id: string;
-  scope: InstructionScope;
+  title: string;
+  summary: string;
+  instructions: string;
+  scope: SkillScope;
   scopeId: string | null;
-  selector: InstructionSelector | null;
+  selector: SkillSelector | null;
+  agents: string[];
+  tags: string[];
   content: string;
+  files: string[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface CreateInstruction {
-  scope: InstructionScope;
+export interface SkillMetadata {
+  id: string;
+  title: string;
+  summary: string;
+  instructions: string;
+  scope: SkillScope;
+  scopeId: string | null;
+  selector: SkillSelector | null;
+  agents: string[];
+  tags: string[];
+  files: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSkill {
+  scope: SkillScope;
   scopeId?: string;
-  selector?: InstructionSelector;
+  title: string;
+  summary?: string;
+  instructions?: string;
+  selector?: SkillSelector;
+  agents?: string[];
+  tags?: string[];
   content: string;
   createdBy: string;
+}
+
+export interface SkillFile {
+  id: string;
+  skillId: string;
+  filename: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillFilters {
+  tags?: string[];
 }
 
 // --- Agent Memory (private per-agent scratchpad) ---

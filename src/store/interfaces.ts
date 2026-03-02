@@ -31,9 +31,11 @@ import type {
   TaskStatus,
   AgentMemory,
   AgentMemoryScope,
-  Instruction,
-  CreateInstruction,
-  InstructionScope,
+  Skill,
+  CreateSkill,
+  SkillScope,
+  SkillFilters,
+  SkillFile,
 } from "./types.js";
 import type { StoreEventBus } from "./events.js";
 
@@ -94,11 +96,17 @@ export interface IStore {
   releaseTask(id: string, agentId: string): Promise<Task | null>;
   updateTask(id: string, agentId: string, updates: { title?: string; description?: string; status?: TaskStatus }): Promise<Task | null>;
 
-  // --- Instructions (scope × selector matrix) ---
-  setInstruction(instruction: CreateInstruction): Promise<Instruction>;
-  listInstructions(scope: InstructionScope, scopeId?: string): Promise<Instruction[]>;
-  getMatchingInstructions(agent: { type: string; capabilities: string[] }, conversationId: string): Promise<Instruction[]>;
-  deleteInstruction(id: string, agentId: string): Promise<boolean>;
+  // --- Skills (progressive disclosure) ---
+  setSkill(skill: CreateSkill): Promise<Skill>;
+  getSkill(id: string): Promise<Skill | null>;
+  listSkills(scope: SkillScope, scopeId?: string, filters?: SkillFilters): Promise<Skill[]>;
+  getMatchingSkills(agent: { name: string; type: string; capabilities: string[] }, conversationId: string): Promise<Skill[]>;
+  deleteSkill(id: string): Promise<boolean>;
+
+  // --- Skill Files ---
+  setSkillFile(skillId: string, filename: string, content: string): Promise<SkillFile>;
+  getSkillFile(skillId: string, filename: string): Promise<SkillFile | null>;
+  listSkillFiles(skillId: string): Promise<{ filename: string; updatedAt: string }[]>;
 
   // --- Agent Memory (private per-agent scratchpad) ---
   setAgentMemory(agentId: string, scope: AgentMemoryScope, content: string, scopeId?: string): Promise<AgentMemory>;

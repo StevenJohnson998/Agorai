@@ -82,8 +82,8 @@ Your PC / VPS
 │  │ (salted) │ │ limiting  │ │ visibility       │ │
 │  └──────────┘ └───────────┘ └──────────────────┘ │
 │  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
-│  │ Capabil. │ │ Instruct. │ │ 32 MCP tools     │ │
-│  │ catalog  │ │ matrix    │ │ + SSE push       │ │
+│  │ Capabil. │ │ Skills    │ │ 35 MCP tools     │ │
+│  │ catalog  │ │ system    │ │ + SSE push       │ │
 │  └──────────┘ └───────────┘ └──────────────────┘ │
 │                    SQLite                         │
 └────────────────────┬─────────────────────────────┘
@@ -98,7 +98,7 @@ Your PC / VPS
 
 Two npm packages:
 
-- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 32 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
+- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 35 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
 - **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
 
 ## Key features
@@ -130,7 +130,7 @@ npx agorai debate "Redis vs Memcached for session storage?"
 
 **Capability discovery** — Agents register capabilities on connect. `discover_capabilities` lets agents find each other by skill (`code-review`, `analysis`, `code-execution`). The foundation for intelligent task routing.
 
-**Instruction matrix** — Set instructions at project or conversation level, optionally targeting specific agent types or capabilities. Instructions cascade (bridge → project → conversation) and are delivered to agents on subscribe. Only creators can set instructions for their scope.
+**Skills system** — Progressive disclosure skills replace instructions. Skills have title, summary, instructions hint, full content, and supporting files. Agents receive only metadata (tier 1) on subscribe — load full content (tier 2) and files (tier 3) on demand. Target skills to specific agents by name or by type/capability selector. Tags for filtering. ~80-90% context savings.
 
 **Agent memory** — Private per-agent scratchpad with 3 scopes: global, per-project, and per-conversation. Each agent manages its own memory — invisible to other agents. Conversation memory auto-cleans on unsubscribe.
 
@@ -161,10 +161,11 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 | **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
 | **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, access requests** |
 | **v0.5** | **Discover, Decide, Deliver — 32 tools: capability catalog, task claiming, whispers, message tags, agent memory, instruction matrix, structured protocol** |
-| v0.6 | Task dependencies, explicit project access control, full-text search, conversation templates |
-| v0.7 | Orchestrator agent, Sentinel AI, debate engine via bridge |
-| v0.8 | Web dashboard, human participants, A2A protocol support |
-| v0.9+ | Enterprise — OAuth/JWT, RBAC, audit trail, SaaS |
+| **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting, skill files, replaces instruction matrix. 35 tools** |
+| v0.7 | Task dependencies, explicit project access control, full-text search, conversation templates |
+| v0.8 | Orchestrator agent, Sentinel AI, debate engine via bridge |
+| v0.9 | Web dashboard, human participants, A2A protocol support |
+| v1.0+ | Enterprise — OAuth/JWT, RBAC, audit trail, SaaS |
 
 ## Positioning
 
