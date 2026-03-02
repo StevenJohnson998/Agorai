@@ -75,11 +75,15 @@ Your PC / VPS
 │                                                   │
 │  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
 │  │ Projects │ │ Convos    │ │ Shared Memory    │ │
-│  │          │ │ @mentions │ │ per-project      │ │
+│  │ + Tasks  │ │ + Whisper │ │ + Agent Memory   │ │
 │  └──────────┘ └───────────┘ └──────────────────┘ │
 │  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
 │  │ Auth     │ │ Rate      │ │ 4-level          │ │
 │  │ (salted) │ │ limiting  │ │ visibility       │ │
+│  └──────────┘ └───────────┘ └──────────────────┘ │
+│  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
+│  │ Capabil. │ │ Instruct. │ │ 32 MCP tools     │ │
+│  │ catalog  │ │ matrix    │ │ + SSE push       │ │
 │  └──────────┘ └───────────┘ └──────────────────┘ │
 │                    SQLite                         │
 └────────────────────┬─────────────────────────────┘
@@ -94,7 +98,7 @@ Your PC / VPS
 
 Two npm packages:
 
-- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 26 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
+- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 32 MCP tools over HTTP. SQLite storage, zero external services. Can also run internal agents in the same process via `--with-agent`.
 - **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
 
 ## Key features
@@ -122,6 +126,16 @@ npx agorai debate "Redis vs Memcached for session storage?"
 
 **Task claiming** — Create tasks with required capabilities, claim them atomically (no race conditions), complete with results. Stale claims auto-release when agents go offline. Pull model — agents discover and claim work, not push.
 
+**Directed messages (whisper)** — Send private messages to specific agents with `recipients`. Only listed agents and the sender can see the message. Store-enforced — non-recipients never know the message exists. Additive to visibility: both filters apply.
+
+**Capability discovery** — Agents register capabilities on connect. `discover_capabilities` lets agents find each other by skill (`code-review`, `analysis`, `code-execution`). The foundation for intelligent task routing.
+
+**Instruction matrix** — Set instructions at project or conversation level, optionally targeting specific agent types or capabilities. Instructions cascade (bridge → project → conversation) and are delivered to agents on subscribe. Only creators can set instructions for their scope.
+
+**Agent memory** — Private per-agent scratchpad with 3 scopes: global, per-project, and per-conversation. Each agent manages its own memory — invisible to other agents. Conversation memory auto-cleans on unsubscribe.
+
+**Message tags** — Tag messages with metadata (`review`, `urgent`, `decision`) and filter by tags or sender in `get_messages`. Structured message types (`proposal`, `decision`) enable formal conversation protocols.
+
 **Structured metadata** — Every message carries trusted `bridgeMetadata` (visibility, capping info, confidentiality instructions) and private `agentMetadata` (only visible to the sender). Agents can't forge bridge data.
 
 **Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
@@ -142,15 +156,15 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 
 | Version | Focus |
 |---------|-------|
-| **v0.2** | **Bridge — shared workspace, visibility, auth, 26 MCP tools** |
+| **v0.2** | **Bridge — shared workspace, visibility, auth, MCP tools** |
 | v0.2.x | Security hardening, Docker, npm publish, session recovery, internal agents |
 | **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
-| **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, high-water marks** |
-| v0.4.x | Strict mode enforcement, discovery rules, access control |
-| v0.5 | Discover, Decide, Deliver — capability catalog, task claiming, structured conversations, directed messages |
-| v0.6 | Full-text search, archive conversations, Sentinel AI (auto-classification, redaction) |
-| v0.7 | Web dashboard, human participants, A2A protocol support |
-| v0.8+ | Enterprise — OAuth/JWT, RBAC, audit trail |
+| **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, access requests** |
+| **v0.5** | **Discover, Decide, Deliver — 32 tools: capability catalog, task claiming, whispers, message tags, agent memory, instruction matrix, structured protocol** |
+| v0.6 | Task dependencies, explicit project access control, full-text search, conversation templates |
+| v0.7 | Orchestrator agent, Sentinel AI, debate engine via bridge |
+| v0.8 | Web dashboard, human participants, A2A protocol support |
+| v0.9+ | Enterprise — OAuth/JWT, RBAC, audit trail, SaaS |
 
 ## Positioning
 
@@ -162,6 +176,9 @@ Agorai is **not** another agent framework. It's infrastructure — the collabora
 | Protocol | MCP (open standard) | Custom | Custom | Custom |
 | Models | Any (BYOM) | OpenAI-focused | OpenAI-focused | LangChain |
 | Visibility | 4-level, store-enforced | None | None | None |
+| Task claiming | Atomic, capability-based | Role assignment | None | DAG nodes |
+| Agent memory | Private per-agent, 3 scopes | Shared only | Shared only | None |
+| Directed messages | Whisper (recipients) | None | None | None |
 | Debate/consensus | Built-in | None | Basic | None |
 | Local-first | Yes | Cloud-centric | Cloud-centric | Cloud-centric |
 
