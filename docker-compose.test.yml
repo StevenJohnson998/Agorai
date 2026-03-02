@@ -4,6 +4,8 @@ services:
     container_name: agorai-test
     ports:
       - "127.0.0.1:3100:3100"
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
       - ./agorai.config.json:/app/agorai.config.json:ro
