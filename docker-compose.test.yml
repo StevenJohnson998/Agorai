@@ -4,6 +4,7 @@ services:
     container_name: agorai-test
     ports:
       - "127.0.0.1:3100:3100"
+      - "127.0.0.1:3101:3101"
     env_file:
       - .env
     volumes:

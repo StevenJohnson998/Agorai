@@ -1,0 +1,56 @@
+<div class="flex flex-col h-full" hx-ext="sse" sse-connect="<%= envPath %>/c/<%= conversation.id %>/stream">
+  <!-- Conversation header -->
+  <div class="border-b border-slate-800 px-4 py-2 flex items-center justify-between bg-slate-900/50 shrink-0">
+    <div>
+      <h2 class="font-semibold text-white text-sm"># <%= conversation.title %></h2>
+      <% if (typeof project !== 'undefined' && project) { %>
+        <span class="text-xs text-slate-500"><%= project.name %></span>
+      <% } %>
+    </div>
+    <div id="participants-section" class="flex items-center gap-1">
+      <% if (typeof subscribers !== 'undefined') { %>
+        <%
+          // Filter available agents (not yet subscribed)
+          var subscriberIds = subscribers.map(function(s) { return s.agentId; });
+          var availableAgents = (typeof agents !== 'undefined' ? agents : []).filter(function(a) { return subscriberIds.indexOf(a.id) === -1; });
+        %>
+        <%- include('partials/participants', { user: user, conversation: conversation, subscribers: subscribers, agents: availableAgents, envPath: envPath, basePath: basePath }) %>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- Messages area -->
+  <div id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-3" sse-swap="message" hx-swap="beforeend scroll:bottom">
+    <% messages.forEach(function(message) { %>
+      <%- include('partials/message', { message: message, agentMap: agentMap, user: user, envPath: envPath, basePath: basePath }) %>
+    <% }); %>
+  </div>
+
+  <!-- Input area -->
+  <div class="border-t border-slate-800 p-3 bg-slate-900/50 shrink-0">
+    <form id="send-form" hx-post="<%= envPath %>/c/<%= conversation.id %>/send"
+          hx-target="#messages-container"
+          hx-swap="beforeend scroll:bottom"
+          hx-on::before-request="this.querySelector('#send-btn').disabled=true;this.querySelector('#send-icon').classList.add('hidden');this.querySelector('#send-spinner').classList.remove('hidden')"
+          hx-on::after-request="this.reset();this.querySelector('textarea').style.height='auto';this.querySelector('#send-btn').disabled=false;this.querySelector('#send-icon').classList.remove('hidden');this.querySelector('#send-spinner').classList.add('hidden')"
+          class="flex gap-2">
+      <textarea name="content" rows="1" placeholder="Type a message... (Shift+Enter for new line)"
+        class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.closest('form').requestSubmit()}"
+        oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+      <button type="submit" id="send-btn" title="Send message"
+        class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium self-end min-w-[44px] min-h-[44px] flex items-center justify-center">
+        <svg id="send-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+        <svg id="send-spinner" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      </button>
+    </form>
+  </div>
+</div>
+
+<script>
+  // Scroll to bottom on load
+  (function() {
+    var container = document.getElementById('messages-container');
+    if (container) container.scrollTop = container.scrollHeight;
+  })();
+</script>

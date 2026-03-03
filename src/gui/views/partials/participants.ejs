@@ -1,0 +1,111 @@
+<%
+  // Color palette for avatar initials
+  var avatarColors = ['bg-brand-600', 'bg-emerald-600', 'bg-purple-600', 'bg-orange-600', 'bg-pink-600', 'bg-cyan-600', 'bg-yellow-600', 'bg-red-600'];
+  function getAvatarColor(name) {
+    var hash = 0;
+    for (var i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return avatarColors[Math.abs(hash) % avatarColors.length];
+  }
+  // Status dot color: green=online, red=error, grey=offline
+  function getStatusDotColor(sub) {
+    if (sub.agentStatus === 'error') return 'bg-red-500';
+    if (sub.online) return 'bg-green-400';
+    return '';
+  }
+  function getStatusLabel(sub) {
+    if (sub.agentStatus === 'error') return 'Error';
+    if (sub.online) return 'Online';
+    return 'Offline';
+  }
+%>
+<!-- Participant avatars -->
+<div class="flex items-center gap-1">
+  <% subscribers.slice(0, 5).forEach(function(sub) { %>
+    <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white shrink-0 <%= getAvatarColor(sub.name) %> relative"
+      title="<%= sub.name %> (<%= sub.type === 'human' ? 'Human' : 'Agent' %> · <%= getStatusLabel(sub) %>)">
+      <%= sub.name.charAt(0).toUpperCase() %>
+      <% var dotColor = getStatusDotColor(sub); if (dotColor) { %>
+        <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 <%= dotColor %> rounded-full border border-slate-900"></span>
+      <% } %>
+    </div>
+  <% }); %>
+  <% if (subscribers.length > 5) { %>
+    <span class="text-[10px] text-slate-500">+<%= subscribers.length - 5 %></span>
+  <% } %>
+  <button onclick="document.getElementById('participants-drawer').classList.remove('hidden')"
+    class="w-6 h-6 rounded-full border border-dashed border-slate-600 flex items-center justify-center text-slate-500 hover:text-slate-300 hover:border-slate-400 transition-colors shrink-0"
+    title="Manage participants" aria-label="Manage participants">
+    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+  </button>
+</div>
+
+<!-- Participants drawer/modal -->
+<div id="participants-drawer" class="hidden fixed inset-0 bg-black/50 z-50" onclick="if(event.target===this)this.classList.add('hidden')">
+  <!-- Mobile: bottom sheet. Desktop: centered modal -->
+  <div class="absolute bottom-0 left-0 right-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-w-sm sm:w-full sm:rounded-xl bg-slate-900 border-t sm:border border-slate-800 rounded-t-xl sm:rounded-xl shadow-xl max-h-[70vh] flex flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800 shrink-0">
+      <h3 class="text-sm font-semibold text-white">Participants (<%= subscribers.length %>)</h3>
+      <button onclick="document.getElementById('participants-drawer').classList.add('hidden')"
+        class="text-slate-500 hover:text-white p-1" aria-label="Close">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- Participant list -->
+    <div class="flex-1 overflow-y-auto p-2">
+      <% if (subscribers.length === 0) { %>
+        <p class="text-center text-sm text-slate-500 py-4">No participants yet</p>
+      <% } %>
+      <% subscribers.forEach(function(sub) { %>
+        <div class="flex items-center justify-between px-2 py-2 hover:bg-slate-800/50 rounded-lg group/part">
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white shrink-0 <%= getAvatarColor(sub.name) %> relative">
+              <%= sub.name.charAt(0).toUpperCase() %>
+              <% var dotColor2 = getStatusDotColor(sub); if (dotColor2) { %>
+                <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 <%= dotColor2 %> rounded-full border-2 border-slate-900"></span>
+              <% } %>
+            </div>
+            <div class="min-w-0">
+              <div class="text-sm text-white truncate"><%= sub.name %></div>
+              <div class="text-[10px] <%= sub.agentStatus === 'error' ? 'text-red-400' : 'text-slate-500' %>"><%= sub.type === 'human' ? 'Human' : 'Agent' %> · <%= getStatusLabel(sub) %></div>
+            </div>
+          </div>
+          <% if (sub.agentId !== user.agentId) { %>
+          <form class="opacity-0 group-hover/part:opacity-100 lg:opacity-0 transition-opacity"
+            hx-post="<%= envPath %>/c/<%= conversation.id %>/remove-participant"
+            hx-target="#participants-section"
+            hx-swap="innerHTML">
+            <input type="hidden" name="agentId" value="<%= sub.agentId %>">
+            <button type="submit" class="text-xs text-slate-500 hover:text-red-400 p-1" title="Remove">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </form>
+          <% } %>
+        </div>
+      <% }); %>
+    </div>
+
+    <!-- Add participant -->
+    <% if (typeof agents !== 'undefined' && agents.length > 0) { %>
+    <div class="border-t border-slate-800 p-3 shrink-0">
+      <form hx-post="<%= envPath %>/c/<%= conversation.id %>/add-participant"
+        hx-target="#participants-section"
+        hx-swap="innerHTML"
+        class="flex gap-2">
+        <select name="agentId" required
+          class="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <option value="" disabled selected>Add participant...</option>
+          <% agents.forEach(function(agent) { %>
+            <option value="<%= agent.id %>"><%= agent.name %> (<%= agent.type %>)</option>
+          <% }); %>
+        </select>
+        <button type="submit"
+          class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg transition-colors">
+          Add
+        </button>
+      </form>
+    </div>
+    <% } %>
+  </div>
+</div>

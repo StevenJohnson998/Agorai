@@ -1,0 +1,40 @@
+/* Agorai GUI - Custom styles beyond Tailwind */
+
+/* Smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Message content formatting */
+.message-content {
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+/* Textarea auto-resize */
+textarea {
+  min-height: 40px;
+}
+
+/* Prevent layout shift during SSE */
+[sse-swap] {
+  min-height: 0;
+}
+
+/* Mobile touch targets */
+@media (max-width: 640px) {
+  button, a {
+    min-height: 36px;
+  }
+}

@@ -301,6 +301,28 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Smart routing** | Routes messages to the best agent based on capabilities and @mention patterns | Planned (v0.6) |
 | **Conflict detection** | Flags contradictory decisions or duplicate work across conversations | Planned (v0.7) |
 
+## GUI MVP (v0.6.2)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Auth system** | Session-based auth with bcrypt, httpOnly cookies, account lockout, rate limiting | Done |
+| **Express + EJS** | Server-side rendered GUI, no build step. htmx + Tailwind CDN | Done |
+| **Landing page** | Static landing page at `/agorai/` with Login button, Caddy hybrid routing (static + reverse proxy) | Done |
+| **Login with env picker** | Environment dropdown (test only for now), redirects to `/agorai/test/c/` | Done |
+| **Conversations list** | `/agorai/test/c/` — projects with conversations, create project/conversation buttons | Done |
+| **Real-time chat** | SSE-powered message stream, htmx partial swaps, auto-scroll | Done |
+| **Admin panel** | User management (approve/reject/delete), admin-only access | Done |
+| **Route protection** | `requireAuth`, `requireAdmin`, `requireConversationAccess` (subscription or admin) | Done |
+| **Context menus** | ⋮ menu on projects (new conversation, rename, delete) and conversations (rename, delete). Creator or admin only | Done |
+| **Project/conversation deletion** | Soft-delete only (`status = 'deleted'`). Data preserved in DB, hidden from listings. No hard-delete or file cleanup yet | Done |
+| **Hard-delete & file cleanup** | Permanently delete soft-deleted projects/conversations and associated data (messages, subscriptions, memory, access requests). Admin-only purge tool | Planned |
+| **Restore deleted items** | Admin tool to list and restore soft-deleted projects/conversations | Planned |
+| **Auto-purge policy** | Configurable retention period for soft-deleted items before hard-delete | Planned |
+| **Mobile responsive** | Touch targets, sidebar toggle, responsive layout | Done |
+| **Mobile SSE bug** | Agent replies don't auto-appear on mobile browsers (need manual refresh). SSE connection likely dropped by mobile Safari/Chrome. Priority fix for demo | Bug |
+| **Participant management** | "+participant" button to add Users or AIs to conversations. Currently subscribers appear unexpectedly | Planned |
+| **Subscription cleanup** | New conversations should only have creator as subscriber. Investigate and fix auto-subscribe behavior | Planned |
+
 ## Roadmap
 
 | Version | Focus |

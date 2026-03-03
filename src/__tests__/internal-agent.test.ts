@@ -209,8 +209,8 @@ describe("Internal Agent — Passive Mode", () => {
 });
 
 describe("Internal Agent — Anti-Ping-Pong", () => {
-  it("active mode: skips messages from other internal agents (no @mention)", async () => {
-    // Create an "internal" type sender (simulates another internal agent)
+  it("active mode: skips internal-only messages after collaboration window exhausted", async () => {
+    // Create internal sender agents
     const otherInternal = await store.registerAgent({
       name: "other-internal",
       type: "internal",
@@ -218,15 +218,27 @@ describe("Internal Agent — Anti-Ping-Pong", () => {
       clearanceLevel: "team",
       apiKeyHash: "hash_other_internal",
     });
+    const otherInternal2 = await store.registerAgent({
+      name: "other-internal-2",
+      type: "internal",
+      capabilities: ["chat"],
+      clearanceLevel: "team",
+      apiKeyHash: "hash_other_internal_2",
+    });
     const { conv } = await setupConversation(otherInternal.id);
     await store.subscribe(conv.id, otherInternal.id);
+    await store.subscribe(conv.id, otherInternal2.id);
 
-    // Send a message from the other internal agent
-    await store.sendMessage({
-      conversationId: conv.id,
-      fromAgent: otherInternal.id,
-      content: "I just responded to something",
-    });
+    // Fill the conversation with many internal-only messages to exhaust
+    // the collaboration window (decisionDepth defaults to 3, with 3 internal
+    // agents that's 9 messages max). Send 15 to be well past the limit.
+    for (let i = 0; i < 15; i++) {
+      await store.sendMessage({
+        conversationId: conv.id,
+        fromAgent: i % 2 === 0 ? otherInternal.id : otherInternal2.id,
+        content: `Internal message round ${i}`,
+      });
+    }
 
     let invokeCount = 0;
     const adapter: IAgentAdapter = {
@@ -245,15 +257,16 @@ describe("Internal Agent — Anti-Ping-Pong", () => {
       agentName: "anti-loop-bot",
       mode: "active",
       pollIntervalMs: 50,
+      decisionDepth: 3,
     }, 300);
 
-    // Should NOT have invoked — message is from another internal agent, no @mention
+    // Should NOT have invoked — collaboration window exhausted
     expect(invokeCount).toBe(0);
 
     // Messages should still be marked read (not left unread for infinite retry)
     const agentRecord = await store.getAgentByApiKey("internal:anti-loop-bot");
     const unread = await store.getMessages(conv.id, agentRecord!.id, { unreadOnly: true });
-    const fromOther = unread.filter((m) => m.fromAgent === otherInternal.id);
+    const fromOther = unread.filter((m) => m.fromAgent !== agentRecord!.id);
     expect(fromOther).toHaveLength(0);
   });
 

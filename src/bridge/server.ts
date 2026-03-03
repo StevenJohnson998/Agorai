@@ -16,6 +16,7 @@ import type { IAuthProvider, AuthResult } from "./auth.js";
 import type { Config } from "../config.js";
 import type { MessageCreatedEvent, AccessRequestCreatedEvent, TaskCreatedEvent, TaskUpdatedEvent } from "../store/events.js";
 import { VISIBILITY_ORDER, type VisibilityLevel } from "../store/types.js";
+import { buildBridgeRules, renderForMcpInstructions } from "../agent/context.js";
 import { createLogger } from "../logger.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -162,68 +163,15 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
       ? Object.keys(TOOL_GROUPS)
       : ["core", ...toolGroups]
   );
-  // Build instructions dynamically — only include sections for active tool groups
-  const instructionParts: string[] = [
-    "You are connected to Agorai, a multi-agent collaboration bridge.",
-    "",
-    "IMPORTANT — Message read tracking:",
-    "After you read messages with get_messages, you MUST call mark_read with the same conversation_id.",
-    "This prevents you from seeing the same messages again on the next poll.",
-    "Example: get_messages({conversation_id: \"abc\"}) → process messages → mark_read({conversation_id: \"abc\"})",
-    "",
-    "IMPORTANT — Visibility / confidentiality levels:",
-    "Messages have a visibility level: public < team < confidential < restricted.",
-    "When you send a message, set its visibility to the HIGHEST level among the messages you used as input.",
-    "For example, if you read messages at 'team' and 'confidential' level, your reply MUST be 'confidential'.",
-    "If unsure, default to the conversation's default visibility. Never downgrade confidentiality.",
-    "",
-    "IMPORTANT — Message metadata model:",
-    "Messages have two metadata fields:",
-    "- bridgeMetadata: trusted data injected by the bridge (visibility, capping info, confidentiality instructions). Always present. Read the 'instructions' field for guidance on how to handle confidentiality for this project.",
-    "- agentMetadata: your private operational data (cost, model, tokens, etc.). Only visible to you — other agents cannot see it.",
-    "When sending a message, pass any operational metadata in the 'metadata' field. Do NOT include keys starting with '_bridge'.",
-    "",
-    "Typical workflow:",
-    "1. get_status — check for unread messages",
-    "2. list_projects → list_conversations → subscribe to conversations you want to follow",
-    "3. get_messages({conversation_id, unread_only: true}) — fetch new messages",
-    "4. Process/respond with send_message (set visibility to max of input messages' visibility)",
-    "5. mark_read({conversation_id}) — ALWAYS do this after reading, even if you don't reply",
-    "",
-    "IMPORTANT — @mentions and context:",
-    "Use @agent-name to mention specific agents. Use list_subscribers to see who is in a conversation.",
-    "When you @mention an agent who hasn't been active in the conversation, YOU are responsible for providing them with the necessary context.",
-    "They may not have seen previous messages. Include a brief summary of the situation, key decisions made, and what you need from them.",
-    "Do NOT assume other agents have read the full conversation history.",
-  ];
-
-  if (activeGroups.has("access")) {
-    instructionParts.push(
-      "",
-      "IMPORTANT — Access requests:",
-      "If you try to subscribe to a conversation you don't have access to, an access request is created automatically.",
-      "Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.",
-      "Check your request status with get_my_access_requests.",
-    );
-  }
-
-  if (activeGroups.has("skills")) {
-    instructionParts.push(
-      "",
-      "IMPORTANT — Skills system (progressive disclosure):",
-      "Skills provide behavioral instructions and context. They use 3-tier progressive disclosure to save context:",
-      "- Tier 1 (metadata): When you subscribe, you receive skill metadata (title, summary, instructions, tags) — NOT the full content.",
-      "- Tier 2 (content): Call get_skill(skill_id) to load the full content of a skill you need.",
-      "- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.",
-      "Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.",
-    );
-  }
+  // Build instructions from single source of truth (agent/context.ts)
+  const rules = buildBridgeRules([...activeGroups]);
+  const instructions = renderForMcpInstructions(rules);
 
   const server = new McpServer({
     name: "agorai-bridge",
     version: PKG_VERSION,
   }, {
-    instructions: instructionParts.join("\n"),
+    instructions,
   });
 
   // --- Agent tools ---

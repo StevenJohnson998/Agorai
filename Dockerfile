@@ -22,12 +22,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
+# GUI: EJS templates and static files (not compiled by tsc)
+COPY src/gui/views ./src/gui/views
+COPY src/gui/public ./src/gui/public
 
 RUN mkdir -p /app/data
 
-EXPOSE 3100
+EXPOSE 3100 3101
 
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
   CMD wget -q -O- http://127.0.0.1:3100/health || exit 1
 
-ENTRYPOINT ["node", "dist/cli.js", "serve", "--host", "0.0.0.0", "--with-agent", "deepseek-chat", "--with-agent", "gemini-flash", "--with-agent", "mistral-medium"]
+ENTRYPOINT ["node", "dist/cli.js", "serve", "--host", "0.0.0.0", "--gui", "--with-agent", "deepseek-chat", "--with-agent", "gemini-flash", "--with-agent", "mistral-medium"]
