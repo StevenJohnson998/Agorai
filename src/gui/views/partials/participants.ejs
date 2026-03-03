@@ -86,26 +86,69 @@
       <% }); %>
     </div>
 
-    <!-- Add participant -->
+    <!-- Add participant (searchable list, sorted by status) -->
     <% if (typeof agents !== 'undefined' && agents.length > 0) { %>
+    <%
+      // Sort: online first, then error, then offline
+      var fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      var sortedAgents = agents.slice().sort(function(a, b) {
+        function statusOrder(agent) {
+          if (agent.status === 'error') return 1;
+          if (agent.lastSeenAt > fiveMinAgo) return 0; // online
+          return 2; // offline
+        }
+        return statusOrder(a) - statusOrder(b);
+      });
+    %>
     <div class="border-t border-slate-800 p-3 shrink-0">
-      <form hx-post="<%= envPath %>/c/<%= conversation.id %>/add-participant"
-        hx-target="#participants-section"
-        hx-swap="innerHTML"
-        class="flex gap-2">
-        <select name="agentId" required
-          class="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-          <option value="" disabled selected>Add participant...</option>
-          <% agents.forEach(function(agent) { %>
-            <option value="<%= agent.id %>"><%= agent.name %> (<%= agent.type %>)</option>
-          <% }); %>
-        </select>
-        <button type="submit"
-          class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg transition-colors">
-          Add
-        </button>
-      </form>
+      <input type="text" id="participant-search" placeholder="Filter agents..."
+        class="w-full px-2 py-1.5 mb-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder-slate-500"
+        oninput="filterAgentList(this.value)">
+      <div id="agent-add-list" class="max-h-40 overflow-y-auto space-y-0.5">
+        <% sortedAgents.forEach(function(agent) { %>
+          <%
+            var isOnline = agent.lastSeenAt > fiveMinAgo;
+            var isError = agent.status === 'error';
+            var statusDot = isError ? 'bg-red-500' : (isOnline ? 'bg-green-400' : 'bg-slate-600');
+            var statusText = isError ? 'Error' : (isOnline ? 'Online' : 'Offline');
+          %>
+          <div class="agent-add-item flex items-center justify-between px-2 py-1.5 hover:bg-slate-800/50 rounded-lg cursor-pointer"
+            data-name="<%= agent.name.toLowerCase() %>" data-type="<%= agent.type.toLowerCase() %>">
+            <div class="flex items-center gap-2 min-w-0">
+              <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white shrink-0 <%= getAvatarColor(agent.name) %> relative">
+                <%= agent.name.charAt(0).toUpperCase() %>
+                <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 <%= statusDot %> rounded-full border border-slate-900"></span>
+              </div>
+              <div class="min-w-0">
+                <div class="text-sm text-white truncate"><%= agent.name %></div>
+                <div class="text-[10px] text-slate-500"><%= agent.type === 'human' ? 'Human' : 'Agent' %> · <%= statusText %></div>
+              </div>
+            </div>
+            <form hx-post="<%= envPath %>/c/<%= conversation.id %>/add-participant"
+              hx-target="#participants-section"
+              hx-swap="innerHTML"
+              onclick="event.stopPropagation()">
+              <input type="hidden" name="agentId" value="<%= agent.id %>">
+              <button type="submit"
+                class="text-xs px-2 py-1 bg-brand-600 hover:bg-brand-700 text-white rounded transition-colors">
+                Add
+              </button>
+            </form>
+          </div>
+        <% }); %>
+      </div>
     </div>
+    <script>
+      function filterAgentList(query) {
+        var q = query.toLowerCase();
+        var items = document.querySelectorAll('.agent-add-item');
+        items.forEach(function(item) {
+          var name = item.getAttribute('data-name');
+          var type = item.getAttribute('data-type');
+          item.style.display = (name.indexOf(q) !== -1 || type.indexOf(q) !== -1) ? '' : 'none';
+        });
+      }
+    </script>
     <% } %>
   </div>
 </div>

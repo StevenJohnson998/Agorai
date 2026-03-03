@@ -1641,7 +1641,7 @@ export class SqliteStore implements IStore {
     const agentId = randomUUID();
     this.db.prepare(
       "INSERT INTO agents (id, name, type, capabilities, clearance_level, api_key_hash, last_seen_at, created_at) VALUES (?, ?, 'human', '[]', 'team', ?, ?, ?)"
-    ).run(agentId, `user:${data.email}`, `gui:${id}`, ts, ts);
+    ).run(agentId, data.name, `gui:${id}`, ts, ts);
 
     this.db.prepare(
       "INSERT INTO users (id, email, password_hash, name, role, status, agent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"

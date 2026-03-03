@@ -376,6 +376,7 @@ export function renderForPrompt(
       "If you disagree or have a genuinely new perspective, explain it. If you mostly agree, keep it very brief.",
       "IMPORTANT: Do NOT respond just to show agreement or summarize what others said. 'I agree with X' adds no value. If the group has reached consensus and you have nothing NEW to add, reply with exactly [NO_RESPONSE].",
       "Signs you should use [NO_RESPONSE]: the discussion is converging, key points are covered, you'd mostly be restating others' ideas, or someone already summarized the conclusion.",
+      "IMPORTANT — @mentions: When a message uses @agent-name, it tags that specific agent for that part of the message. If a part of the message is clearly directed at another agent (e.g. '@mistral-medium what do you think?'), do NOT answer that part — let the tagged agent handle it. Only respond to parts addressed to you by name or to the group generally. A message can mix group content with @targeted questions; respond to what concerns you, skip what is explicitly for someone else. If the ENTIRE message is directed at a specific agent and not you, reply with [NO_RESPONSE].",
       "CRITICAL: Only speak as yourself. NEVER simulate, impersonate, or write on behalf of other agents. Do NOT prefix your message with other agents' names or create fake dialogue. You are ONLY " + identity.agentName + ".",
     ].join(" "));
     if (context.decisionDepth && context.decisionDepth > 0) {
