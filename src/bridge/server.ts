@@ -1342,8 +1342,12 @@ async function dispatchMessageNotification(store: IStore, event: MessageCreatedE
   const agentMap = new Map(allAgents.map((a) => [a.id, a]));
   const agentByName = new Map(allAgents.map((a) => [a.name.toLowerCase(), a]));
 
-  // @mention offline whisper: if someone mentions an offline agent, whisper the sender
-  if (message.type !== "status" && !message.recipients && message.fromAgent !== systemAgentId) {
+  // @mention offline whisper: if a human/external agent mentions an offline agent, whisper the sender.
+  // Internal agents often echo @names in responses — skip those to avoid whisper spam.
+  const senderAgent = agentMap.get(message.fromAgent);
+  const senderType = senderAgent?.type ?? "unknown";
+  const isHumanOrExternal = senderType !== "internal" && senderType !== "system";
+  if (message.type !== "status" && !message.recipients && isHumanOrExternal && message.fromAgent !== systemAgentId) {
     const mentions = message.content.match(/@([\w-]+)/g);
     if (mentions) {
       const offlineNames: string[] = [];

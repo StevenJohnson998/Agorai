@@ -26,10 +26,20 @@
   </div>
 
   <!-- Messages area -->
-  <div id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-3">
-    <% messages.forEach(function(message) { %>
-      <%- include('partials/message', { message: message, agentMap: agentMap, user: user, envPath: envPath, basePath: basePath }) %>
-    <% }); %>
+  <div class="relative flex-1 min-h-0">
+    <div id="messages-container" class="h-full overflow-y-auto p-4 space-y-3">
+      <% messages.forEach(function(message) { %>
+        <%- include('partials/message', { message: message, agentMap: agentMap, user: user, envPath: envPath, basePath: basePath }) %>
+      <% }); %>
+    </div>
+    <!-- Scroll-to-bottom pill -->
+    <button id="scroll-to-bottom" class="hidden absolute bottom-4 left-1/2 -translate-x-1/2 z-10
+      bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 hover:text-white
+      rounded-full px-3 py-1.5 text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
+      aria-label="Scroll to bottom">
+      <span class="scroll-btn-count hidden bg-brand-600 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none"></span>
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+    </button>
   </div>
 
   <!-- Input area -->
@@ -39,9 +49,9 @@
 
     <form id="send-form" hx-post="<%= envPath %>/c/<%= conversation.id %>/send"
           hx-target="#messages-container"
-          hx-swap="beforeend scroll:bottom"
+          hx-swap="beforeend"
           hx-on::before-request="this.querySelector('#send-btn').disabled=true;this.querySelector('#send-icon').classList.add('hidden');this.querySelector('#send-spinner').classList.remove('hidden')"
-          hx-on::after-request="this.reset();this.querySelector('textarea').style.height='auto';this.querySelector('#send-btn').disabled=false;this.querySelector('#send-icon').classList.remove('hidden');this.querySelector('#send-spinner').classList.add('hidden');closeMentionDropdown()"
+          hx-on::after-request="this.reset();this.querySelector('textarea').style.height='auto';this.querySelector('#send-btn').disabled=false;this.querySelector('#send-icon').classList.remove('hidden');this.querySelector('#send-spinner').classList.add('hidden');closeMentionDropdown();scrollChatToBottom(false)"
           class="flex gap-2">
       <textarea id="msg-input" name="content" rows="1" placeholder="Type a message... (@ to mention)"
         class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"

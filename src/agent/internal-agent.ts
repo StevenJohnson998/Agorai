@@ -289,9 +289,13 @@ async function processConversation(
       // Walk backwards from the most recent message
       for (let i = recentMessages.length - 1; i >= 0; i--) {
         const msg = recentMessages[i];
+        // Skip status messages entirely (system noise — whispers, join/leave, etc.)
+        if (msg.type === "status") continue;
         const sender = await store.getAgent(msg.fromAgent);
-        if (sender && sender.type !== "internal") break; // hit a human/external message
-        // Count unique internal agents in this run (each agent responding = 1 round)
+        // Skip system agent messages (agorai-system)
+        if (sender && sender.type === "system") continue;
+        // Hit a human or external agent message — stop counting
+        if (!sender || sender.type !== "internal") break;
         internalRounds++;
       }
 

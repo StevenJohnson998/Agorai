@@ -315,20 +315,22 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Route protection** | `requireAuth`, `requireAdmin`, `requireConversationAccess` (subscription or admin) | Done |
 | **Context menus** | ⋮ menu on projects (new conversation, rename, delete) and conversations (rename, delete). Creator or admin only | Done |
 | **Project/conversation deletion** | Soft-delete only (`status = 'deleted'`). Data preserved in DB, hidden from listings. No hard-delete or file cleanup yet | Done |
-| **Hard-delete & file cleanup** | Permanently delete soft-deleted projects/conversations and associated data (messages, subscriptions, memory, access requests). Admin-only purge tool | Planned |
-| **Restore deleted items** | Admin tool to list and restore soft-deleted projects/conversations | Planned |
-| **Auto-purge policy** | Configurable retention period for soft-deleted items before hard-delete | Planned |
 | **Mobile responsive** | Touch targets, sidebar toggle, responsive layout | Done |
 | **Mobile SSE bug** | Agent replies don't auto-appear on mobile browsers (need manual refresh). SSE connection likely dropped by mobile Safari/Chrome. Priority fix for demo | Bug |
 | **Participant management** | "+participant" button to add Users or AIs to conversations. Avatar pills with status dots, add/remove drawer | Done |
-| **Subscription cleanup** | New conversations should only have creator as subscriber. Investigate and fix auto-subscribe behavior | Planned |
 | **Agent health status** | Agents tracked as online/error/offline. Red/green/grey status dots. System messages for unavailable/recovery/join events | Done |
 | **Collaboration tuning** | Collaboration window (decisionDepth × agentCount), anti-impersonation, early consensus stopping via [NO_RESPONSE] | Done |
+| **Verbosity control** | User preference (Concise/Normal/Detailed) that controls agent response length via bridge-level skill | Planned |
 | **Debate moderation** | Optional moderator role per conversation. Admin sets preferred moderator or random. Moderator gets synthesis instructions, others defer. Config: `moderation.enabled` + `moderation.preferredModerator` | Planned |
+| **Hard-delete & file cleanup** | Permanently delete soft-deleted projects/conversations and associated data (messages, subscriptions, memory, access requests). Admin-only purge tool | Planned |
+| **Restore deleted items** | Admin tool to list and restore soft-deleted projects/conversations | Planned |
+| **Auto-purge policy** | Configurable retention period for soft-deleted items before hard-delete | Planned |
+| **Subscription cleanup** | New conversations should only have creator as subscriber. Investigate and fix auto-subscribe behavior | Planned |
 | **Admin desktop-only** | Hide admin panel link on mobile. Admin pages are desktop-only — complex tables and settings don't need mobile optimization | Planned |
 | **Landing hamburger menu** | Replace full top nav with collapsible hamburger menu (☰) on mobile. Expands as side drawer | Planned |
-| **Verbosity control** | User preference (Concise/Normal/Detailed) that controls agent response length via bridge-level skill | Planned |
 | **Claude Code as participant** | Allow Claude Code (via MCP) to participate in conversations as a full agent — read messages, respond, collaborate with other agents directly from the CLI | Planned |
+| **GUI-managed Claude Code** | Admin-only start/stop of a local Claude Code instance from the GUI. Periodically checks subscribed conversations and responds. No API key needed — uses local CLI | Planned |
+| **Claude SDK adapter** | Alternative path: Claude API adapter using `@anthropic-ai/sdk` for users who prefer API-based Claude participation (requires Anthropic API key). Same bridge integration as internal agents | Roadmap |
 
 ## Roadmap
 
@@ -346,5 +348,6 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | v0.6.x | Context optimization — per-agent tool groups (done), meta-tool pattern (2 tools replace 35, ~90% savings), description trimming |
 | v0.7 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
 | v0.8 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
+| v0.8.x | **Claude integration** — Claude SDK adapter (`@anthropic-ai/sdk`), GUI-managed Claude Code instance (admin start/stop, poll loop), Claude Agent SDK exploration |
 | v0.9 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
 | v1.0+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |
