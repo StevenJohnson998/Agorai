@@ -58,9 +58,12 @@ export function createSSERoutes(store: IStore) {
           basePath: bp,
         });
 
-        // Send as SSE event
-        const data = html.replace(/\n/g, "\ndata: ");
+        // Send as SSE event — trim whitespace from EJS output
+        const trimmed = html.trim();
+        const data = trimmed.replace(/\n/g, "\ndata: ");
         res.write(`event: message\ndata: ${data}\n\n`);
+        // Flush for proxy compatibility (Caddy, nginx)
+        (res as any).flush?.();
       } catch {
         // Don't crash SSE on render errors
       }
@@ -69,10 +72,11 @@ export function createSSERoutes(store: IStore) {
     // Subscribe to message events
     store.eventBus?.onMessage(listener);
 
-    // Send keepalive every 30s
+    // Send keepalive every 15s (shorter interval for mobile/proxy compat)
     const keepalive = setInterval(() => {
       res.write(":keepalive\n\n");
-    }, 30000);
+      (res as any).flush?.();
+    }, 15000);
 
     // Cleanup on disconnect
     req.on("close", () => {

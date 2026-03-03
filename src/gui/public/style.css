@@ -27,10 +27,17 @@ textarea {
   min-height: 40px;
 }
 
-/* Prevent layout shift during SSE */
-[sse-swap] {
-  min-height: 0;
+/* SSE connection status dot */
+.sse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background-color 0.3s;
 }
+.sse-connected { background-color: #22c55e; }
+.sse-reconnecting, .sse-connecting { background-color: #eab308; }
+.sse-disconnected { background-color: #ef4444; }
 
 /* Mobile touch targets */
 @media (max-width: 640px) {

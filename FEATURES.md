@@ -320,8 +320,15 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Auto-purge policy** | Configurable retention period for soft-deleted items before hard-delete | Planned |
 | **Mobile responsive** | Touch targets, sidebar toggle, responsive layout | Done |
 | **Mobile SSE bug** | Agent replies don't auto-appear on mobile browsers (need manual refresh). SSE connection likely dropped by mobile Safari/Chrome. Priority fix for demo | Bug |
-| **Participant management** | "+participant" button to add Users or AIs to conversations. Currently subscribers appear unexpectedly | Planned |
+| **Participant management** | "+participant" button to add Users or AIs to conversations. Avatar pills with status dots, add/remove drawer | Done |
 | **Subscription cleanup** | New conversations should only have creator as subscriber. Investigate and fix auto-subscribe behavior | Planned |
+| **Agent health status** | Agents tracked as online/error/offline. Red/green/grey status dots. System messages for unavailable/recovery/join events | Done |
+| **Collaboration tuning** | Collaboration window (decisionDepth × agentCount), anti-impersonation, early consensus stopping via [NO_RESPONSE] | Done |
+| **Debate moderation** | Optional moderator role per conversation. Admin sets preferred moderator or random. Moderator gets synthesis instructions, others defer. Config: `moderation.enabled` + `moderation.preferredModerator` | Planned |
+| **Admin desktop-only** | Hide admin panel link on mobile. Admin pages are desktop-only — complex tables and settings don't need mobile optimization | Planned |
+| **Landing hamburger menu** | Replace full top nav with collapsible hamburger menu (☰) on mobile. Expands as side drawer | Planned |
+| **Verbosity control** | User preference (Concise/Normal/Detailed) that controls agent response length via bridge-level skill | Planned |
+| **Claude Code as participant** | Allow Claude Code (via MCP) to participate in conversations as a full agent — read messages, respond, collaborate with other agents directly from the CLI | Planned |
 
 ## Roadmap
 

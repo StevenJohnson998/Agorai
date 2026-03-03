@@ -1083,6 +1083,17 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   );
   const maxBodySize = bridgeConfig.maxBodySize;
 
+  // Register the system agent for @mention offline whispers
+  const systemAgent = await store.registerAgent({
+    name: "agorai-system",
+    type: "system",
+    capabilities: [],
+    clearanceLevel: "team",
+    apiKeyHash: "internal:agorai-system",
+  });
+  const systemAgentId = systemAgent.id;
+  log.info(`Registered system agent: agorai-system (${systemAgentId})`);
+
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -1217,7 +1228,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   // --- SSE push notification dispatch ---
 
   const eventBusListeners = store.eventBus
-    ? setupSSEDispatch(store)
+    ? setupSSEDispatch(store, systemAgentId)
     : (log.info("Store has no eventBus — SSE push notifications disabled, agents will use polling"), undefined);
 
   const host = bridgeConfig.host;
@@ -1282,14 +1293,14 @@ function removeSession(sessionId: string): void {
 
 // --- SSE push notification dispatch ---
 
-function setupSSEDispatch(store: IStore): {
+function setupSSEDispatch(store: IStore, systemAgentId: string): {
   messageListener: (event: MessageCreatedEvent) => void;
   accessRequestListener: (event: AccessRequestCreatedEvent) => void;
   taskCreatedListener: (event: TaskCreatedEvent) => void;
   taskUpdatedListener: (event: TaskUpdatedEvent) => void;
 } {
   const messageListener = (event: MessageCreatedEvent) => {
-    dispatchMessageNotification(store, event).catch((err) => {
+    dispatchMessageNotification(store, event, systemAgentId).catch((err) => {
       log.error(`SSE dispatch error: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
@@ -1320,7 +1331,7 @@ function setupSSEDispatch(store: IStore): {
   return { messageListener, accessRequestListener, taskCreatedListener, taskUpdatedListener };
 }
 
-async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent): Promise<void> {
+async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent, systemAgentId: string): Promise<void> {
   const { message } = event;
 
   // Get all subscribers + all agents in one batch (avoids N+1 DB calls)
@@ -1329,6 +1340,39 @@ async function dispatchMessageNotification(store: IStore, event: MessageCreatedE
     store.listAgents(),
   ]);
   const agentMap = new Map(allAgents.map((a) => [a.id, a]));
+  const agentByName = new Map(allAgents.map((a) => [a.name.toLowerCase(), a]));
+
+  // @mention offline whisper: if someone mentions an offline agent, whisper the sender
+  if (message.type !== "status" && !message.recipients && message.fromAgent !== systemAgentId) {
+    const mentions = message.content.match(/@([\w-]+)/g);
+    if (mentions) {
+      const offlineNames: string[] = [];
+      const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+      const now = Date.now();
+
+      for (const mention of new Set(mentions)) {
+        const name = mention.slice(1).toLowerCase(); // remove @
+        const agent = agentByName.get(name);
+        if (!agent || agent.id === message.fromAgent) continue;
+
+        const isOffline = agent.status === "error" ||
+          (now - new Date(agent.lastSeenAt).getTime() > OFFLINE_THRESHOLD_MS);
+        if (isOffline) offlineNames.push(agent.name);
+      }
+
+      if (offlineNames.length > 0) {
+        const names = offlineNames.map((n) => `@${n}`).join(", ");
+        const plural = offlineNames.length > 1;
+        await store.sendMessage({
+          conversationId: message.conversationId,
+          fromAgent: systemAgentId,
+          content: `⚠️ ${names} ${plural ? "are" : "is"} currently offline — do not wait for a reply.`,
+          type: "status",
+          recipients: [message.fromAgent],
+        });
+      }
+    }
+  }
 
   log.debug(`SSE dispatch: ${subscribers.length} sub(s), ${agentSessions.size} session group(s)`);
 

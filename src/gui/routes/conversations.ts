@@ -3,7 +3,16 @@
  */
 
 import { Router } from "express";
+import ejs from "ejs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { IStore } from "../../store/interfaces.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const guiSrcDir = __dirname.includes("/dist/")
+  ? __dirname.replace("/dist/gui/routes", "/src/gui")
+  : resolve(__dirname, "..");
+const messageTemplatePath = resolve(guiSrcDir, "views/partials/message.ejs");
 
 export function createConversationRoutes(store: IStore) {
   const router = Router();
@@ -200,6 +209,42 @@ export function createConversationRoutes(store: IStore) {
       return res.redirect(303, envPath + "/c/?toast=Conversation+renamed");
     }
     res.redirect(envPath + "/c/" + conversationId + "?toast=Conversation+renamed");
+  });
+
+  // Catch-up endpoint — fetch messages since a timestamp (for SSE reconnection)
+  router.get("/c/:id/messages-since", async (req, res) => {
+    const user = req.user!;
+    const bp = req.app.get("basePath") || "";
+    const conversationId = req.params.id;
+    const since = req.query.since as string;
+
+    if (!since) {
+      return res.status(400).json({ error: "since parameter is required." });
+    }
+
+    const messages = await store.getMessages(conversationId, user.agentId!, { since });
+
+    // Filter out user's own messages (already rendered client-side)
+    const otherMessages = messages.filter((m) => m.fromAgent !== user.agentId);
+
+    // Get agents for rendering
+    const agents = await store.listAgents();
+    const agentMap = new Map(agents.map((a) => [a.id, a]));
+
+    // Render each message to HTML
+    const rendered = [];
+    for (const message of otherMessages) {
+      const html = await ejs.renderFile(messageTemplatePath, {
+        message,
+        agentMap,
+        user,
+        envPath: bp + "/test",
+        basePath: bp,
+      });
+      rendered.push({ html: html.trim(), createdAt: message.createdAt });
+    }
+
+    res.json({ messages: rendered });
   });
 
   // View a conversation

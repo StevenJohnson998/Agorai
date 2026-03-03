@@ -58,10 +58,8 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
   let lastHeartbeat = Date.now();
   const heartbeatIntervalMs = 30_000;
 
-  // Track agent health status for system messages
+  // Track agent health status (DB-only, no broadcast messages)
   let currentStatus: "online" | "error" = "online";
-  // Track which conversations we've already posted "unavailable" in (avoid spam)
-  const unavailablePosted = new Set<string>();
   let isFirstRun = true;
 
   log.info(`Internal agent "${agentName}" starting (mode: ${mode}, poll: ${pollIntervalMs}ms)`);
@@ -119,7 +117,7 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
       await discoverConversations(store, resolvedAgentId, agentName, subscribedConversations, isFirstRun);
       isFirstRun = false;
 
-      // Helper: process a conversation and handle status transitions
+      // Helper: process a conversation and update DB health status (no broadcast messages)
       const processAndTrack = async (convId: string) => {
         const result = await processConversation(
           store,
@@ -132,38 +130,19 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
           decisionDepth,
         );
 
-        if (result === "error") {
-          // Transition to error status — post system message once per conversation
-          if (currentStatus !== "error") {
-            currentStatus = "error";
-            await store.updateAgentStatus(resolvedAgentId, "error", "API error");
-            log.warn(`Status changed to ERROR for ${agentName}`);
-          }
-          if (!unavailablePosted.has(convId)) {
-            unavailablePosted.add(convId);
-            await store.sendMessage({
-              conversationId: convId,
-              fromAgent: resolvedAgentId,
-              content: `⚠️ ${agentName} is currently unavailable (API error). Messages will be processed when the service recovers.`,
-              type: "status",
-            });
-          }
+        if (result === "error" && currentStatus !== "error") {
+          currentStatus = "error";
+          await store.updateAgentStatus(resolvedAgentId, "error", "API error");
+          log.warn(`Status changed to ERROR for ${agentName}`);
         } else if (result === "ok" && currentStatus === "error") {
-          // Recovered — clear error status, post recovery in conversations that got error messages
           currentStatus = "online";
           await store.updateAgentStatus(resolvedAgentId, "online");
           log.info(`Status recovered to ONLINE for ${agentName}`);
-          for (const errorConvId of unavailablePosted) {
-            await store.sendMessage({
-              conversationId: errorConvId,
-              fromAgent: resolvedAgentId,
-              content: `✅ ${agentName} is back online.`,
-              type: "status",
-            });
-          }
-          unavailablePosted.clear();
         }
       };
+
+      // Track conversations already handled this cycle (avoid double-processing)
+      const processedThisCycle = new Set<string>();
 
       // Process pending conversations from event bus first (instant response)
       if (pendingConversations.size > 0) {
@@ -175,12 +154,14 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
           if (signal?.aborted) break;
           if (!subscribedConversations.has(convId)) continue;
           await processAndTrack(convId);
+          processedThisCycle.add(convId);
         }
       }
 
       // Full poll: process all subscribed conversations (catches anything event bus missed)
       for (const convId of subscribedConversations) {
         if (signal?.aborted) break;
+        if (processedThisCycle.has(convId)) continue;
         await processAndTrack(convId);
       }
     } catch (err) {
@@ -263,10 +244,10 @@ async function processConversation(
 
   if (unreadMessages.length === 0) return "skipped";
 
-  // Filter out own messages
-  const otherMessages = unreadMessages.filter((m) => m.fromAgent !== agentId);
+  // Filter out own messages and status messages (status msgs should not trigger responses)
+  const otherMessages = unreadMessages.filter((m) => m.fromAgent !== agentId && m.type !== "status");
   if (otherMessages.length === 0) {
-    // Only our own messages — mark them read and move on
+    // Only our own messages or status messages — mark them read and move on
     await store.markRead(unreadMessages.map((m) => m.id), agentId);
     return "skipped";
   }

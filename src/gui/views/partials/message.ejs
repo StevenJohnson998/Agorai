@@ -28,14 +28,14 @@
 %>
 <% if (isStatus) { %>
   <!-- System/status message — centered, subtle -->
-  <div class="flex justify-center my-1">
+  <div class="flex justify-center my-1" data-created-at="<%= message.createdAt %>">
     <div class="text-[11px] text-slate-500 bg-slate-900/50 px-3 py-1 rounded-full">
       <%= message.content %>
       <span class="text-slate-600 ml-1"><%= timeStr %></span>
     </div>
   </div>
 <% } else { %>
-  <div class="flex <%= isMe ? 'justify-end' : 'justify-start' %> group">
+  <div class="flex <%= isMe ? 'justify-end' : 'justify-start' %> group" data-created-at="<%= message.createdAt %>">
     <div class="max-w-[92%] sm:max-w-[85%] lg:max-w-[70%] <%= isMe ? 'bg-brand-600/20 border-brand-700/30' : 'bg-slate-800/80 border-slate-700/50' %> border rounded-lg px-3 py-2">
       <!-- Header -->
       <div class="flex items-center gap-2 mb-0.5">
