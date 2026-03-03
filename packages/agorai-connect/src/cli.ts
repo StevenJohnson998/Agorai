@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { setLogLevel } from "./utils.js";
+import { loadInstallMeta } from "./config-paths.js";
 
 const USAGE = `Usage: agorai-connect <command> [options]
 
@@ -37,8 +38,8 @@ Uninstall options:
   --config-path <path>   Claude Desktop config path (default: auto-detect)
 
 Agent options:
-  --bridge <url>         Bridge URL (required)
-  --key <pass-key>       Pass-key for authentication (required)
+  --bridge <url>         Bridge URL (or AGORAI_BRIDGE_URL env var, or saved config)
+  --key <pass-key>       Pass-key (or AGORAI_PASS_KEY env var, or saved config)
   --model <model>        Model name, e.g. mistral:7b (required)
   --endpoint <url>       OpenAI-compatible endpoint (required)
   --api-key <key>        API key for the model endpoint (optional, visible in ps)
@@ -48,8 +49,8 @@ Agent options:
   --poll <ms>            Poll interval in ms (default: 3000)
 
 Doctor options:
-  --bridge <url>         Bridge URL (required)
-  --key <pass-key>       Pass-key for authentication (required)
+  --bridge <url>         Bridge URL (or AGORAI_BRIDGE_URL env var, or saved config)
+  --key <pass-key>       Pass-key (or AGORAI_PASS_KEY env var, or saved config)
   --model <model>        Model name (optional — checks model endpoint if provided)
   --endpoint <url>       Model endpoint (optional)
   --api-key <key>        Model API key (optional)
@@ -207,8 +208,14 @@ async function cmdAgent(args: string[]) {
     },
   });
 
-  if (!values.bridge || !values.key || !values.model || !values.endpoint) {
-    console.error("Error: --bridge, --key, --model, and --endpoint are required.");
+  // Resolve bridge/key: CLI args > env vars > config file
+  const savedConfig = (!values.bridge || !values.key) ? loadInstallMeta() : null;
+  const bridge = values.bridge ?? process.env.AGORAI_BRIDGE_URL ?? savedConfig?.bridge;
+  const key = values.key ?? process.env.AGORAI_PASS_KEY ?? savedConfig?.passKey;
+
+  if (!bridge || !key || !values.model || !values.endpoint) {
+    console.error("Error: --model and --endpoint are required. --bridge and --key are required");
+    console.error("unless set via AGORAI_BRIDGE_URL/AGORAI_PASS_KEY env vars or saved config.");
     console.error("\nExample:");
     console.error("  agorai-connect agent --bridge http://my-vps:3100 --key my-pass-key --model mistral:7b --endpoint http://localhost:11434");
     process.exit(1);
@@ -239,8 +246,8 @@ async function cmdAgent(args: string[]) {
 
   const { runAgent } = await import("./agent.js");
   await runAgent({
-    bridgeUrl: values.bridge,
-    passKey: values.key,
+    bridgeUrl: bridge,
+    passKey: key,
     model: values.model,
     endpoint: values.endpoint,
     apiKey,
@@ -263,132 +270,38 @@ async function cmdDoctor(args: string[]) {
     },
   });
 
-  if (!values.bridge || !values.key) {
+  // Resolve bridge/key: CLI args > env vars > config file
+  const savedConf = (!values.bridge || !values.key) ? loadInstallMeta() : null;
+  const bridge = values.bridge ?? process.env.AGORAI_BRIDGE_URL ?? savedConf?.bridge;
+  const key = values.key ?? process.env.AGORAI_PASS_KEY ?? savedConf?.passKey;
+
+  if (!bridge || !key) {
     console.error("Usage: agorai-connect doctor --bridge <url> --key <pass-key>");
+    console.error("\nYou can also set AGORAI_BRIDGE_URL and AGORAI_PASS_KEY environment variables,");
+    console.error("or run 'agorai-connect setup' first to save defaults.");
     process.exit(1);
   }
 
-  const bridgeUrl = values.bridge;
-  const passKey = values.key;
-
-  let ok = true;
-  const pass = (msg: string) => console.log(`  [PASS] ${msg}`);
-  const fail = (msg: string) => { console.log(`  [FAIL] ${msg}`); ok = false; };
-  const info = (msg: string) => console.log(`  [INFO] ${msg}`);
-
-  console.log("\nagorai-connect doctor\n");
-
-  // 1. Node.js version
-  const nodeVersion = process.versions.node;
-  const major = parseInt(nodeVersion.split(".")[0], 10);
-  if (major >= 18) {
-    pass(`Node.js ${nodeVersion} (>= 18 required)`);
-  } else {
-    fail(`Node.js ${nodeVersion} — version 18+ required`);
-  }
-
-  // 2. Bridge health
-  const healthUrl = new URL("/health", bridgeUrl).href;
-  try {
-    const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
-    if (resp.ok) {
-      const data = await resp.json() as { version?: string };
-      pass(`Bridge reachable at ${healthUrl} (v${data.version ?? "?"})`);
+  // Resolve API key
+  let apiKey = values["api-key"];
+  if (values["api-key-env"]) {
+    const envVal = process.env[values["api-key-env"]];
+    if (envVal) {
+      apiKey = envVal;
     } else {
-      fail(`Bridge health returned HTTP ${resp.status}`);
+      console.error(`Error: environment variable ${values["api-key-env"]} is not set`);
+      process.exit(1);
     }
-  } catch (err) {
-    fail(`Bridge unreachable at ${healthUrl} — ${err instanceof Error ? err.message : err}`);
   }
 
-  // 3. Auth check — initialize MCP session
-  try {
-    const { McpClient } = await import("./mcp-client.js");
-    const client = new McpClient({ bridgeUrl, passKey });
-    const initResult = await client.initialize();
-    const srvName = (initResult.serverInfo as Record<string, unknown>).name ?? "?";
-    const srvVersion = (initResult.serverInfo as Record<string, unknown>).version ?? "?";
-    pass(`Auth OK — session established (server: ${srvName} v${srvVersion})`);
-
-    // 3b. Check agent registration
-    try {
-      const result = await client.callTool("get_status", {});
-      const text = result.content?.[0]?.text;
-      if (text) {
-        const status = JSON.parse(text);
-        pass(`Status: ${status.projects} project(s), ${status.agents?.online ?? "?"} agent(s) online, ${status.unread_messages} unread`);
-      }
-    } catch {
-      info("Could not fetch bridge status (non-critical)");
-    }
-
-    await client.close();
-  } catch (err) {
-    fail(`Auth failed — ${err instanceof Error ? err.message : err}`);
-  }
-
-  // 4. Model endpoint (optional)
-  if (values.model && values.endpoint) {
-    let apiKey = values["api-key"];
-    if (values["api-key-env"]) {
-      const envVal = process.env[values["api-key-env"]];
-      if (envVal) {
-        apiKey = envVal;
-      } else {
-        fail(`Environment variable ${values["api-key-env"]} is not set`);
-      }
-    }
-
-    const modelsUrl = new URL(
-      values.endpoint.includes("/v1") ? "/v1/models" : "/api/tags",
-      values.endpoint,
-    ).href;
-
-    try {
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const resp = await fetch(modelsUrl, {
-        headers,
-        signal: AbortSignal.timeout(10000),
-      });
-      if (resp.ok) {
-        pass(`Model endpoint reachable at ${values.endpoint}`);
-      } else {
-        fail(`Model endpoint returned HTTP ${resp.status} at ${modelsUrl}`);
-      }
-    } catch (err) {
-      fail(`Model endpoint unreachable at ${values.endpoint} — ${err instanceof Error ? err.message : err}`);
-    }
-
-    // Quick model call test
-    if (ok && apiKey !== undefined) {
-      try {
-        const { callModel } = await import("./model-caller.js");
-        const response = await callModel(
-          [{ role: "user", content: "Say 'hello' in one word." }],
-          { model: values.model, endpoint: values.endpoint, apiKey, timeoutMs: 30_000 },
-        );
-        if (response && response.content.length > 0) {
-          pass(`Model ${values.model} responds ("${response.content.slice(0, 50).trim()}")`);
-        } else {
-          fail(`Model ${values.model} returned empty response`);
-        }
-      } catch (err) {
-        fail(`Model ${values.model} call failed — ${err instanceof Error ? err.message : err}`);
-      }
-    }
-  } else if (values.model || values.endpoint) {
-    info("Both --model and --endpoint needed for model check (skipping)");
-  }
-
-  // Summary
-  console.log("");
-  if (ok) {
-    console.log("All checks passed.");
-  } else {
-    console.log("Some checks failed. Fix the issues above and re-run.");
-    process.exit(1);
-  }
+  const { runDoctor } = await import("./doctor.js");
+  await runDoctor({
+    bridgeUrl: bridge,
+    passKey: key,
+    model: values.model,
+    endpoint: values.endpoint,
+    apiKey,
+  });
 }
 
 main().catch((err) => {

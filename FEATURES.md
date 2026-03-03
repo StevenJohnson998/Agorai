@@ -26,6 +26,20 @@
 | **SSE notifications** | Subscribers notified of new access requests in real-time | Done |
 | **Event bus** | `access-request:created` event on StoreEventBus | Done |
 
+## agorai-connect (v0.0.8)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Enhanced doctor** | Granular network diagnostics: DNS, TCP, HTTP, TLS, with actionable suggestions | Done |
+| **Config defaults** | Setup saves bridge/key to `~/.agorai-connect.json`, reused by agent/doctor | Done |
+| **Env var support** | `AGORAI_BRIDGE_URL` / `AGORAI_PASS_KEY` env vars (CLI > env > config priority) | Done |
+| **Remote URL detection** | Setup warns about remote bridges, suggests SSH tunnel / reverse proxy | Done |
+| **URL scheme help** | Bare `domain:port` auto-prepends `https://` | Done |
+| **HTTP security warning** | Warns on plain HTTP to non-localhost, asks confirmation in interactive mode | Done |
+| **Setup failure messages** | Actionable error messages when bridge health check fails + doctor suggestion | Done |
+| **Networking guide** | `docs/networking.md`: SSH tunnels, reverse proxy, Docker, troubleshooting | Done |
+| **`expose` command** | Built-in lightweight HTTPS relay for remote bridge access | Planned |
+
 ## agorai-connect (v0.0.7)
 
 | Feature | Description | Status |

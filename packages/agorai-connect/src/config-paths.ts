@@ -5,7 +5,7 @@
 
 import { platform, homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync, chmodSync } from "node:fs";
 
 export type Platform = "windows" | "macos" | "linux";
 export type SetupTarget = "claude-desktop" | "claude-code";
@@ -201,25 +201,47 @@ function installMetaPath(): string {
   return join(homedir(), INSTALL_META_FILE);
 }
 
+export interface InstallMeta {
+  configPath: string;
+  target?: SetupTarget;
+  bridge?: string;
+  passKey?: string;
+}
+
 /**
- * Save the config path used during setup so uninstall can find it.
+ * Save the config path and connection defaults used during setup.
  */
-export function saveInstallMeta(configPath: string, target?: SetupTarget): void {
+export function saveInstallMeta(configPath: string, target?: SetupTarget, bridge?: string, passKey?: string): void {
   try {
-    writeFileSync(installMetaPath(), JSON.stringify({ configPath, target: target ?? "claude-desktop" }, null, 2) + "\n");
+    const meta: Record<string, unknown> = {
+      configPath,
+      target: target ?? "claude-desktop",
+    };
+    if (bridge) meta.bridge = bridge;
+    if (passKey) meta.passKey = passKey;
+    const filePath = installMetaPath();
+    writeFileSync(filePath, JSON.stringify(meta, null, 2) + "\n", { mode: 0o600 });
+    // Ensure permissions even if file pre-existed with looser perms
+    try { chmodSync(filePath, 0o600); } catch { /* best effort */ }
   } catch {
     // Non-critical — uninstall will fall back to detection
   }
 }
 
 /**
- * Load the config path saved during setup. Returns null if not found.
+ * Load metadata saved during setup. Returns null if not found.
+ * Includes bridge URL and pass-key if saved (used as defaults by agent/doctor).
  */
-export function loadInstallMeta(): { configPath: string; target?: SetupTarget } | null {
+export function loadInstallMeta(): InstallMeta | null {
   try {
     const data = JSON.parse(readFileSync(installMetaPath(), "utf-8"));
     if (data.configPath && typeof data.configPath === "string") {
-      return { configPath: data.configPath, target: data.target };
+      return {
+        configPath: data.configPath,
+        target: data.target,
+        bridge: data.bridge,
+        passKey: data.passKey,
+      };
     }
   } catch {
     // File doesn't exist or is corrupted

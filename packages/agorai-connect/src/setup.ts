@@ -120,7 +120,41 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
 
   // Prompt for bridge details (use CLI args if provided)
   const defaultAgentName = isClaudeCode ? "claude-code" : "claude-desktop";
-  const bridgeUrl = options.bridge ?? await promptDefault("Bridge URL (default: http://localhost:3100)", "http://localhost:3100");
+  let rawBridgeUrl = options.bridge ?? await promptDefault("Bridge URL (default: http://localhost:3100)", "http://localhost:3100");
+
+  // URL scheme help: auto-prepend https:// if bare domain:port (no scheme)
+  if (rawBridgeUrl && !rawBridgeUrl.includes("://")) {
+    rawBridgeUrl = `https://${rawBridgeUrl}`;
+    console.log(`No scheme provided — using: ${rawBridgeUrl}`);
+  }
+  const bridgeUrl = rawBridgeUrl;
+
+  // Remote URL detection + security warnings
+  try {
+    const parsed = new URL(bridgeUrl);
+    const isLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+    const isPlainHttp = parsed.protocol === "http:";
+
+    if (!isLocal) {
+      console.log("\nRemote bridge detected. Make sure it's reachable (reverse proxy or SSH tunnel).");
+    }
+
+    if (!isLocal && isPlainHttp) {
+      console.log("Warning: unencrypted HTTP connection to a remote bridge.");
+      console.log("Recommended: use HTTPS (reverse proxy) or an SSH tunnel.");
+      // In interactive mode, ask for confirmation
+      if (!options.bridge) {
+        const proceed = await prompt("Continue with plain HTTP? [y/N]: ");
+        if (proceed.trim().toLowerCase() !== "y") {
+          closePrompt();
+          process.exit(0);
+        }
+      }
+    }
+  } catch {
+    // Invalid URL — will fail at health check
+  }
+
   const agentName = options.agent ?? await promptDefault(`Agent name (default: ${defaultAgentName})`, defaultAgentName);
 
   let passKey: string;
@@ -140,6 +174,25 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
   const health = await checkHealth(bridgeUrl);
   if (!health.ok) {
     console.error(`Cannot reach bridge: ${health.error}`);
+    console.error("");
+    // Actionable failure messages
+    const errMsg = health.error ?? "";
+    if (errMsg.includes("ECONNREFUSED")) {
+      console.error("Possible causes:");
+      console.error("  - The bridge is not running (start it with: npx agorai serve)");
+      console.error("  - Wrong port number");
+      console.error("  - If remote: SSH tunnel is not active");
+    } else if (errMsg.includes("ENOTFOUND")) {
+      console.error("Possible causes:");
+      console.error("  - The hostname does not exist (check for typos)");
+      console.error("  - DNS resolution failed");
+    } else if (errMsg.includes("timeout") || errMsg.includes("ETIMEDOUT")) {
+      console.error("Possible causes:");
+      console.error("  - Firewall blocking the connection");
+      console.error("  - If remote: use an SSH tunnel instead of direct access");
+    }
+    console.error("\nRun 'agorai-connect doctor' for detailed diagnostics.");
+
     // In non-interactive mode (all args provided), just warn and continue
     if (!options.bridge || !options.key) {
       const proceed = await prompt("Continue anyway? [y/N]: ");
@@ -189,8 +242,8 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
   }
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 
-  // Save install metadata so uninstall knows which config to modify
-  saveInstallMeta(configPath, target);
+  // Save install metadata (config path, target, bridge, key) for reuse by agent/doctor
+  saveInstallMeta(configPath, target, bridgeUrl, passKey);
 
   const clientName = isClaudeCode ? "Claude Code" : "Claude Desktop";
   console.log(`\nConfig written to: ${configPath}`);

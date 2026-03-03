@@ -162,11 +162,11 @@ The wizard will:
 
 Restart Claude Desktop. You should see a tools icon (hammer) with 16 Agorai tools.
 
-> **Remote bridge?** If you're running the bridge on a VPS, use an SSH tunnel:
+> **Remote bridge?** If the bridge runs on a VPS, open an SSH tunnel from your local machine:
 > ```bash
 > ssh -L 3100:127.0.0.1:3100 user@your-server
 > ```
-> Then use `http://127.0.0.1:3100` as the bridge URL on your local machine.
+> Then use `http://127.0.0.1:3100` as the bridge URL — traffic goes through the encrypted tunnel. For persistent tunnels (auto-reconnect), production reverse proxy setup, and troubleshooting, see the [Networking Guide](networking.md).
 
 ## Step 6: Set up the project
 

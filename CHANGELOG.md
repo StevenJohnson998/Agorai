@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-03-03 — agorai-connect v0.0.8 (Remote Connectivity MVP)
+
+### Added
+- **Enhanced doctor command**: Extracted from `cli.ts` into `src/doctor.ts` with granular network diagnostics:
+  - DNS resolution check (isolates bad domain from port issues)
+  - TCP port reachability check (distinguishes ECONNREFUSED from ETIMEDOUT)
+  - HTTP health with better error messages (TLS errors, 502/503 proxy detection)
+  - Actionable suggestions based on failure pattern
+  - Remote URL detection and plain HTTP security warnings
+  - Link to networking guide in failure output
+- **Config file defaults**: `setup` now saves bridge URL and pass-key to `~/.agorai-connect.json`. `agent` and `doctor` commands fall back to saved config when `--bridge`/`--key` are omitted
+- **Environment variable support**: `AGORAI_BRIDGE_URL` and `AGORAI_PASS_KEY` env vars (priority: CLI args > env vars > config file)
+- **Setup wizard improvements**:
+  - Remote URL detection with SSH tunnel / reverse proxy guidance
+  - URL scheme auto-prepend (bare `domain:port` → `https://domain:port`)
+  - Plain HTTP security warning with confirmation prompt for remote bridges
+  - Actionable failure messages when bridge health check fails (ECONNREFUSED, ENOTFOUND, timeout)
+  - "Run `agorai-connect doctor`" suggestion on failure
+- **Networking guide**: New `docs/networking.md` covering SSH tunnels (basic + persistent), reverse proxy (Caddy, nginx), Docker, and troubleshooting
+- **Documentation updates**: Updated quickstart guides, INSTALL.md, tutorial, and README files with remote connectivity guidance
+
+### Changed
+- Doctor is now a separate module (`src/doctor.ts`) exported from `agorai-connect` API
+- `saveInstallMeta()` / `loadInstallMeta()` now include bridge URL and pass-key fields
+
+### Roadmap
+- `agorai-connect expose` command — built-in lightweight HTTPS relay for remote bridge access without SSH tunnels or external proxies (future)
+
 ## 2026-03-02 — v0.6.0 (post-release fixes)
 
 ### Fixed

@@ -149,7 +149,9 @@ Where to find the config file:
 
 > **Important**: Each agent's key must match one of the keys in your server's `agorai.config.json`.
 
-> **Remote bridge?** If the bridge is on a different machine, use its IP or hostname in the URL. You can also use an SSH tunnel: `ssh -L 3100:127.0.0.1:3100 user@your-server` and keep `http://127.0.0.1:3100` in the config.
+> **Remote bridge?** If the bridge is on a different machine, use an SSH tunnel or reverse proxy. See the [Networking Guide](docs/networking.md) for detailed setup instructions.
+>
+> Quick SSH tunnel: `ssh -L 3100:127.0.0.1:3100 user@your-server` — then keep `http://127.0.0.1:3100` in the config.
 
 #### Option C: Connect a "dumb" model (Ollama, Groq, Mistral, etc.)
 
@@ -230,6 +232,25 @@ Bonus: works from your phone too — Claude Code on a VPS confirming the cross-a
 
 ![Cross-agent communication verified from a mobile phone](docs/screenshots/04-mobile-cross-agent.png)
 
+## Remote deployment
+
+If the bridge runs on a VPS or remote server and agents run on your local machine, you need a secure connection between them.
+
+**SSH tunnel** (simplest):
+```bash
+ssh -L 3100:127.0.0.1:3100 user@your-server
+```
+Then use `http://127.0.0.1:3100` as the bridge URL everywhere. The tunnel encrypts all traffic.
+
+**Reverse proxy** (production):
+Put Caddy, nginx, or Traefik in front of the bridge with TLS. Then use `https://bridge.example.com` as the bridge URL. Make sure to disable response buffering for SSE support.
+
+**Diagnostics**: Run `npx agorai-connect doctor` to check connectivity step by step — it tests DNS, TCP port, HTTP health, and auth separately.
+
+**Config defaults**: After running `agorai-connect setup`, the bridge URL and pass-key are saved locally. Subsequent `agent` and `doctor` commands can omit `--bridge` and `--key`. You can also use `AGORAI_BRIDGE_URL` and `AGORAI_PASS_KEY` environment variables.
+
+See the full [Networking Guide](docs/networking.md) for SSH persistence, proxy examples, Docker tips, and troubleshooting.
+
 ## Troubleshooting
 
 **Claude Desktop doesn't show the tools icon:**
@@ -242,8 +263,9 @@ Bonus: works from your phone too — Claude Code on a VPS confirming the cross-a
 
 **Connection refused:**
 - Is the bridge running? (`npx agorai serve`)
-- If remote: is the SSH tunnel active?
+- If remote: is the SSH tunnel active? (`curl http://127.0.0.1:3100/health` on your local machine)
 - Is the port correct? (default: 3100)
+- Run `npx agorai-connect doctor` for detailed diagnostics
 
 **Windows: scripts disabled:**
 - Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` in PowerShell

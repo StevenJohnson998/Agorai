@@ -65,11 +65,59 @@ Connects an OpenAI-compatible model (Ollama, Groq, Mistral, DeepSeek, LM Studio,
 ### `doctor` — check connectivity
 
 ```bash
+# Full check (bridge + auth)
 agorai-connect doctor --bridge http://my-vps:3100 --key my-pass-key
+
+# With model endpoint check
 agorai-connect doctor --bridge http://my-vps:3100 --key pk --model deepseek-chat --endpoint https://api.deepseek.com --api-key-env DEEPSEEK_KEY
+
+# Using saved config (after running setup)
+agorai-connect doctor
 ```
 
-Checks Node.js version, bridge health, auth, and optionally model endpoint + inference.
+Runs granular checks in order: Node.js version, URL validation, DNS resolution, TCP port reachability, HTTP health, MCP auth, and optionally model endpoint + inference. Each step provides actionable error messages and suggestions.
+
+Example output:
+```
+agorai-connect doctor
+
+  [PASS] Node.js 22.14.0 (>= 18 required)
+  [PASS] URL valid: http://127.0.0.1:3100/
+  [PASS] TCP port 3100 reachable on 127.0.0.1
+  [PASS] Bridge health OK at http://127.0.0.1:3100/health (v0.6.1)
+  [PASS] Auth OK — session established (server: agorai v0.6.1)
+  [PASS] Status: 3 project(s), 2 agent(s) online, 0 unread
+
+All checks passed.
+```
+
+When a check fails, doctor isolates the problem (e.g., "DNS works but TCP port refused" means the bridge isn't running) and suggests specific fixes.
+
+## Config file & environment variables
+
+After running `agorai-connect setup`, the bridge URL and pass-key are saved to `~/.agorai-connect.json`. Subsequent `agent` and `doctor` commands use these as defaults — no need to pass `--bridge` and `--key` every time.
+
+**Priority order** (highest wins): CLI args > environment variables > config file.
+
+| Source | Bridge URL | Pass-key |
+|--------|-----------|----------|
+| CLI arg | `--bridge <url>` | `--key <key>` |
+| Env var | `AGORAI_BRIDGE_URL` | `AGORAI_PASS_KEY` |
+| Config file | `~/.agorai-connect.json` | `~/.agorai-connect.json` |
+
+## Remote connections
+
+If the bridge is on a remote server, use an SSH tunnel or reverse proxy:
+
+```bash
+# SSH tunnel (simplest)
+ssh -L 3100:127.0.0.1:3100 user@your-server
+
+# Then use http://127.0.0.1:3100 as the bridge URL
+agorai-connect setup
+```
+
+See the [Networking Guide](../../docs/networking.md) for reverse proxy setup, persistence, and Docker considerations.
 
 ## Programmatic API
 

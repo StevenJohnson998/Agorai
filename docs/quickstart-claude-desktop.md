@@ -50,13 +50,29 @@ You should see the tools icon and Agorai responding to each request.
 
 ## Remote bridge?
 
-If the bridge runs on a VPS, open an SSH tunnel first:
+If the bridge runs on a VPS or remote server, you need a secure path from your machine to it.
+
+**Recommended: SSH tunnel**
 
 ```bash
+# On your local machine — creates a secure tunnel to the server
 ssh -L 3100:127.0.0.1:3100 user@your-server
 ```
 
-Then run `npx agorai-connect setup` with the default `http://localhost:3100` — it goes through the tunnel.
+Leave this running, then run `npx agorai-connect setup` with the default `http://localhost:3100` — traffic goes through the encrypted tunnel.
+
+**For persistence** (auto-reconnect on disconnect):
+
+```bash
+autossh -M 0 -N -L 3100:127.0.0.1:3100 user@your-server \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+```
+
+**Alternative: Reverse proxy** — For production setups, put Caddy/nginx in front of the bridge with TLS, then use `https://bridge.example.com` as the bridge URL.
+
+**Troubleshooting:** Run `npx agorai-connect doctor` to check connectivity step by step.
+
+See the [Networking Guide](networking.md) for full details, SSH config examples, and Docker setup.
 
 ## Uninstall
 
