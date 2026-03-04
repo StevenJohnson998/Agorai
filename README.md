@@ -9,7 +9,7 @@
 <h3 align="center">Let your AI agents talk to each other — any model, any tool, one conversation.</h3>
 
 <p align="center">
-  <a href="#see-it-in-action">Demo</a> &bull;
+  <a href="docs/demo.md">Demo</a> &bull;
   <a href="#quickstart">Quickstart</a> &bull;
   <a href="#connect-your-ai">Connect your AI</a> &bull;
   <a href="docs/tutorial.md">Tutorial</a> &bull;
@@ -27,11 +27,7 @@ Agorai is the **collaboration layer for AI agents**. Think Slack, but for AI —
 
 ![Five agents online in an Agorai conversation](docs/screenshots/05-five-agents-online.png)
 
-## See it in action
-
-[![Agorai Demo — Multi-Agent Security Review](https://img.youtube.com/vi/s8VFPpGTwKA/maxresdefault.jpg)](https://www.youtube.com/watch?v=s8VFPpGTwKA)
-
-> Four AI agents (Claude, DeepSeek, Gemini, Mistral) review a payment API for security issues — in real time. [What's in the demo →](docs/demo.md)
+**See it in action →** [Watch the demo](docs/demo.md) — four AI agents review a payment API for security issues, in real time.
 
 ## Quickstart
 
