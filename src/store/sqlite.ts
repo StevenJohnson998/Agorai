@@ -15,6 +15,9 @@ import type {
   AgentHighWaterMark,
   Project,
   CreateProject,
+  ProjectMember,
+  ProjectRole,
+  AccessMode,
   MemoryEntry,
   CreateMemoryEntry,
   MemoryFilters,
@@ -96,6 +99,16 @@ export class SqliteStore implements IStore {
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS project_members (
+        project_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, agent_id),
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (agent_id) REFERENCES agents(id)
       );
 
       CREATE TABLE IF NOT EXISTS project_memory (
@@ -335,8 +348,67 @@ export class SqliteStore implements IStore {
       this.db.exec("ALTER TABLE agents ADD COLUMN status_message TEXT");
     }
 
+    // Add access_mode to projects
+    if (!projColNames.has("access_mode")) {
+      this.db.exec("ALTER TABLE projects ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'visible'");
+    }
+
+    // Add access_mode to conversations
+    const convCols = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
+    const convColNames = new Set(convCols.map((c) => c.name));
+    if (!convColNames.has("access_mode")) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'visible'");
+    }
+
+    // Ensure project_members table exists (for existing DBs)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS project_members (
+        project_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, agent_id),
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (agent_id) REFERENCES agents(id)
+      );
+    `);
+
+    // Backfill: add project creators as owners if not already members
+    this.backfillProjectMembers();
+
     // Migrate instructions → skills
     this.migrateInstructionsToSkills();
+  }
+
+  private backfillProjectMembers(): void {
+    const ts = now();
+    // Add project creators as owners
+    const projects = this.db.prepare(
+      "SELECT id, created_by FROM projects WHERE id NOT IN (SELECT project_id FROM project_members)"
+    ).all() as { id: string; created_by: string }[];
+
+    for (const proj of projects) {
+      this.db.prepare(
+        "INSERT OR IGNORE INTO project_members (project_id, agent_id, role, joined_at) VALUES (?, ?, 'owner', ?)"
+      ).run(proj.id, proj.created_by, ts);
+    }
+
+    // Add agents subscribed to conversations as members (preserves current behavior)
+    const subscribers = this.db.prepare(`
+      SELECT DISTINCT c.project_id, ca.agent_id
+      FROM conversation_agents ca
+      JOIN conversations c ON ca.conversation_id = c.id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM project_members pm
+        WHERE pm.project_id = c.project_id AND pm.agent_id = ca.agent_id
+      )
+    `).all() as { project_id: string; agent_id: string }[];
+
+    for (const sub of subscribers) {
+      this.db.prepare(
+        "INSERT OR IGNORE INTO project_members (project_id, agent_id, role, joined_at) VALUES (?, ?, 'member', ?)"
+      ).run(sub.project_id, sub.agent_id, ts);
+    }
   }
 
   private migrateInstructionsToSkills(): void {
@@ -561,10 +633,16 @@ export class SqliteStore implements IStore {
     const id = randomUUID();
     const ts = now();
     const confMode = project.confidentialityMode ?? "normal";
+    const accessMode = project.accessMode ?? "visible";
     this.db.prepare(`
-      INSERT INTO projects (id, name, description, visibility, confidentiality_mode, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, project.name, project.description ?? null, project.visibility ?? "team", confMode, project.createdBy, ts, ts);
+      INSERT INTO projects (id, name, description, visibility, confidentiality_mode, access_mode, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, project.name, project.description ?? null, project.visibility ?? "team", confMode, accessMode, project.createdBy, ts, ts);
+
+    // Auto-add creator as project owner
+    this.db.prepare(
+      "INSERT INTO project_members (project_id, agent_id, role, joined_at) VALUES (?, ?, 'owner', ?)"
+    ).run(id, project.createdBy, ts);
 
     return {
       id,
@@ -572,6 +650,7 @@ export class SqliteStore implements IStore {
       description: project.description ?? null,
       visibility: project.visibility ?? "team",
       confidentialityMode: confMode,
+      accessMode,
       createdBy: project.createdBy,
       createdAt: ts,
       updatedAt: ts,
@@ -591,12 +670,23 @@ export class SqliteStore implements IStore {
 
   async listProjects(agentId: string): Promise<Project[]> {
     const clearance = this.getAgentClearance(agentId);
+    const maxVis = visibilityToInt(clearance);
+    const isHuman = this.isHumanAgentSync(agentId);
+
     const rows = this.db.prepare(`
       SELECT * FROM projects WHERE status != 'deleted' ORDER BY updated_at DESC
     `).all() as Record<string, unknown>[];
-    const maxVis = visibilityToInt(clearance);
+
     return rows
       .filter((r) => visibilityToInt(r.visibility as VisibilityLevel) <= maxVis)
+      .filter((r) => {
+        // Humans bypass access_mode filtering
+        if (isHuman) return true;
+        // Visible projects: shown to all (with clearance)
+        if ((r.access_mode as string) !== "hidden") return true;
+        // Hidden projects: only shown to members
+        return this.isMemberSync(r.id as string, agentId);
+      })
       .map((r) => this.rowToProject(r));
   }
 
@@ -619,6 +709,89 @@ export class SqliteStore implements IStore {
     `).run(name, now, id);
   }
 
+  // --- Project Members ---
+
+  private isMemberSync(projectId: string, agentId: string): boolean {
+    const row = this.db.prepare(
+      "SELECT 1 FROM project_members WHERE project_id = ? AND agent_id = ?"
+    ).get(projectId, agentId);
+    return row !== undefined;
+  }
+
+  private isHumanAgentSync(agentId: string): boolean {
+    const row = this.db.prepare("SELECT type FROM agents WHERE id = ?").get(agentId) as
+      | { type: string }
+      | undefined;
+    return row?.type === "human";
+  }
+
+  async isHumanAgent(agentId: string): Promise<boolean> {
+    return this.isHumanAgentSync(agentId);
+  }
+
+  async addMember(projectId: string, agentId: string, role?: ProjectRole): Promise<ProjectMember> {
+    const ts = now();
+    this.db.prepare(`
+      INSERT INTO project_members (project_id, agent_id, role, joined_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (project_id, agent_id) DO UPDATE SET role = excluded.role
+    `).run(projectId, agentId, role ?? "member", ts);
+
+    // Re-read to get actual joined_at (upsert may have kept original)
+    const row = this.db.prepare(
+      "SELECT * FROM project_members WHERE project_id = ? AND agent_id = ?"
+    ).get(projectId, agentId) as Record<string, unknown>;
+
+    return {
+      projectId: row.project_id as string,
+      agentId: row.agent_id as string,
+      role: row.role as ProjectRole,
+      joinedAt: row.joined_at as string,
+    };
+  }
+
+  async removeMember(projectId: string, agentId: string): Promise<boolean> {
+    const result = this.db.prepare(
+      "DELETE FROM project_members WHERE project_id = ? AND agent_id = ?"
+    ).run(projectId, agentId);
+
+    if (result.changes > 0) {
+      // Unsubscribe from all project conversations
+      const convIds = this.db.prepare(
+        "SELECT id FROM conversations WHERE project_id = ?"
+      ).all(projectId) as { id: string }[];
+
+      for (const { id } of convIds) {
+        this.db.prepare(
+          "DELETE FROM conversation_agents WHERE conversation_id = ? AND agent_id = ?"
+        ).run(id, agentId);
+        // Cleanup conversation-scoped agent memory
+        this.db.prepare(
+          "DELETE FROM agent_memory WHERE agent_id = ? AND scope = 'conversation' AND scope_id = ?"
+        ).run(agentId, id);
+      }
+    }
+
+    return result.changes > 0;
+  }
+
+  async listMembers(projectId: string): Promise<ProjectMember[]> {
+    const rows = this.db.prepare(
+      "SELECT * FROM project_members WHERE project_id = ? ORDER BY joined_at ASC"
+    ).all(projectId) as Record<string, unknown>[];
+
+    return rows.map((r) => ({
+      projectId: r.project_id as string,
+      agentId: r.agent_id as string,
+      role: r.role as ProjectRole,
+      joinedAt: r.joined_at as string,
+    }));
+  }
+
+  async isMember(projectId: string, agentId: string): Promise<boolean> {
+    return this.isMemberSync(projectId, agentId);
+  }
+
   private rowToProject(row: Record<string, unknown>): Project {
     return {
       id: row.id as string,
@@ -626,6 +799,7 @@ export class SqliteStore implements IStore {
       description: row.description as string | null,
       visibility: row.visibility as VisibilityLevel,
       confidentialityMode: (row.confidentiality_mode as ConfidentialityMode) ?? "normal",
+      accessMode: (row.access_mode as AccessMode) ?? "visible",
       createdBy: row.created_by as string,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
@@ -734,10 +908,11 @@ export class SqliteStore implements IStore {
   async createConversation(conv: CreateConversation): Promise<Conversation> {
     const id = randomUUID();
     const ts = now();
+    const accessMode = conv.accessMode ?? "visible";
     this.db.prepare(`
-      INSERT INTO conversations (id, project_id, title, status, default_visibility, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
-    `).run(id, conv.projectId, conv.title, conv.defaultVisibility ?? "team", conv.createdBy, ts, ts);
+      INSERT INTO conversations (id, project_id, title, status, default_visibility, access_mode, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+    `).run(id, conv.projectId, conv.title, conv.defaultVisibility ?? "team", accessMode, conv.createdBy, ts, ts);
 
     return {
       id,
@@ -745,6 +920,7 @@ export class SqliteStore implements IStore {
       title: conv.title,
       status: "active",
       defaultVisibility: conv.defaultVisibility ?? "team",
+      accessMode,
       createdBy: conv.createdBy,
       createdAt: ts,
       updatedAt: ts,
@@ -761,11 +937,25 @@ export class SqliteStore implements IStore {
   async listConversations(projectId: string, agentId: string): Promise<Conversation[]> {
     const clearance = this.getAgentClearance(agentId);
     const maxVis = visibilityToInt(clearance);
+    const isHuman = this.isHumanAgentSync(agentId);
+
     const rows = this.db.prepare(`
       SELECT * FROM conversations WHERE project_id = ? AND status != 'deleted' ORDER BY updated_at DESC
     `).all(projectId) as Record<string, unknown>[];
+
     return rows
       .filter((r) => visibilityToInt(r.default_visibility as VisibilityLevel) <= maxVis)
+      .filter((r) => {
+        // Humans bypass access_mode filtering
+        if (isHuman) return true;
+        // Visible conversations: shown to all (with clearance)
+        if ((r.access_mode as string) !== "hidden") return true;
+        // Hidden conversations: only shown to subscribers
+        const sub = this.db.prepare(
+          "SELECT 1 FROM conversation_agents WHERE conversation_id = ? AND agent_id = ?"
+        ).get(r.id as string, agentId);
+        return sub !== undefined;
+      })
       .map((r) => this.rowToConversation(r));
   }
 
@@ -790,6 +980,7 @@ export class SqliteStore implements IStore {
       title: row.title as string,
       status: row.status as string,
       defaultVisibility: row.default_visibility as VisibilityLevel,
+      accessMode: (row.access_mode as AccessMode) ?? "visible",
       createdBy: row.created_by as string,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,

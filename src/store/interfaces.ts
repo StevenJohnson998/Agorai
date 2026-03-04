@@ -13,6 +13,8 @@ import type {
   AgentHighWaterMark,
   Project,
   CreateProject,
+  ProjectMember,
+  ProjectRole,
   MemoryEntry,
   CreateMemoryEntry,
   MemoryFilters,
@@ -64,6 +66,13 @@ export interface IStore {
   listProjects(agentId: string): Promise<Project[]>;
   deleteProject(id: string): Promise<void>;
   renameProject(id: string, name: string): Promise<void>;
+
+  // --- Project Members ---
+  addMember(projectId: string, agentId: string, role?: ProjectRole): Promise<ProjectMember>;
+  removeMember(projectId: string, agentId: string): Promise<boolean>;
+  listMembers(projectId: string): Promise<ProjectMember[]>;
+  isMember(projectId: string, agentId: string): Promise<boolean>;
+  isHumanAgent(agentId: string): Promise<boolean>;
 
   // --- Project Memory (filtered by agent clearance) ---
   setMemory(entry: CreateMemoryEntry): Promise<MemoryEntry>;

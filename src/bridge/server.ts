@@ -63,6 +63,9 @@ import {
   SetAgentMemorySchema,
   GetAgentMemorySchema,
   DeleteAgentMemorySchema,
+  AddMemberSchema,
+  RemoveMemberSchema,
+  ListMembersSchema,
 } from "./tools.js";
 
 const log = createLogger("bridge");
@@ -153,6 +156,9 @@ export const TOOL_GROUPS: Record<string, string[]> = {
   ],
   access: [
     "list_access_requests", "respond_to_access_request", "get_my_access_requests",
+  ],
+  members: [
+    "add_member", "remove_member", "list_members",
   ],
 };
 
@@ -253,6 +259,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         description: args.description,
         visibility: args.visibility,
         confidentialityMode: args.confidentiality_mode,
+        accessMode: args.access_mode,
         createdBy: agentId,
       });
       return { content: [{ type: "text" as const, text: JSON.stringify(project, null, 2) }] };
@@ -338,10 +345,18 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
       const project = await store.getProject(args.project_id, agentId);
       if (!project) return ACCESS_DENIED;
 
+      // Agents must be project members to create conversations; humans bypass
+      const isHuman = await store.isHumanAgent(agentId);
+      if (!isHuman) {
+        const member = await store.isMember(args.project_id, agentId);
+        if (!member) return ACCESS_DENIED;
+      }
+
       const conv = await store.createConversation({
         projectId: args.project_id,
         title: args.title,
         defaultVisibility: args.default_visibility,
+        accessMode: args.access_mode,
         createdBy: agentId,
       });
       // Auto-subscribe the creator and include skills metadata
@@ -404,16 +419,35 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         }) }] };
       }
 
-      // Verify conversation exists and caller can access its project
+      // Verify conversation exists
       const conv = await store.getConversation(args.conversation_id);
       if (!conv) return ACCESS_DENIED;
+
+      // Check if agent can subscribe:
+      // 1. Humans bypass membership checks entirely
+      // 2. Project members can subscribe directly
+      // 3. Non-members of visible projects → access request
+      // 4. Non-members of hidden projects → ACCESS_DENIED (no info leak)
+      const isHuman = await store.isHumanAgent(agentId);
       const project = await store.getProject(conv.projectId, agentId);
 
-      if (project) {
+      // Clearance gate: if project not visible due to clearance level
+      if (!project && !isHuman) {
+        return ACCESS_DENIED;
+      }
+
+      const canSubscribe = isHuman || await store.isMember(conv.projectId, agentId);
+
+      if (canSubscribe) {
         // Direct access — subscribe normally
         await store.subscribe(args.conversation_id, agentId, {
           historyAccess: args.history_access,
         });
+
+        // Auto-add as project member if human subscribes (so they appear in member list)
+        if (isHuman && !(await store.isMember(conv.projectId, agentId))) {
+          await store.addMember(conv.projectId, agentId, "member");
+        }
 
         // Include matching skill metadata in subscribe response (progressive disclosure: tier 1 only)
         const agent = await store.getAgent(agentId);
@@ -440,9 +474,13 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         }) }] };
       }
 
-      // No project access — fallback to access request
-      // NOTE: Currently triggered by clearance < project visibility. In v0.6, access control
-      // will be separated from clearance (clearance = message visibility, access = project membership).
+      // Not a member — check project access_mode
+      if (project && project.accessMode === "hidden") {
+        // Hidden project: non-member should not know it exists
+        return ACCESS_DENIED;
+      }
+
+      // Visible project: create access request
       const hasPending = await store.hasPendingAccessRequest(args.conversation_id, agentId);
       if (hasPending) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "You already have a pending access request for this conversation" }) }] };
@@ -1040,9 +1078,14 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Request already responded to" }) }] };
       }
 
-      // On approve: auto-subscribe the requesting agent
+      // On approve: auto-subscribe the requesting agent and add as project member
       if (newStatus === "approved") {
         await store.subscribe(request.conversationId, request.agentId);
+        // Also add as project member if not already
+        const conv = await store.getConversation(request.conversationId);
+        if (conv && !(await store.isMember(conv.projectId, request.agentId))) {
+          await store.addMember(conv.projectId, request.agentId, "member");
+        }
       }
 
       return { content: [{ type: "text" as const, text: JSON.stringify({ ...updated, action: args.action }) }] };
@@ -1067,6 +1110,82 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
   } // access
+
+  // --- Member tools ---
+
+  if (activeGroups.has("members")) {
+  server.tool(
+    "add_member",
+    "Add an agent as a project member. Only project owners can add members.",
+    AddMemberSchema.shape,
+    async (args) => {
+      // Verify caller is project owner
+      const members = await store.listMembers(args.project_id);
+      const callerMember = members.find((m) => m.agentId === agentId);
+      if (!callerMember || callerMember.role !== "owner") {
+        return ACCESS_DENIED;
+      }
+
+      // Verify target agent exists
+      const targetAgent = await store.getAgent(args.agent_id);
+      if (!targetAgent) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Agent not found" }) }] };
+      }
+
+      const member = await store.addMember(args.project_id, args.agent_id, "member");
+      return { content: [{ type: "text" as const, text: JSON.stringify(member, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "remove_member",
+    "Remove an agent from a project. Only project owners can remove members. Unsubscribes from all project conversations.",
+    RemoveMemberSchema.shape,
+    async (args) => {
+      // Verify caller is project owner
+      const members = await store.listMembers(args.project_id);
+      const callerMember = members.find((m) => m.agentId === agentId);
+      if (!callerMember || callerMember.role !== "owner") {
+        return ACCESS_DENIED;
+      }
+
+      // Cannot remove yourself (owner)
+      if (args.agent_id === agentId) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Cannot remove yourself from the project" }) }] };
+      }
+
+      const removed = await store.removeMember(args.project_id, args.agent_id);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ removed, project_id: args.project_id, agent_id: args.agent_id }) }] };
+    },
+  );
+
+  server.tool(
+    "list_members",
+    "List members of a project with their roles.",
+    ListMembersSchema.shape,
+    async (args) => {
+      // Verify caller can access the project
+      const project = await store.getProject(args.project_id, agentId);
+      if (!project) return ACCESS_DENIED;
+
+      const members = await store.listMembers(args.project_id);
+
+      // Enrich with agent info
+      const enriched = await Promise.all(members.map(async (m) => {
+        const agent = await store.getAgent(m.agentId);
+        return {
+          agent_id: m.agentId,
+          name: agent?.name ?? m.agentId,
+          type: agent?.type ?? "unknown",
+          role: m.role,
+          joined_at: m.joinedAt,
+        };
+      }));
+
+      return { content: [{ type: "text" as const, text: JSON.stringify(enriched, null, 2) }] };
+    },
+  );
+  } // members
 
   return server;
 }

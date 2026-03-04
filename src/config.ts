@@ -151,7 +151,7 @@ export const ConfigSchema = z.object({
         clearanceLevel: z.enum(["public", "team", "confidential", "restricted"]).default("team"),
         /** MCP tool groups exposed to this agent. Omit or ["all"] for all tools. */
         toolGroups: z.array(
-          z.enum(["all", "core", "memory", "tasks", "skills", "access"])
+          z.enum(["all", "core", "memory", "tasks", "skills", "access", "members"])
         ).optional(),
       })).default([]),
     })

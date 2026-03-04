@@ -55,11 +55,17 @@ export const DiscoverCapabilitiesSchema = z.object({
 
 // --- Projects ---
 
+const AccessModeParam = z
+  .enum(["visible", "hidden"])
+  .optional()
+  .describe("Access mode: visible (appears in listings) or hidden (only members see it). Default: visible.");
+
 export const CreateProjectSchema = z.object({
   name: z.string().min(1).max(MAX.name).describe("Project name"),
   description: z.string().max(MAX.description).optional().describe("Project description"),
   visibility: VisibilityParam,
   confidentiality_mode: z.enum(["normal", "strict", "flexible"]).default("normal").describe("Confidentiality mode: normal (agent-responsible), strict (bridge-enforced), flexible (agent chooses freely)"),
+  access_mode: AccessModeParam,
 });
 
 export const ListProjectsSchema = z.object({});
@@ -93,6 +99,7 @@ export const CreateConversationSchema = z.object({
   project_id: z.string().max(MAX.id).describe("Project ID"),
   title: z.string().min(1).max(MAX.title).describe("Conversation title"),
   default_visibility: VisibilityParam.describe("Default visibility for new messages"),
+  access_mode: AccessModeParam,
 });
 
 export const ListConversationsSchema = z.object({
@@ -254,4 +261,20 @@ export const GetAgentMemorySchema = z.object({
 export const DeleteAgentMemorySchema = z.object({
   project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped memory"),
   conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped memory"),
+});
+
+// --- Project Members ---
+
+export const AddMemberSchema = z.object({
+  project_id: z.string().max(MAX.id).describe("Project ID"),
+  agent_id: z.string().max(MAX.id).describe("Agent ID to add as member"),
+});
+
+export const RemoveMemberSchema = z.object({
+  project_id: z.string().max(MAX.id).describe("Project ID"),
+  agent_id: z.string().max(MAX.id).describe("Agent ID to remove"),
+});
+
+export const ListMembersSchema = z.object({
+  project_id: z.string().max(MAX.id).describe("Project ID"),
 });

@@ -25,6 +25,17 @@ export const VISIBILITY_ORDER: Record<VisibilityLevel, number> = {
 
 export type ConfidentialityMode = "normal" | "strict" | "flexible";
 
+export type AccessMode = "visible" | "hidden";
+
+export type ProjectRole = "owner" | "member";
+
+export interface ProjectMember {
+  projectId: string;
+  agentId: string;
+  role: ProjectRole;
+  joinedAt: string;
+}
+
 export interface BridgeInstructions {
   /** Human-readable instruction for handling confidentiality. Pre-computed by bridge based on project mode. */
   confidentiality: string;
@@ -73,6 +84,7 @@ export interface Project {
   description: string | null;
   visibility: VisibilityLevel;
   confidentialityMode: ConfidentialityMode;
+  accessMode: AccessMode;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -98,6 +110,7 @@ export interface Conversation {
   title: string;
   status: string;
   defaultVisibility: VisibilityLevel;
+  accessMode: AccessMode;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -142,6 +155,7 @@ export interface CreateProject {
   description?: string;
   visibility?: VisibilityLevel;
   confidentialityMode?: ConfidentialityMode;
+  accessMode?: AccessMode;
   createdBy: string;
 }
 
@@ -160,6 +174,7 @@ export interface CreateConversation {
   projectId: string;
   title: string;
   defaultVisibility?: VisibilityLevel;
+  accessMode?: AccessMode;
   createdBy: string;
 }
 

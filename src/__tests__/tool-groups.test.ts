@@ -47,7 +47,7 @@ afterEach(async () => {
 describe("TOOL_GROUPS constant", () => {
   it("defines all expected groups", () => {
     expect(Object.keys(TOOL_GROUPS).sort()).toEqual(
-      ["access", "core", "memory", "skills", "tasks"]
+      ["access", "core", "members", "memory", "skills", "tasks"]
     );
   });
 
@@ -71,29 +71,33 @@ describe("TOOL_GROUPS constant", () => {
     expect(TOOL_GROUPS.access).toHaveLength(3);
   });
 
-  it("all groups sum to 35 tools", () => {
+  it("members group has 3 tools", () => {
+    expect(TOOL_GROUPS.members).toHaveLength(3);
+  });
+
+  it("all groups sum to 38 tools", () => {
     const total = Object.values(TOOL_GROUPS).reduce((sum, tools) => sum + tools.length, 0);
-    expect(total).toBe(35);
+    expect(total).toBe(38);
   });
 });
 
 describe("createBridgeMcpServer tool filtering", () => {
-  it("default (no toolGroups) registers all 35 tools", () => {
+  it("default (no toolGroups) registers all 38 tools", () => {
     const server = createBridgeMcpServer(store, agentId);
     const tools = getToolNames(server);
-    expect(tools).toHaveLength(35);
+    expect(tools).toHaveLength(38);
   });
 
-  it('["all"] registers all 35 tools', () => {
+  it('["all"] registers all 38 tools', () => {
     const server = createBridgeMcpServer(store, agentId, ["all"]);
     const tools = getToolNames(server);
-    expect(tools).toHaveLength(35);
+    expect(tools).toHaveLength(38);
   });
 
-  it("empty array registers all 35 tools", () => {
+  it("empty array registers all 38 tools", () => {
     const server = createBridgeMcpServer(store, agentId, []);
     const tools = getToolNames(server);
-    expect(tools).toHaveLength(35);
+    expect(tools).toHaveLength(38);
   });
 
   it('["core"] only registers 14 core tools', () => {

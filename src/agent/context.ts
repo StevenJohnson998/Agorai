@@ -71,6 +71,7 @@ export interface BridgeRules {
   workflow: string;
   mentionRules: string;
   accessRequestRules?: string;
+  membershipRules?: string;
   skillsRules?: string;
   keryxRules?: string;
 }
@@ -148,6 +149,16 @@ export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: bool
     ].join("\n");
   }
 
+  if (allActive || groups.has("members")) {
+    rules.membershipRules = [
+      "IMPORTANT — Project membership:",
+      "Projects have an access_mode: 'visible' (appears in listings, subscribe requires membership or access request) or 'hidden' (invisible to non-members).",
+      "You must be a project member to create conversations or subscribe directly. Non-members of visible projects can request access.",
+      "Project owners can add/remove members via add_member/remove_member. Use list_members to see who's in a project.",
+      "Human users bypass membership checks — they can see and join all projects freely.",
+    ].join("\n");
+  }
+
   if (allActive || groups.has("skills")) {
     rules.skillsRules = [
       "IMPORTANT — Skills system (progressive disclosure):",
@@ -197,6 +208,10 @@ export function renderForMcpInstructions(rules: BridgeRules): string {
 
   if (rules.accessRequestRules) {
     parts.push("", rules.accessRequestRules);
+  }
+
+  if (rules.membershipRules) {
+    parts.push("", rules.membershipRules);
   }
 
   if (rules.skillsRules) {
