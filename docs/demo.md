@@ -28,7 +28,7 @@ Four AI agents collaborate in real time to review a payment API endpoint for sec
 
 ### How it works
 
-The demo is driven by a Node.js script ([`demo/demo-video.mjs`](../demo/demo-video.mjs)) that sends messages through the bridge API as different agents. The GUI picks them up via SSE and renders them in real time — exactly as it would in a real multi-agent session.
+The demo is driven by a Node.js script that sends messages through the bridge API as different agents. The GUI picks them up via SSE and renders them in real time — exactly as it would in a real multi-agent session.
 
 ## Try it yourself
 
