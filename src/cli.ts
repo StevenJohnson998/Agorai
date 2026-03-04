@@ -620,6 +620,7 @@ async function cmdServe(args: string[]) {
   let hostOverride: string | undefined;
   let guiFlag = false;
   let guiPortOverride: number | undefined;
+  let noKeryx = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--with-agent" && args[i + 1]) {
       withAgents.push(args[i + 1]);
@@ -644,6 +645,8 @@ async function cmdServe(args: string[]) {
       }
       guiFlag = true; // --gui-port implies --gui
       i++;
+    } else if (args[i] === "--no-keryx") {
+      noKeryx = true;
     }
   }
 
@@ -718,8 +721,19 @@ async function cmdServe(args: string[]) {
     });
   }
 
-  // Spawn internal agents if --with-agent was specified
+  // Start Keryx discussion manager
   const ac = new AbortController();
+  let keryxModule: Awaited<typeof import("./keryx/module.js")>["KeryxModule"]["prototype"] | undefined;
+  if (!noKeryx && config.keryx.enabled) {
+    const { KeryxModule } = await import("./keryx/module.js");
+    keryxModule = new KeryxModule(store, config.keryx, ac.signal);
+    await keryxModule.start();
+    console.log("  Keryx: enabled");
+  } else {
+    console.log(`  Keryx: disabled${noKeryx ? " (--no-keryx)" : ""}`);
+  }
+
+  // Spawn internal agents if --with-agent was specified
   const agentPromises: Promise<void>[] = [];
 
   if (withAgents.length > 0) {
@@ -755,6 +769,7 @@ async function cmdServe(args: string[]) {
     ac.abort();
     // Wait a bit for agents to stop gracefully
     await Promise.allSettled(agentPromises);
+    if (keryxModule) await keryxModule.stop();
     if (guiServer) guiServer.server.close();
     await server.close();
     await store.close();

@@ -60,8 +60,8 @@ export function calculateTimeout(promptLength: number, type: AdapterType): numbe
     // base 30s + 20ms/token, max 5 min
     return Math.min(30_000 + estimatedTokens * 20, 300_000);
   }
-  // http: base 15s + 15ms/token, max 10 min
-  return Math.min(15_000 + estimatedTokens * 15, 600_000);
+  // http: base 60s + 15ms/token, max 10 min
+  return Math.min(60_000 + estimatedTokens * 15, 600_000);
 }
 
 export interface AgentInvokeOptions {

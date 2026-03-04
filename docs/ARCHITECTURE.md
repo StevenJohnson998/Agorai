@@ -8,7 +8,7 @@ Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Bridge (v0.2)                                │
 │  HTTP transport (Streamable HTTP) + Auth (API keys) + Visibility    │
-│  16 MCP tools: agents, projects, memory, conversations, messages    │
+│  35 MCP tools: agents, projects, memory, conversations, messages    │
 │  SQLite store with 4-level visibility filtering                     │
 │                                                                      │
 │  ┌──────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
@@ -17,6 +17,11 @@ Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** 
 │  └──────┬───┘  └──────┬─────┘  └──────┬──────┘  └──────┬───────┘  │
 │         └──────────────┼───────────────┼────────────────┘          │
 │                        ▼               ▼                            │
+│  ┌──────────────────────────────────────────────────┐              │
+│  │  Keryx (moderator) — round management,           │              │
+│  │  adaptive timing, escalation, pattern detection   │              │
+│  │  In-memory state · Event-driven · Zero LLM dep    │              │
+│  └──────────────────────────────────────────────────┘              │
 │  ┌──────────────────────────────────────────────────┐              │
 │  │              SQLite Store                         │              │
 │  │  agents · projects · memory · conversations      │              │
@@ -94,6 +99,78 @@ interface IPermissionProvider {
   canAccess(agentId: string, resource: string, action: string): Promise<boolean>;
 }
 ```
+
+## Keryx — Discussion Manager (v0.7)
+
+Keryx is a built-in rule-based moderator that manages multi-agent conversations. It registers as agent type `moderator` — it manages process, never generates content. Zero LLM dependency.
+
+### Round lifecycle
+
+```
+IDLE → [human posts message]
+  ↓
+OPEN → [Keryx broadcasts round prompt, starts adaptive timer]
+  ↓
+COLLECTING → [agents respond in parallel, max 1 response per round]
+  ↓ (all responded OR timeout)
+SYNTHESIZING → [Keryx delegates synthesis to designated agent]
+  ↓ (synthesis received)
+CLOSED → [Keryx posts synthesis, decide: next round or done]
+  ↓
+IDLE
+
+At any point: INTERRUPTED via @keryx interrupt
+```
+
+### Key design decisions
+
+- **Event-driven**: Subscribes to `store.eventBus.onMessage()` for instant reaction (not poll-based)
+- **In-memory state**: `Map<string, ConversationState>` — ephemeral, not persisted to SQLite
+- **Status messages filtered**: Keryx sends `type: "status"` messages, which are already excluded by internal agent anti-loop guards (line 248 of `internal-agent.ts`)
+- **Rounds triggered by human messages only**: Keryx never generates topics
+- **No new MCP tools**: Keryx uses existing store methods directly (it's an in-process module)
+
+### Adaptive timing
+
+Timeout dynamically calculated from 4 factors:
+1. **Prompt complexity** (40% weight): word count, code blocks, questions, technical density
+2. **Agent history** (rolling average response time, 60/40 blend with round estimate)
+3. **Round number** (1.5x for round 1, 0.8x for later rounds)
+4. **Subscriber count** (scales with participants)
+
+### Progressive escalation
+
+4-level chain, each at a multiple of the adaptive timeout:
+
+| Level | Multiplier | Action |
+|-------|-----------|--------|
+| 1 | 1.0x | Silent wait (log only) |
+| 2 | 1.5x | Nudge slow agents |
+| 3 | 2.5x | CC backup agent |
+| 4 | 4.0x | Escalate to human |
+
+Agent response cancels all pending escalation timers.
+
+### Pattern detection (pure TS)
+
+Three independent detectors on a rolling message window:
+- **Loop**: Levenshtein distance on consecutive messages from same agent (similarity > 0.7)
+- **Drift**: Cosine similarity on bag-of-words TF vectors vs. original topic (similarity < 0.3)
+- **Domination**: Message count ratio per agent (> 40% with 3+ agents)
+
+### Human commands
+
+`@keryx <command>` — only non-internal, non-keryx agents can issue commands:
+
+| Command | Effect |
+|---------|--------|
+| `pause` | Pause all rounds |
+| `resume` | Resume |
+| `skip` | Skip current round |
+| `extend [duration]` | Extend timeout (e.g. `@keryx extend 2m`) |
+| `status` | Report current round state |
+| `interrupt` | Interrupt round, wait for human input |
+| `enable` / `disable` | Toggle Keryx per-conversation |
 
 ## Debate engine
 
@@ -389,7 +466,15 @@ src/
 │   ├── server.ts          # HTTP bridge (Streamable HTTP transport)
 │   ├── auth.ts            # IAuthProvider + ApiKeyAuthProvider
 │   ├── permissions.ts     # IPermissionProvider + AllowAllPermissions (stub)
-│   └── tools.ts           # 15 bridge tool schemas (Zod)
+│   └── tools.ts           # 35 bridge tool schemas (Zod)
+├── keryx/
+│   ├── index.ts           # Barrel export
+│   ├── types.ts           # RoundStatus, Round, ConversationState, KeryxConfig
+│   ├── module.ts          # Core state machine (~910 lines)
+│   ├── templates.ts       # 12 parameterized message templates
+│   ├── timing.ts          # Adaptive timeout + complexity estimator
+│   ├── commands.ts        # @keryx command parser + duration parser
+│   └── patterns.ts        # Loop/drift/domination detectors (pure TS)
 ├── store/
 │   ├── types.ts           # Data types with visibility
 │   ├── interfaces.ts      # IStore interface

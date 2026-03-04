@@ -72,6 +72,7 @@ export interface BridgeRules {
   mentionRules: string;
   accessRequestRules?: string;
   skillsRules?: string;
+  keryxRules?: string;
 }
 
 export interface BuildContextOptions {
@@ -82,6 +83,7 @@ export interface BuildContextOptions {
   messageLimit?: number;
   activeToolGroups?: string[];
   decisionDepth?: number;
+  keryxActive?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ export interface BuildContextOptions {
  * Build structured bridge rules. Active tool groups determine which
  * conditional sections are included.
  */
-export function buildBridgeRules(activeToolGroups?: string[]): BridgeRules {
+export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: boolean): BridgeRules {
   const groups = new Set(activeToolGroups);
   const allActive = !activeToolGroups || activeToolGroups.length === 0 || groups.has("all");
 
@@ -157,6 +159,16 @@ export function buildBridgeRules(activeToolGroups?: string[]): BridgeRules {
     ].join("\n");
   }
 
+  if (keryxActive) {
+    rules.keryxRules = [
+      "IMPORTANT — Keryx discussion manager:",
+      "This bridge uses Keryx, a discussion manager that organizes conversations into rounds.",
+      "Respond once per round. Use [NO_RESPONSE] if you have nothing new to add.",
+      "Do not respond more than once per round. Follow Keryx process instructions.",
+      "When Keryx requests a synthesis, summarize key points, agreements, disagreements, and open questions.",
+    ].join("\n");
+  }
+
   return rules;
 }
 
@@ -191,6 +203,10 @@ export function renderForMcpInstructions(rules: BridgeRules): string {
     parts.push("", rules.skillsRules);
   }
 
+  if (rules.keryxRules) {
+    parts.push("", rules.keryxRules);
+  }
+
   return parts.join("\n");
 }
 
@@ -211,6 +227,7 @@ export async function buildAgentContext(opts: BuildContextOptions): Promise<Agen
     messageLimit = 20,
     activeToolGroups,
     decisionDepth,
+    keryxActive,
   } = opts;
 
   // Phase 1: agent identity (needed for skills query)
@@ -226,7 +243,7 @@ export async function buildAgentContext(opts: BuildContextOptions): Promise<Agen
     clearanceLevel: agent.clearanceLevel,
   };
 
-  const bridgeRules = buildBridgeRules(activeToolGroups);
+  const bridgeRules = buildBridgeRules(activeToolGroups, keryxActive);
 
   // Phase 2: parallel queries (all independent)
   const promises: {
@@ -397,6 +414,9 @@ export function renderForPrompt(
   systemParts.push("## Bridge Rules");
   systemParts.push(bridgeRules.visibilityRules);
   systemParts.push(bridgeRules.mentionRules);
+  if (bridgeRules.keryxRules) {
+    systemParts.push(bridgeRules.keryxRules);
+  }
 
   // Conversation context
   if (conversation) {

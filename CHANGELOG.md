@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-03-04 — v0.7.0 (Keryx Discussion Manager)
+
+### Added
+- **Keryx — built-in discussion manager**: Rule-based moderator embedded in the bridge that manages multi-agent conversations. Registers as agent type `moderator` — manages process, never generates content.
+  - **Round lifecycle**: State machine (IDLE → OPEN → COLLECTING → SYNTHESIZING → CLOSED). Rounds triggered by human messages only. Agents respond once per round; `[NO_RESPONSE]` if nothing to add.
+  - **Adaptive timing**: Timeout dynamically calculated from prompt complexity (word count, code blocks, questions), agent response history (rolling average), round number, and subscriber count. No fixed floor/ceiling.
+  - **Progressive escalation**: 4-level chain — silent wait → nudge slow agents → CC backup agent → escalate to human. Each level at baseTimeout × 1.0, 1.5, 2.5, 4.0. Agent response cancels pending escalation.
+  - **Synthesis delegation**: On round close, finds best agent via `synthesisCapability` (configurable). Falls back to least-active agent in round.
+  - **Pattern detection** (pure TS, zero external deps):
+    - Loop detection: Levenshtein distance on consecutive messages from same agent (threshold > 0.7)
+    - Drift detection: Cosine similarity on bag-of-words term frequency vectors (threshold < 0.3)
+    - Domination detection: Message count ratio per agent (> 40% with 3+ agents)
+  - **Human commands**: `@keryx pause`, `@keryx resume`, `@keryx skip`, `@keryx extend [duration]`, `@keryx status`, `@keryx interrupt`, `@keryx enable`, `@keryx disable`. Duration parsing: `30s`, `2m`, `1h`.
+  - **Interrupt flow**: Marks round interrupted, cancels timers, waits for human follow-up, re-opens round with additional context.
+  - **Behavioral skill**: Auto-creates bridge-level skill on start with Keryx protocol instructions for agents.
+  - **Bridge rules injection**: `keryxRules` added to agent context (MCP instructions + LLM system prompt) when Keryx is active.
+  - **Onboarding**: Detects new agent subscriptions, sends onboarding template.
+  - **Event-driven**: Subscribes to `store.eventBus.onMessage()` for instant reaction. Not poll-based.
+  - **Conversation discovery**: Periodic discovery loop (10s) finds all conversations and auto-subscribes Keryx.
+
+- **`--no-keryx` CLI flag**: Disable Keryx on `agorai serve` (Keryx is enabled by default).
+- **`keryx` config section**: `enabled`, `baseTimeoutMs` (30s), `nudgeAfterMs` (45s), `maxRoundsPerTopic` (5), `synthesisCapability`, `healthWindowSize` (10). All with sensible defaults — works without any config.
+- **`moderator` agent type**: Keryx registers as type `moderator` (not `keryx`) so agents see it in `list_subscribers` as a process manager, not a peer.
+
+### New files (8)
+- `src/keryx/types.ts` — Type definitions (RoundStatus, Round, ConversationState, KeryxConfig, etc.)
+- `src/keryx/index.ts` — Barrel export
+- `src/keryx/module.ts` — Core state machine (~910 lines)
+- `src/keryx/templates.ts` — 12 parameterized message templates
+- `src/keryx/timing.ts` — Adaptive timeout calculator + complexity estimator
+- `src/keryx/commands.ts` — Command parser + duration parser
+- `src/keryx/patterns.ts` — Loop/drift/domination detectors
+
+### Modified files
+- `src/config.ts` — Added `keryx` section to ConfigSchema with Zod defaults
+- `src/config-manager.ts` — Added `"keryx"` and `"moderator"` to AgentType union
+- `src/cli.ts` — `--no-keryx` flag, KeryxModule spawn on `agorai serve`, shutdown handler
+- `src/agent/context.ts` — `keryxRules` in BridgeRules, conditional rendering in MCP instructions and LLM prompts
+- `src/index.ts` — KeryxModule and type exports
+
+### Not modified
+- `src/store/sqlite.ts` — No schema changes. Keryx state is in-memory (ephemeral).
+- `src/bridge/server.ts` — No MCP tool changes. Keryx uses existing tools.
+- `src/agent/internal-agent.ts` — Status messages already filtered (line 248). No changes needed.
+
+### Tests
+- 39 new tests in `keryx.test.ts`: config parsing (4), core state machine (6), adaptive timing (5), pattern detection (11), command parsing (13)
+- Total: 420 tests passing (was 381)
+
+### Design decisions
+- **Zero external dependencies**: Levenshtein + cosine similarity are pure TypeScript implementations
+- **No LLM dependency**: All interventions are parameterized templates, not generated text
+- **Status messages filtered**: Keryx sends `type: "status"` messages which are already excluded by internal agent anti-loop guards — no modification needed
+- **Backward compatible**: Existing conversations without Keryx context work normally (Keryx starts managing from next new message only)
+
+---
+
 ## 2026-03-03 — agorai-connect v0.0.8 (Remote Connectivity MVP)
 
 ### Added

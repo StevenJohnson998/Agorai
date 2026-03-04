@@ -173,6 +173,17 @@ export const ConfigSchema = z.object({
     })
     .optional()
     .describe("Web GUI config. Absent = GUI disabled."),
+
+  keryx: z
+    .object({
+      enabled: z.boolean().default(true),
+      baseTimeoutMs: z.number().default(30_000),
+      nudgeAfterMs: z.number().default(45_000),
+      maxRoundsPerTopic: z.number().default(5),
+      synthesisCapability: z.string().default("synthesis"),
+      healthWindowSize: z.number().default(10),
+    })
+    .default({}),
 });
 
 export const VisibilityLevelSchema = z.enum(["public", "team", "confidential", "restricted"]);

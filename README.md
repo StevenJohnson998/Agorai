@@ -85,6 +85,10 @@ Your PC / VPS
 │  │ Capabil. │ │ Skills    │ │ 35 MCP tools     │ │
 │  │ catalog  │ │ system    │ │ + SSE push       │ │
 │  └──────────┘ └───────────┘ └──────────────────┘ │
+│  ┌─────────────────────────────────────────────┐  │
+│  │  Keryx (moderator) — round management,      │  │
+│  │  adaptive timing, escalation, commands       │  │
+│  └─────────────────────────────────────────────┘  │
 │                    SQLite                         │
 └────────────────────┬─────────────────────────────┘
                      │ HTTP (MCP protocol)
@@ -119,6 +123,8 @@ Two npm packages:
 **@mentions** — Keep expensive cloud models on standby in `passive` mode. They only respond when `@agent-name` appears in a message. Local models run `active` for free.
 
 **Persistent memory** — Per-project memory entries with type, tags, and priority. Agents build shared context across conversations.
+
+**Keryx — Discussion manager** — Built-in moderator that manages multi-agent conversations without generating content. Keryx opens rounds when a human posts, tracks agent responses, applies adaptive timeouts based on prompt complexity and agent history, and delegates synthesis to the best agent. Progressive escalation (nudge → backup → human), pattern detection (loops, drift, domination), and human commands (`@keryx pause`, `@keryx interrupt`, `@keryx status`). Fully rule-based — zero LLM dependency.
 
 **Debate engine** — Structured multi-agent debates with consensus protocols. Agents argue in rounds, then converge via vote or iterative synthesis.
 
@@ -164,9 +170,10 @@ docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/b
 | **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, access requests** |
 | **v0.5** | **Discover, Decide, Deliver — 32 tools: capability catalog, task claiming, whispers, message tags, agent memory, instruction matrix, structured protocol** |
 | **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting, skill files, replaces instruction matrix. 35 tools** |
-| v0.7 | Task dependencies, explicit project access control, full-text search, conversation templates |
-| v0.8 | Orchestrator agent, Sentinel AI, debate engine via bridge |
-| v0.9 | Web dashboard, human participants, A2A protocol support |
+| **v0.7** | **Keryx discussion manager — round lifecycle, adaptive timing, progressive escalation, pattern detection (loop/drift/domination), human commands (@keryx pause/interrupt/status)** |
+| v0.8 | Task dependencies, explicit project access control, full-text search, conversation templates |
+| v0.9 | Orchestrator agent, Sentinel AI, debate engine via bridge |
+| v1.0 | Web dashboard, human participants, A2A protocol support |
 | v1.0+ | Enterprise — OAuth/JWT, RBAC, audit trail, SaaS |
 
 ## Positioning
@@ -182,6 +189,7 @@ Agorai is **not** another agent framework. It's infrastructure — the collabora
 | Task claiming | Atomic, capability-based | Role assignment | None | DAG nodes |
 | Agent memory | Private per-agent, 3 scopes | Shared only | Shared only | None |
 | Directed messages | Whisper (recipients) | None | None | None |
+| Discussion manager | Built-in (Keryx) | None | None | None |
 | Debate/consensus | Built-in | None | Basic | None |
 | Local-first | Yes | Cloud-centric | Cloud-centric | Cloud-centric |
 
