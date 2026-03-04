@@ -109,50 +109,16 @@ Two npm packages:
 
 ## Key features
 
-**Model-agnostic** — Any LLM that speaks OpenAI-compatible API works out of the box: Ollama, Groq, Mistral, DeepSeek, LM Studio, vLLM. MCP clients (Claude Desktop, Claude Code) connect natively.
+- **Model-agnostic** — Any OpenAI-compatible API works out of the box: Ollama, Groq, Mistral, DeepSeek, LM Studio, vLLM. MCP clients (Claude Desktop, Claude Code) connect natively. Bring your own models.
+- **Keryx — Built-in discussion manager** — Moderates multi-agent conversations automatically. Opens rounds, tracks responses, applies adaptive timeouts, delegates synthesis, detects loops and drift. Human commands (`@keryx pause`, `@keryx interrupt`, `@keryx status`). Enabled by default — zero config, zero LLM dependency.
+- **4-level visibility** — `public` → `team` → `confidential` → `restricted`. Agents only see what their clearance allows — and don't know hidden data exists. Store-enforced on every read and write.
+- **Persistent shared memory** — Per-project memory entries with type, tags, and priority. Agents build shared context that persists across conversations and sessions. Private per-agent memory also available (3 scopes).
+- **Skills system** — Progressive disclosure: agents receive only metadata on subscribe, load full content on demand. Target skills by agent name or type/capability. ~80-90% context savings vs. sending everything upfront.
+- **Directed messages (whisper)** — Private messages to specific agents via `recipients`. Store-enforced — non-recipients never know the message exists.
+- **Task claiming** — Create tasks with required capabilities, claim them atomically (no race conditions), complete with results. Stale claims auto-release. Pull model — agents discover and claim work.
+- **Debate engine** — Structured multi-agent debates with consensus protocols. Agents argue in rounds, then converge via vote or iterative synthesis.
 
-**4-level visibility** — Every piece of data has a visibility level. Agents only see what their clearance allows. They don't know hidden data exists.
-
-| Level | Who sees it |
-|-------|-----------|
-| `public` | Everyone |
-| `team` | Team agents (default) |
-| `confidential` | Internal only |
-| `restricted` | Specific agent / human |
-
-**@mentions** — Keep expensive cloud models on standby in `passive` mode. They only respond when `@agent-name` appears in a message. Local models run `active` for free.
-
-**Persistent memory** — Per-project memory entries with type, tags, and priority. Agents build shared context across conversations.
-
-**Keryx — Discussion manager** — Built-in moderator that manages multi-agent conversations without generating content. Keryx opens rounds when a human posts, tracks agent responses, applies adaptive timeouts based on prompt complexity and agent history, and delegates synthesis to the best agent. Progressive escalation (nudge → backup → human), pattern detection (loops, drift, domination), and human commands (`@keryx pause`, `@keryx interrupt`, `@keryx status`). Fully rule-based — zero LLM dependency.
-
-**Debate engine** — Structured multi-agent debates with consensus protocols. Agents argue in rounds, then converge via vote or iterative synthesis.
-
-```bash
-npx agorai debate "Redis vs Memcached for session storage?"
-```
-
-**Task claiming** — Create tasks with required capabilities, claim them atomically (no race conditions), complete with results. Stale claims auto-release when agents go offline. Pull model — agents discover and claim work, not push.
-
-**Directed messages (whisper)** — Send private messages to specific agents with `recipients`. Only listed agents and the sender can see the message. Store-enforced — non-recipients never know the message exists. Additive to visibility: both filters apply.
-
-**Capability discovery** — Agents register capabilities on connect. `discover_capabilities` lets agents find each other by skill (`code-review`, `analysis`, `code-execution`). The foundation for intelligent task routing.
-
-**Skills system** — Progressive disclosure skills replace instructions. Skills have title, summary, instructions hint, full content, and supporting files. Agents receive only metadata (tier 1) on subscribe — load full content (tier 2) and files (tier 3) on demand. Target skills to specific agents by name or by type/capability selector. Tags for filtering. ~80-90% context savings.
-
-**Agent memory** — Private per-agent scratchpad with 3 scopes: global, per-project, and per-conversation. Each agent manages its own memory — invisible to other agents. Conversation memory auto-cleans on unsubscribe.
-
-**Message tags** — Tag messages with metadata (`review`, `urgent`, `decision`) and filter by tags or sender in `get_messages`. Structured message types (`proposal`, `decision`) enable formal conversation protocols.
-
-**Structured metadata** — Every message carries trusted `bridgeMetadata` (visibility, capping info, confidentiality instructions) and private `agentMetadata` (only visible to the sender). Agents can't forge bridge data.
-
-**Security** — Salted HMAC-SHA-256 API key hashing, per-agent rate limiting, input size limits on all fields, visibility-capped writes. Everything localhost by default.
-
-**Agent management** — Add, list, update, and remove agents from the CLI. `agorai agent add` generates pass-keys, validates env vars, and configures both auth and adapter entries in one command.
-
-**Internal agents** — Run agents inside the bridge process with `--with-agent`. Store-direct access, no HTTP round-trip. Perfect for always-on local models like Ollama.
-
-**Session recovery** — Agents auto-reconnect with exponential backoff when the bridge restarts. No manual intervention needed.
+> **[Full feature list →](FEATURES.md)** — Agent management, internal agents, SSE push notifications, capability discovery, message tags, structured metadata, session recovery, and more.
 
 ## Docker
 
