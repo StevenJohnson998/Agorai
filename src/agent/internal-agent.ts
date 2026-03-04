@@ -16,8 +16,8 @@
 
 import type { IStore } from "../store/interfaces.js";
 import type { IAgentAdapter, AgentInvokeOptions } from "../adapters/base.js";
-import type { Message } from "../store/types.js";
 import type { MessageCreatedEvent } from "../store/events.js";
+import { buildAgentContext, renderForPrompt } from "./context.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("internal-agent");
@@ -31,6 +31,7 @@ export interface InternalAgentOptions {
   pollIntervalMs?: number;
   systemPrompt?: string;
   signal?: AbortSignal;
+  decisionDepth?: number;
 }
 
 /**
@@ -46,17 +47,20 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
     pollIntervalMs = 3000,
     systemPrompt,
     signal,
+    decisionDepth,
   } = options;
 
-  const baseIdentity = `You are ${agentName}, an AI agent participating in a multi-agent conversation on Agorai.`;
-  const passiveInstruction = ` You are in passive mode — only respond when someone @mentions you by name (@${agentName}). Otherwise, reply with exactly [NO_RESPONSE].`;
-  const defaultSystem = systemPrompt ??
-    (mode === "passive" ? baseIdentity + passiveInstruction : baseIdentity);
+  // systemPrompt from options is used as override; otherwise built from AgentContext
+  const customSystemPrompt = systemPrompt;
 
   // Track subscribed conversations
   const subscribedConversations = new Set<string>();
   let lastHeartbeat = Date.now();
   const heartbeatIntervalMs = 30_000;
+
+  // Track agent health status (DB-only, no broadcast messages)
+  let currentStatus: "online" | "error" = "online";
+  let isFirstRun = true;
 
   log.info(`Internal agent "${agentName}" starting (mode: ${mode}, poll: ${pollIntervalMs}ms)`);
 
@@ -110,7 +114,35 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
       await store.updateAgentLastSeen(resolvedAgentId);
 
       // Discover and subscribe to conversations
-      await discoverConversations(store, resolvedAgentId, subscribedConversations);
+      await discoverConversations(store, resolvedAgentId, agentName, subscribedConversations, isFirstRun);
+      isFirstRun = false;
+
+      // Helper: process a conversation and update DB health status (no broadcast messages)
+      const processAndTrack = async (convId: string) => {
+        const result = await processConversation(
+          store,
+          adapter,
+          convId,
+          resolvedAgentId,
+          agentName,
+          mode,
+          customSystemPrompt,
+          decisionDepth,
+        );
+
+        if (result === "error" && currentStatus !== "error") {
+          currentStatus = "error";
+          await store.updateAgentStatus(resolvedAgentId, "error", "API error");
+          log.warn(`Status changed to ERROR for ${agentName}`);
+        } else if (result === "ok" && currentStatus === "error") {
+          currentStatus = "online";
+          await store.updateAgentStatus(resolvedAgentId, "online");
+          log.info(`Status recovered to ONLINE for ${agentName}`);
+        }
+      };
+
+      // Track conversations already handled this cycle (avoid double-processing)
+      const processedThisCycle = new Set<string>();
 
       // Process pending conversations from event bus first (instant response)
       if (pendingConversations.size > 0) {
@@ -120,34 +152,17 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
 
         for (const convId of pending) {
           if (signal?.aborted) break;
-          // Ensure we're subscribed to this conversation
           if (!subscribedConversations.has(convId)) continue;
-
-          await processConversation(
-            store,
-            adapter,
-            convId,
-            resolvedAgentId,
-            agentName,
-            mode,
-            defaultSystem,
-          );
+          await processAndTrack(convId);
+          processedThisCycle.add(convId);
         }
       }
 
       // Full poll: process all subscribed conversations (catches anything event bus missed)
       for (const convId of subscribedConversations) {
         if (signal?.aborted) break;
-
-        await processConversation(
-          store,
-          adapter,
-          convId,
-          resolvedAgentId,
-          agentName,
-          mode,
-          defaultSystem,
-        );
+        if (processedThisCycle.has(convId)) continue;
+        await processAndTrack(convId);
       }
     } catch (err) {
       log.error(`Poll error: ${err instanceof Error ? err.message : String(err)}`);
@@ -165,11 +180,15 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
 
 /**
  * Discover new conversations across all projects. Subscribe to any not yet tracked.
+ * Posts "joined" system message only for conversations that already have activity
+ * (avoids spam on initial startup when subscribing to all existing conversations).
  */
 async function discoverConversations(
   store: IStore,
   agentId: string,
+  agentName: string,
   tracked: Set<string>,
+  isFirstRun: boolean,
 ): Promise<void> {
   const projects = await store.listProjects(agentId);
 
@@ -178,7 +197,22 @@ async function discoverConversations(
 
     for (const conv of conversations) {
       if (!tracked.has(conv.id)) {
-        await store.subscribe(conv.id, agentId);
+        const alreadySubscribed = await store.isSubscribed(conv.id, agentId);
+        if (!alreadySubscribed) {
+          await store.subscribe(conv.id, agentId);
+          // Post "joined" message only if conversation has messages and it's not first run
+          if (!isFirstRun) {
+            const msgs = await store.getMessages(conv.id, agentId, { limit: 1 });
+            if (msgs.length > 0) {
+              await store.sendMessage({
+                conversationId: conv.id,
+                fromAgent: agentId,
+                content: `📥 ${agentName} joined the conversation.`,
+                type: "status",
+              });
+            }
+          }
+        }
         tracked.add(conv.id);
         log.info(`Subscribed to: ${conv.title} (${conv.id})`);
       }
@@ -189,6 +223,9 @@ async function discoverConversations(
 /**
  * Process a single conversation: get unread, filter, respond, mark read.
  */
+/**
+ * Process a single conversation. Returns "ok" | "skipped" | "error".
+ */
 async function processConversation(
   store: IStore,
   adapter: IAgentAdapter,
@@ -196,22 +233,23 @@ async function processConversation(
   agentId: string,
   agentName: string,
   mode: "passive" | "active",
-  systemPrompt: string,
-): Promise<void> {
+  customSystemPrompt?: string,
+  decisionDepth?: number,
+): Promise<"ok" | "skipped" | "error"> {
   // Get unread messages
   const unreadMessages = await store.getMessages(conversationId, agentId, {
     unreadOnly: true,
     limit: 20,
   });
 
-  if (unreadMessages.length === 0) return;
+  if (unreadMessages.length === 0) return "skipped";
 
-  // Filter out own messages
-  const otherMessages = unreadMessages.filter((m) => m.fromAgent !== agentId);
+  // Filter out own messages and status messages (status msgs should not trigger responses)
+  const otherMessages = unreadMessages.filter((m) => m.fromAgent !== agentId && m.type !== "status");
   if (otherMessages.length === 0) {
-    // Only our own messages — mark them read and move on
+    // Only our own messages or status messages — mark them read and move on
     await store.markRead(unreadMessages.map((m) => m.id), agentId);
-    return;
+    return "skipped";
   }
 
   // Check for @mention
@@ -225,11 +263,13 @@ async function processConversation(
   if (mode === "passive" && !hasMention) {
     log.info(`Skipping ${otherMessages.length} message(s) in ${conversationId} (no @mention, passive)`);
     await store.markRead(unreadMessages.map((m) => m.id), agentId);
-    return;
+    return "skipped";
   }
 
-  // Active mode: skip if all unread messages are from other internal agents (prevents ping-pong loops).
-  // Only respond if at least one message is from a non-internal agent (human/MCP client) or we're @mentioned.
+  // Active mode: anti-loop guard with collaboration window.
+  // Agents respond to human/external messages always. For internal-only messages,
+  // allow up to `decisionDepth` rounds of inter-agent collaboration after the last
+  // human message, then stop to prevent infinite ping-pong.
   if (mode === "active" && !hasMention) {
     const hasNonInternalSender = await (async () => {
       for (const msg of otherMessages) {
@@ -240,40 +280,66 @@ async function processConversation(
     })();
 
     if (!hasNonInternalSender) {
-      log.info(`Skipping ${otherMessages.length} message(s) in ${conversationId} (internal-only, no @mention)`);
-      await store.markRead(unreadMessages.map((m) => m.id), agentId);
-      return;
+      // All unread are from internal agents. Check if we're within the collaboration window.
+      // Count consecutive internal-only messages since the last human/external message.
+      const maxRounds = decisionDepth ?? 3;
+      const recentMessages = await store.getMessages(conversationId, agentId, { limit: 50 });
+
+      let internalRounds = 0;
+      // Walk backwards from the most recent message
+      for (let i = recentMessages.length - 1; i >= 0; i--) {
+        const msg = recentMessages[i];
+        // Skip status messages entirely (system noise — whispers, join/leave, etc.)
+        if (msg.type === "status") continue;
+        const sender = await store.getAgent(msg.fromAgent);
+        // Skip system agent messages (agorai-system)
+        if (sender && sender.type === "system") continue;
+        // Hit a human or external agent message — stop counting
+        if (!sender || sender.type !== "internal") break;
+        internalRounds++;
+      }
+
+      // Each "round" = all agents respond once. With N agents, N messages = 1 round.
+      // Use a generous threshold: maxRounds * number of known internal agents in conversation.
+      const subscribers = await store.getSubscribers(conversationId);
+      const internalSubCount = await (async () => {
+        let count = 0;
+        for (const sub of subscribers) {
+          const a = await store.getAgent(sub.agentId);
+          if (a && a.type === "internal") count++;
+        }
+        return Math.max(count, 1);
+      })();
+
+      const maxInternalMessages = maxRounds * internalSubCount;
+
+      if (internalRounds >= maxInternalMessages) {
+        log.info(`Skipping in ${conversationId}: ${internalRounds} internal messages since last human (limit: ${maxInternalMessages}, depth: ${maxRounds})`);
+        await store.markRead(unreadMessages.map((m) => m.id), agentId);
+        return "skipped";
+      }
+
+      log.info(`Collaboration window: ${internalRounds}/${maxInternalMessages} internal messages — continuing`);
     }
   }
 
-  // Build context: get last 20 messages (not just unread) for full context
-  const contextMessages = await store.getMessages(conversationId, agentId, { limit: 20 });
-
-  // Resolve agent names for context display
-  const agentNameCache = new Map<string, string>();
-  agentNameCache.set(agentId, agentName);
-
-  const promptParts: string[] = [];
-  for (const msg of contextMessages) {
-    let senderName = agentNameCache.get(msg.fromAgent);
-    if (!senderName) {
-      const senderAgent = await store.getAgent(msg.fromAgent);
-      senderName = senderAgent?.name ?? msg.fromAgent;
-      agentNameCache.set(msg.fromAgent, senderName);
-    }
-
-    const role = msg.fromAgent === agentId ? "you" : senderName;
-    promptParts.push(`[${role}]: ${msg.content}`);
-  }
-
-  const prompt = promptParts.join("\n\n");
+  // Build full context from store (identity, rules, skills, memory, messages)
+  const context = await buildAgentContext({
+    store,
+    agentId,
+    conversationId,
+    includeMessages: true,
+    messageLimit: 20,
+    decisionDepth,
+  });
+  const rendered = renderForPrompt(context, mode);
 
   // Call adapter — mark read ONLY after successful send
   try {
     log.info(`Generating response for conversation ${conversationId}...`);
     const invokeOpts: AgentInvokeOptions = {
-      prompt,
-      systemPrompt,
+      prompt: rendered.conversationPrompt,
+      systemPrompt: customSystemPrompt ?? rendered.systemPrompt,
     };
     const response = await adapter.invoke(invokeOpts);
 
@@ -282,7 +348,7 @@ async function processConversation(
     if (!trimmed || trimmed === "[NO_RESPONSE]") {
       log.debug(`No response needed for ${conversationId} — marking read`);
       await store.markRead(unreadMessages.map((m) => m.id), agentId);
-      return;
+      return "ok";
     }
 
     // Send response to store
@@ -298,9 +364,11 @@ async function processConversation(
     // Mark as read AFTER successful send
     await store.markRead(unreadMessages.map((m) => m.id), agentId);
     log.debug(`Marked ${unreadMessages.length} messages read in ${conversationId}`);
+    return "ok";
   } catch (err) {
     log.error(`Adapter/send failed in ${conversationId}: ${err instanceof Error ? err.message : String(err)}`);
     // Messages NOT marked read — they will be retried on next poll
+    return "error";
   }
 }
 

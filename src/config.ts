@@ -137,6 +137,9 @@ export const ConfigSchema = z.object({
       }).default({}),
       /** Max HTTP request body size in bytes. Default 512KB. */
       maxBodySize: z.number().int().min(1024).default(512 * 1024),
+      /** Ideal discussion rounds before convergence. 0 = disabled. Injected as guidance, not enforced. */
+      decisionDepth: z.number().int().min(0).default(5)
+        .describe("Ideal discussion rounds before convergence. 0 = disabled. Injected as guidance, not enforced."),
       apiKeys: z.array(z.object({
         /** Pass-key in plaintext. Use keyEnv instead to keep secrets out of the config file. */
         key: z.string().optional(),
@@ -154,6 +157,33 @@ export const ConfigSchema = z.object({
     })
     .optional()
     .describe("Bridge HTTP server config. Absent = bridge disabled."),
+
+  gui: z
+    .object({
+      enabled: z.boolean().default(false),
+      port: z.number().int().min(1).max(65535).default(3101),
+      host: z.string().default("127.0.0.1"),
+      /** Base path for reverse proxy (e.g. "/agorai"). Empty string = root. */
+      basePath: z.string().default(""),
+      defaultAdmin: z.object({
+        email: z.string(),
+        name: z.string(),
+        password: z.string().optional(),
+      }).optional(),
+    })
+    .optional()
+    .describe("Web GUI config. Absent = GUI disabled."),
+
+  keryx: z
+    .object({
+      enabled: z.boolean().default(true),
+      baseTimeoutMs: z.number().default(30_000),
+      nudgeAfterMs: z.number().default(45_000),
+      maxRoundsPerTopic: z.number().default(5),
+      synthesisCapability: z.string().default("synthesis"),
+      healthWindowSize: z.number().default(10),
+    })
+    .default({}),
 });
 
 export const VisibilityLevelSchema = z.enum(["public", "team", "confidential", "restricted"]);

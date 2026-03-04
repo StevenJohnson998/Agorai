@@ -16,6 +16,7 @@ import type { IAuthProvider, AuthResult } from "./auth.js";
 import type { Config } from "../config.js";
 import type { MessageCreatedEvent, AccessRequestCreatedEvent, TaskCreatedEvent, TaskUpdatedEvent } from "../store/events.js";
 import { VISIBILITY_ORDER, type VisibilityLevel } from "../store/types.js";
+import { buildBridgeRules, renderForMcpInstructions } from "../agent/context.js";
 import { createLogger } from "../logger.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -162,68 +163,15 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
       ? Object.keys(TOOL_GROUPS)
       : ["core", ...toolGroups]
   );
-  // Build instructions dynamically — only include sections for active tool groups
-  const instructionParts: string[] = [
-    "You are connected to Agorai, a multi-agent collaboration bridge.",
-    "",
-    "IMPORTANT — Message read tracking:",
-    "After you read messages with get_messages, you MUST call mark_read with the same conversation_id.",
-    "This prevents you from seeing the same messages again on the next poll.",
-    "Example: get_messages({conversation_id: \"abc\"}) → process messages → mark_read({conversation_id: \"abc\"})",
-    "",
-    "IMPORTANT — Visibility / confidentiality levels:",
-    "Messages have a visibility level: public < team < confidential < restricted.",
-    "When you send a message, set its visibility to the HIGHEST level among the messages you used as input.",
-    "For example, if you read messages at 'team' and 'confidential' level, your reply MUST be 'confidential'.",
-    "If unsure, default to the conversation's default visibility. Never downgrade confidentiality.",
-    "",
-    "IMPORTANT — Message metadata model:",
-    "Messages have two metadata fields:",
-    "- bridgeMetadata: trusted data injected by the bridge (visibility, capping info, confidentiality instructions). Always present. Read the 'instructions' field for guidance on how to handle confidentiality for this project.",
-    "- agentMetadata: your private operational data (cost, model, tokens, etc.). Only visible to you — other agents cannot see it.",
-    "When sending a message, pass any operational metadata in the 'metadata' field. Do NOT include keys starting with '_bridge'.",
-    "",
-    "Typical workflow:",
-    "1. get_status — check for unread messages",
-    "2. list_projects → list_conversations → subscribe to conversations you want to follow",
-    "3. get_messages({conversation_id, unread_only: true}) — fetch new messages",
-    "4. Process/respond with send_message (set visibility to max of input messages' visibility)",
-    "5. mark_read({conversation_id}) — ALWAYS do this after reading, even if you don't reply",
-    "",
-    "IMPORTANT — @mentions and context:",
-    "Use @agent-name to mention specific agents. Use list_subscribers to see who is in a conversation.",
-    "When you @mention an agent who hasn't been active in the conversation, YOU are responsible for providing them with the necessary context.",
-    "They may not have seen previous messages. Include a brief summary of the situation, key decisions made, and what you need from them.",
-    "Do NOT assume other agents have read the full conversation history.",
-  ];
-
-  if (activeGroups.has("access")) {
-    instructionParts.push(
-      "",
-      "IMPORTANT — Access requests:",
-      "If you try to subscribe to a conversation you don't have access to, an access request is created automatically.",
-      "Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.",
-      "Check your request status with get_my_access_requests.",
-    );
-  }
-
-  if (activeGroups.has("skills")) {
-    instructionParts.push(
-      "",
-      "IMPORTANT — Skills system (progressive disclosure):",
-      "Skills provide behavioral instructions and context. They use 3-tier progressive disclosure to save context:",
-      "- Tier 1 (metadata): When you subscribe, you receive skill metadata (title, summary, instructions, tags) — NOT the full content.",
-      "- Tier 2 (content): Call get_skill(skill_id) to load the full content of a skill you need.",
-      "- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.",
-      "Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.",
-    );
-  }
+  // Build instructions from single source of truth (agent/context.ts)
+  const rules = buildBridgeRules([...activeGroups]);
+  const instructions = renderForMcpInstructions(rules);
 
   const server = new McpServer({
     name: "agorai-bridge",
     version: PKG_VERSION,
   }, {
-    instructions: instructionParts.join("\n"),
+    instructions,
   });
 
   // --- Agent tools ---
@@ -1135,6 +1083,17 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   );
   const maxBodySize = bridgeConfig.maxBodySize;
 
+  // Register the system agent for @mention offline whispers
+  const systemAgent = await store.registerAgent({
+    name: "agorai-system",
+    type: "system",
+    capabilities: [],
+    clearanceLevel: "team",
+    apiKeyHash: "internal:agorai-system",
+  });
+  const systemAgentId = systemAgent.id;
+  log.info(`Registered system agent: agorai-system (${systemAgentId})`);
+
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -1269,7 +1228,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   // --- SSE push notification dispatch ---
 
   const eventBusListeners = store.eventBus
-    ? setupSSEDispatch(store)
+    ? setupSSEDispatch(store, systemAgentId)
     : (log.info("Store has no eventBus — SSE push notifications disabled, agents will use polling"), undefined);
 
   const host = bridgeConfig.host;
@@ -1334,14 +1293,14 @@ function removeSession(sessionId: string): void {
 
 // --- SSE push notification dispatch ---
 
-function setupSSEDispatch(store: IStore): {
+function setupSSEDispatch(store: IStore, systemAgentId: string): {
   messageListener: (event: MessageCreatedEvent) => void;
   accessRequestListener: (event: AccessRequestCreatedEvent) => void;
   taskCreatedListener: (event: TaskCreatedEvent) => void;
   taskUpdatedListener: (event: TaskUpdatedEvent) => void;
 } {
   const messageListener = (event: MessageCreatedEvent) => {
-    dispatchMessageNotification(store, event).catch((err) => {
+    dispatchMessageNotification(store, event, systemAgentId).catch((err) => {
       log.error(`SSE dispatch error: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
@@ -1372,7 +1331,7 @@ function setupSSEDispatch(store: IStore): {
   return { messageListener, accessRequestListener, taskCreatedListener, taskUpdatedListener };
 }
 
-async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent): Promise<void> {
+async function dispatchMessageNotification(store: IStore, event: MessageCreatedEvent, systemAgentId: string): Promise<void> {
   const { message } = event;
 
   // Get all subscribers + all agents in one batch (avoids N+1 DB calls)
@@ -1381,6 +1340,43 @@ async function dispatchMessageNotification(store: IStore, event: MessageCreatedE
     store.listAgents(),
   ]);
   const agentMap = new Map(allAgents.map((a) => [a.id, a]));
+  const agentByName = new Map(allAgents.map((a) => [a.name.toLowerCase(), a]));
+
+  // @mention offline whisper: if a human/external agent mentions an offline agent, whisper the sender.
+  // Internal agents often echo @names in responses — skip those to avoid whisper spam.
+  const senderAgent = agentMap.get(message.fromAgent);
+  const senderType = senderAgent?.type ?? "unknown";
+  const isHumanOrExternal = senderType !== "internal" && senderType !== "system";
+  if (message.type !== "status" && !message.recipients && isHumanOrExternal && message.fromAgent !== systemAgentId) {
+    const mentions = message.content.match(/@([\w-]+)/g);
+    if (mentions) {
+      const offlineNames: string[] = [];
+      const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+      const now = Date.now();
+
+      for (const mention of new Set(mentions)) {
+        const name = mention.slice(1).toLowerCase(); // remove @
+        const agent = agentByName.get(name);
+        if (!agent || agent.id === message.fromAgent) continue;
+
+        const isOffline = agent.status === "error" ||
+          (now - new Date(agent.lastSeenAt).getTime() > OFFLINE_THRESHOLD_MS);
+        if (isOffline) offlineNames.push(agent.name);
+      }
+
+      if (offlineNames.length > 0) {
+        const names = offlineNames.map((n) => `@${n}`).join(", ");
+        const plural = offlineNames.length > 1;
+        await store.sendMessage({
+          conversationId: message.conversationId,
+          fromAgent: systemAgentId,
+          content: `⚠️ ${names} ${plural ? "are" : "is"} currently offline — do not wait for a reply.`,
+          type: "status",
+          recipients: [message.fromAgent],
+        });
+      }
+    }
+  }
 
   log.debug(`SSE dispatch: ${subscribers.length} sub(s), ${agentSessions.size} session group(s)`);
 

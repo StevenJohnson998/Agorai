@@ -72,6 +72,8 @@ Options:
   --with-agent <name>      (serve) Spawn an internal agent in the same process (repeatable)
   --port <number>          (serve) Override bridge port (default: from config, usually 3100)
   --host <addr>            (serve) Override bridge host (default: from config, usually 127.0.0.1)
+  --gui                    (serve) Enable web GUI (default: from config)
+  --gui-port <number>      (serve) Override GUI port (default: 3101)
   --type <type>            (agent add) claude-desktop|claude-code|openai-compat|ollama|custom
   --model <model>          (agent add/update) Model name
   --endpoint <url>         (agent add/update) API endpoint URL
@@ -616,6 +618,9 @@ async function cmdServe(args: string[]) {
   const withAgents: string[] = [];
   let portOverride: number | undefined;
   let hostOverride: string | undefined;
+  let guiFlag = false;
+  let guiPortOverride: number | undefined;
+  let noKeryx = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--with-agent" && args[i + 1]) {
       withAgents.push(args[i + 1]);
@@ -630,6 +635,18 @@ async function cmdServe(args: string[]) {
     } else if (args[i] === "--host" && args[i + 1]) {
       hostOverride = args[i + 1];
       i++;
+    } else if (args[i] === "--gui") {
+      guiFlag = true;
+    } else if (args[i] === "--gui-port" && args[i + 1]) {
+      guiPortOverride = parseInt(args[i + 1], 10);
+      if (isNaN(guiPortOverride) || guiPortOverride < 1 || guiPortOverride > 65535) {
+        console.error("Error: --gui-port must be a valid port number (1-65535).");
+        process.exit(1);
+      }
+      guiFlag = true; // --gui-port implies --gui
+      i++;
+    } else if (args[i] === "--no-keryx") {
+      noKeryx = true;
     }
   }
 
@@ -691,8 +708,32 @@ async function cmdServe(args: string[]) {
 
   const server = await startBridgeServer({ store, auth, config });
 
-  // Spawn internal agents if --with-agent was specified
+  // Start GUI if enabled
+  let guiServer: { server: { close: () => void } } | undefined;
+  const guiEnabled = guiFlag || config.gui?.enabled;
+  if (guiEnabled) {
+    const { createGuiServer } = await import("./gui/server.js");
+    guiServer = await createGuiServer(store, {
+      port: guiPortOverride ?? config.gui?.port ?? 3101,
+      host: hostOverride ?? config.gui?.host ?? config.bridge.host,
+      basePath: config.gui?.basePath ?? "",
+      defaultAdmin: config.gui?.defaultAdmin,
+    });
+  }
+
+  // Start Keryx discussion manager
   const ac = new AbortController();
+  let keryxModule: Awaited<typeof import("./keryx/module.js")>["KeryxModule"]["prototype"] | undefined;
+  if (!noKeryx && config.keryx.enabled) {
+    const { KeryxModule } = await import("./keryx/module.js");
+    keryxModule = new KeryxModule(store, config.keryx, ac.signal);
+    await keryxModule.start();
+    console.log("  Keryx: enabled");
+  } else {
+    console.log(`  Keryx: disabled${noKeryx ? " (--no-keryx)" : ""}`);
+  }
+
+  // Spawn internal agents if --with-agent was specified
   const agentPromises: Promise<void>[] = [];
 
   if (withAgents.length > 0) {
@@ -716,6 +757,7 @@ async function cmdServe(args: string[]) {
           agentName,
           mode: "active",
           signal: ac.signal,
+          decisionDepth: config.bridge?.decisionDepth ?? 5,
         }),
       );
     }
@@ -727,6 +769,8 @@ async function cmdServe(args: string[]) {
     ac.abort();
     // Wait a bit for agents to stop gracefully
     await Promise.allSettled(agentPromises);
+    if (keryxModule) await keryxModule.stop();
+    if (guiServer) guiServer.server.close();
     await server.close();
     await store.close();
     process.exit(0);
@@ -1035,6 +1079,7 @@ async function cmdAgentRun(args: string[]) {
     pollIntervalMs,
     systemPrompt: values.system,
     signal: ac.signal,
+    decisionDepth: config.bridge?.decisionDepth ?? 5,
   });
 
   await store.close();

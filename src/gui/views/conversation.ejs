@@ -1,0 +1,220 @@
+<div class="flex flex-col h-full">
+  <!-- Conversation header -->
+  <div class="border-b border-slate-800 px-4 py-2 flex items-center justify-between bg-slate-900/50 shrink-0">
+    <div class="flex items-center gap-2">
+      <span id="sse-status-dot" class="sse-dot sse-connecting" title="Connecting…"></span>
+      <div>
+        <h2 class="font-semibold text-white text-sm"># <%= conversation.title %></h2>
+        <% if (typeof project !== 'undefined' && project) { %>
+          <span class="text-xs text-slate-500"><%= project.name %></span>
+        <% } %>
+      </div>
+    </div>
+    <div id="participants-section" class="flex items-center gap-1">
+      <% if (typeof subscribers !== 'undefined') { %>
+        <%
+          // Filter available agents: not yet subscribed + interactive (humans or agents with "chat" capability)
+          var subscriberIds = subscribers.map(function(s) { return s.agentId; });
+          var availableAgents = (typeof agents !== 'undefined' ? agents : []).filter(function(a) {
+            if (subscriberIds.indexOf(a.id) !== -1) return false;
+            return a.type === 'human' || (a.capabilities && a.capabilities.indexOf('chat') !== -1);
+          });
+        %>
+        <%- include('partials/participants', { user: user, conversation: conversation, subscribers: subscribers, agents: availableAgents, envPath: envPath, basePath: basePath }) %>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- Messages area -->
+  <div class="relative flex-1 min-h-0">
+    <div id="messages-container" class="h-full overflow-y-auto p-4 space-y-3">
+      <% messages.forEach(function(message) { %>
+        <%- include('partials/message', { message: message, agentMap: agentMap, user: user, envPath: envPath, basePath: basePath }) %>
+      <% }); %>
+    </div>
+    <!-- Scroll-to-bottom pill -->
+    <button id="scroll-to-bottom" class="hidden absolute bottom-4 left-1/2 -translate-x-1/2 z-10
+      bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 hover:text-white
+      rounded-full px-3 py-1.5 text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
+      aria-label="Scroll to bottom">
+      <span class="scroll-btn-count hidden bg-brand-600 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none"></span>
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+    </button>
+  </div>
+
+  <!-- Input area -->
+  <div class="border-t border-slate-800 p-3 bg-slate-900/50 shrink-0 relative">
+    <!-- @mention autocomplete dropdown -->
+    <div id="mention-dropdown" class="hidden absolute bottom-full left-3 right-3 mb-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-50 max-h-48 overflow-y-auto"></div>
+
+    <form id="send-form" hx-post="<%= envPath %>/c/<%= conversation.id %>/send"
+          hx-target="#messages-container"
+          hx-swap="beforeend"
+          hx-on::before-request="this.querySelector('#send-btn').disabled=true;this.querySelector('#send-icon').classList.add('hidden');this.querySelector('#send-spinner').classList.remove('hidden')"
+          hx-on::after-request="this.reset();this.querySelector('textarea').style.height='auto';this.querySelector('#send-btn').disabled=false;this.querySelector('#send-icon').classList.remove('hidden');this.querySelector('#send-spinner').classList.add('hidden');closeMentionDropdown();scrollChatToBottom(false)"
+          class="flex gap-2">
+      <textarea id="msg-input" name="content" rows="1" placeholder="Type a message... (@ to mention)"
+        class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"
+        onkeydown="handleMentionKey(event)"
+        oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';handleMentionInput(this)"></textarea>
+      <button type="submit" id="send-btn" title="Send message"
+        class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium self-end min-w-[44px] min-h-[44px] flex items-center justify-center">
+        <svg id="send-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+        <svg id="send-spinner" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      </button>
+    </form>
+  </div>
+</div>
+
+<script src="<%= basePath %>/static/sse-client.js"></script>
+<script>
+  // Scroll to bottom on load
+  (function() {
+    var container = document.getElementById('messages-container');
+    if (container) container.scrollTop = container.scrollHeight;
+
+    // Determine last message timestamp from DOM
+    var msgEls = container ? container.querySelectorAll('[data-created-at]') : [];
+    var lastTs = msgEls.length > 0 ? msgEls[msgEls.length - 1].getAttribute('data-created-at') : null;
+
+    // Init SSE client
+    if (typeof initSSE === 'function') {
+      initSSE({
+        streamUrl: '<%= envPath %>/c/<%= conversation.id %>/stream',
+        catchUpUrl: '<%= envPath %>/c/<%= conversation.id %>/messages-since',
+        conversationId: '<%= conversation.id %>',
+        lastMessageTs: lastTs
+      });
+    }
+  })();
+
+  // --- @mention autocomplete ---
+  var mentionAgents = <%- JSON.stringify((typeof subscribers !== 'undefined' ? subscribers : []).map(function(s) {
+    return { name: s.name, type: s.type, online: s.online, status: s.agentStatus || 'offline' };
+  })) %>;
+  // Sort: online first, error, offline
+  mentionAgents.sort(function(a, b) {
+    function order(x) { return x.online ? 0 : x.status === 'error' ? 1 : 2; }
+    return order(a) - order(b);
+  });
+
+  var mentionDropdown = document.getElementById('mention-dropdown');
+  var mentionActive = false;
+  var mentionStart = -1; // cursor position of the '@'
+  var mentionSelectedIdx = 0;
+
+  function getMentionQuery(textarea) {
+    var pos = textarea.selectionStart;
+    var text = textarea.value.substring(0, pos);
+    // Find the last '@' that's either at start or preceded by whitespace
+    var lastAt = -1;
+    for (var i = text.length - 1; i >= 0; i--) {
+      if (text[i] === '@' && (i === 0 || /\s/.test(text[i - 1]))) { lastAt = i; break; }
+      if (/\s/.test(text[i])) break; // hit space before finding @
+    }
+    if (lastAt === -1) return null;
+    var query = text.substring(lastAt + 1);
+    // Don't trigger if query has spaces (completed mention)
+    if (/\s/.test(query)) return null;
+    return { start: lastAt, query: query };
+  }
+
+  function getFilteredAgents(query) {
+    var q = query.toLowerCase();
+    return mentionAgents.filter(function(a) {
+      return a.name.toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  function renderDropdown(agents, selectedIdx) {
+    if (agents.length === 0) { closeMentionDropdown(); return; }
+    var html = '';
+    agents.forEach(function(agent, i) {
+      var dotClass = agent.online ? 'bg-green-400' : agent.status === 'error' ? 'bg-red-500' : 'bg-slate-600';
+      var statusText = agent.online ? 'Online' : agent.status === 'error' ? 'Error' : 'Offline';
+      var selected = i === selectedIdx ? 'bg-slate-700' : '';
+      html += '<div class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-700 ' + selected + '" data-idx="' + i + '" onmousedown="selectMention(' + i + ')">'
+        + '<span class="w-2 h-2 rounded-full shrink-0 ' + dotClass + '"></span>'
+        + '<span class="text-sm text-white flex-1 truncate">' + agent.name + '</span>'
+        + '<span class="text-[10px] text-slate-500">' + statusText + '</span>'
+        + '</div>';
+    });
+    mentionDropdown.innerHTML = html;
+    mentionDropdown.classList.remove('hidden');
+    // Scroll selected into view
+    var el = mentionDropdown.children[selectedIdx];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function closeMentionDropdown() {
+    mentionDropdown.classList.add('hidden');
+    mentionDropdown.innerHTML = '';
+    mentionActive = false;
+    mentionStart = -1;
+    mentionSelectedIdx = 0;
+  }
+
+  function selectMention(idx) {
+    var textarea = document.getElementById('msg-input');
+    var result = getMentionQuery(textarea);
+    if (!result) { closeMentionDropdown(); return; }
+    var filtered = getFilteredAgents(result.query);
+    if (idx >= filtered.length) return;
+    var agent = filtered[idx];
+    var before = textarea.value.substring(0, result.start);
+    var after = textarea.value.substring(textarea.selectionStart);
+    textarea.value = before + '@' + agent.name + ' ' + after;
+    var newPos = result.start + agent.name.length + 2; // @ + name + space
+    textarea.selectionStart = textarea.selectionEnd = newPos;
+    textarea.focus();
+    closeMentionDropdown();
+  }
+
+  function handleMentionInput(textarea) {
+    var result = getMentionQuery(textarea);
+    if (!result) { closeMentionDropdown(); return; }
+    mentionActive = true;
+    mentionStart = result.start;
+    var filtered = getFilteredAgents(result.query);
+    mentionSelectedIdx = Math.min(mentionSelectedIdx, Math.max(filtered.length - 1, 0));
+    renderDropdown(filtered, mentionSelectedIdx);
+  }
+
+  function handleMentionKey(event) {
+    if (!mentionActive) {
+      // Default: Enter sends
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        event.target.closest('form').requestSubmit();
+      }
+      return;
+    }
+    var textarea = event.target;
+    var result = getMentionQuery(textarea);
+    var filtered = result ? getFilteredAgents(result.query) : [];
+    if (filtered.length === 0) { closeMentionDropdown(); return; }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      mentionSelectedIdx = (mentionSelectedIdx + 1) % filtered.length;
+      renderDropdown(filtered, mentionSelectedIdx);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      mentionSelectedIdx = (mentionSelectedIdx - 1 + filtered.length) % filtered.length;
+      renderDropdown(filtered, mentionSelectedIdx);
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      selectMention(mentionSelectedIdx);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMentionDropdown();
+    }
+  }
+
+  // Close dropdown on click outside
+  document.addEventListener('click', function(e) {
+    if (!mentionDropdown.contains(e.target) && e.target.id !== 'msg-input') {
+      closeMentionDropdown();
+    }
+  });
+</script>

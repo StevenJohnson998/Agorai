@@ -1,5 +1,29 @@
 # Features
 
+## Keryx Discussion Manager (v0.7)
+
+Built-in rule-based moderator that manages multi-agent conversations. Registers as type `moderator`. Manages process, never generates content. Zero LLM dependency — all pure TypeScript.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Round lifecycle** | State machine: IDLE → OPEN → COLLECTING → SYNTHESIZING → CLOSED (+ INTERRUPTED). Triggered by human messages only | Done |
+| **Adaptive timing** | Dynamic timeout from prompt complexity, agent history, round number, subscriber count. No fixed floor/ceiling | Done |
+| **Progressive escalation** | 4-level chain: silent wait → nudge → CC backup → escalate to human (at baseTimeout × 1.0, 1.5, 2.5, 4.0) | Done |
+| **Synthesis delegation** | Finds best agent by `synthesisCapability`. Falls back to least-active agent in round | Done |
+| **Loop detection** | Levenshtein distance on consecutive messages from same agent (similarity > 0.7 = loop) | Done |
+| **Drift detection** | Cosine similarity on bag-of-words TF vectors (similarity < 0.3 = drift) | Done |
+| **Domination detection** | Message count ratio per agent (> 40% with 3+ agents) | Done |
+| **Human commands** | `@keryx pause/resume/skip/extend/status/interrupt/enable/disable`. Duration parsing (30s, 2m, 1h) | Done |
+| **Interrupt flow** | Cancel timers, wait for human follow-up, re-open round with context | Done |
+| **Behavioral skill** | Auto-creates bridge-level Keryx protocol skill on start | Done |
+| **Bridge rules injection** | `keryxRules` in MCP instructions + LLM system prompt when active | Done |
+| **Onboarding** | Detects new agent subscriptions, sends onboarding template | Done |
+| **Event-driven** | Subscribes to `store.eventBus.onMessage()` — instant reaction, not poll-based | Done |
+| **Conversation discovery** | Periodic discovery loop (10s), auto-subscribes Keryx to all conversations | Done |
+| **`--no-keryx` flag** | Disable Keryx on `agorai serve` | Done |
+| **Config section** | `keryx.enabled`, `baseTimeoutMs`, `nudgeAfterMs`, `maxRoundsPerTopic`, `synthesisCapability`, `healthWindowSize` | Done |
+| **Moderator agent type** | Registers as `moderator` — agents see it as a process manager, not a peer | Done |
+
 ## Message Metadata & Confidentiality (v0.4)
 
 | Feature | Description | Status |
@@ -301,6 +325,37 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Smart routing** | Routes messages to the best agent based on capabilities and @mention patterns | Planned (v0.6) |
 | **Conflict detection** | Flags contradictory decisions or duplicate work across conversations | Planned (v0.7) |
 
+## GUI MVP (v0.6.2)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Auth system** | Session-based auth with bcrypt, httpOnly cookies, account lockout, rate limiting | Done |
+| **Express + EJS** | Server-side rendered GUI, no build step. htmx + Tailwind CDN | Done |
+| **Landing page** | Static landing page at `/agorai/` with Login button, Caddy hybrid routing (static + reverse proxy) | Done |
+| **Login with env picker** | Environment dropdown (test only for now), redirects to `/agorai/test/c/` | Done |
+| **Conversations list** | `/agorai/test/c/` — projects with conversations, create project/conversation buttons | Done |
+| **Real-time chat** | SSE-powered message stream, htmx partial swaps, auto-scroll | Done |
+| **Admin panel** | User management (approve/reject/delete), admin-only access | Done |
+| **Route protection** | `requireAuth`, `requireAdmin`, `requireConversationAccess` (subscription or admin) | Done |
+| **Context menus** | ⋮ menu on projects (new conversation, rename, delete) and conversations (rename, delete). Creator or admin only | Done |
+| **Project/conversation deletion** | Soft-delete only (`status = 'deleted'`). Data preserved in DB, hidden from listings. No hard-delete or file cleanup yet | Done |
+| **Mobile responsive** | Touch targets, sidebar toggle, responsive layout | Done |
+| **Mobile SSE bug** | Agent replies don't auto-appear on mobile browsers (need manual refresh). SSE connection likely dropped by mobile Safari/Chrome. Priority fix for demo | Bug |
+| **Participant management** | "+participant" button to add Users or AIs to conversations. Avatar pills with status dots, add/remove drawer | Done |
+| **Agent health status** | Agents tracked as online/error/offline. Red/green/grey status dots. System messages for unavailable/recovery/join events | Done |
+| **Collaboration tuning** | Collaboration window (decisionDepth × agentCount), anti-impersonation, early consensus stopping via [NO_RESPONSE] | Done |
+| **Verbosity control** | User preference (Concise/Normal/Detailed) that controls agent response length via bridge-level skill | Planned |
+| **Debate moderation** | Optional moderator role per conversation. Admin sets preferred moderator or random. Moderator gets synthesis instructions, others defer. Config: `moderation.enabled` + `moderation.preferredModerator` | Planned |
+| **Hard-delete & file cleanup** | Permanently delete soft-deleted projects/conversations and associated data (messages, subscriptions, memory, access requests). Admin-only purge tool | Planned |
+| **Restore deleted items** | Admin tool to list and restore soft-deleted projects/conversations | Planned |
+| **Auto-purge policy** | Configurable retention period for soft-deleted items before hard-delete | Planned |
+| **Subscription cleanup** | New conversations should only have creator as subscriber. Investigate and fix auto-subscribe behavior | Planned |
+| **Admin desktop-only** | Hide admin panel link on mobile. Admin pages are desktop-only — complex tables and settings don't need mobile optimization | Planned |
+| **Landing hamburger menu** | Replace full top nav with collapsible hamburger menu (☰) on mobile. Expands as side drawer | Planned |
+| **Claude Code as participant** | Allow Claude Code (via MCP) to participate in conversations as a full agent — read messages, respond, collaborate with other agents directly from the CLI | Planned |
+| **GUI-managed Claude Code** | Admin-only start/stop of a local Claude Code instance from the GUI. Periodically checks subscribed conversations and responds. No API key needed — uses local CLI | Planned |
+| **Claude SDK adapter** | Alternative path: Claude API adapter using `@anthropic-ai/sdk` for users who prefer API-based Claude participation (requires Anthropic API key). Same bridge integration as internal agents | Roadmap |
+
 ## Roadmap
 
 | Version | Focus |
@@ -315,7 +370,9 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming (atomic + release + heartbeat), structured conversations, directed messages, message tags, filter by agent, agent memory (private scratchpad, 3 scopes), instruction matrix (scope × selector, replaces playbook), internal agents default active** |
 | **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting by name, skill files, tag filtering. Replaces instruction matrix. 35 tools** |
 | v0.6.x | Context optimization — per-agent tool groups (done), meta-tool pattern (2 tools replace 35, ~90% savings), description trimming |
-| v0.7 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
-| v0.8 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
-| v0.9 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
+| **v0.7** | **Keryx discussion manager — round lifecycle, adaptive timing, progressive escalation, pattern detection (loop/drift/domination), human commands, synthesis delegation. Zero LLM dependency** |
+| v0.8 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
+| v0.9 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
+| v0.9.x | **Claude integration** — Claude SDK adapter (`@anthropic-ai/sdk`), GUI-managed Claude Code instance (admin start/stop, poll loop), Claude Agent SDK exploration |
+| v1.0 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
 | v1.0+ | Enterprise — OAuth/JWT, RBAC, remote agent proxy, audit dashboard, SaaS option |

@@ -44,6 +44,12 @@ import type {
   SkillSelector,
   SkillFilters,
   SkillFile,
+  User,
+  CreateUser,
+  Session,
+  UserStatus,
+  VerbosityLevel,
+  AgentStatus,
 } from "./types.js";
 import { VISIBILITY_ORDER } from "./types.js";
 
@@ -86,6 +92,7 @@ export class SqliteStore implements IStore {
         description TEXT,
         visibility TEXT NOT NULL DEFAULT 'team',
         confidentiality_mode TEXT NOT NULL DEFAULT 'normal',
+        status TEXT NOT NULL DEFAULT 'active',
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -238,6 +245,37 @@ export class SqliteStore implements IStore {
         FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_files_skill_filename ON skill_files(skill_id, filename);
+
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        status TEXT NOT NULL DEFAULT 'pending',
+        agent_id TEXT,
+        verbosity TEXT NOT NULL DEFAULT 'normal',
+        created_at TEXT NOT NULL,
+        approved_at TEXT,
+        approved_by TEXT,
+        last_login TEXT,
+        last_activity TEXT,
+        failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+        account_locked INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (agent_id) REFERENCES agents(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        last_activity TEXT NOT NULL,
+        ip_address TEXT,
+        user_agent TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     `);
 
     // --- Schema migrations for existing databases ---
@@ -280,6 +318,21 @@ export class SqliteStore implements IStore {
     // Check if messages table has recipients column (whisper support)
     if (!msgColNames.has("recipients")) {
       this.db.exec("ALTER TABLE messages ADD COLUMN recipients TEXT");
+    }
+
+    // Check if projects table has status column (soft-delete support)
+    if (!projColNames.has("status")) {
+      this.db.exec("ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+    }
+
+    // Check if agents table has status/status_message columns (health tracking)
+    const agentCols = this.db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+    const agentColNames = new Set(agentCols.map((c) => c.name));
+    if (!agentColNames.has("status")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN status TEXT NOT NULL DEFAULT 'offline'");
+    }
+    if (!agentColNames.has("status_message")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN status_message TEXT");
     }
 
     // Migrate instructions → skills
@@ -374,6 +427,8 @@ export class SqliteStore implements IStore {
       apiKeyHash: row.api_key_hash as string,
       lastSeenAt: row.last_seen_at as string,
       createdAt: row.created_at as string,
+      status: (row.status as AgentStatus) ?? "offline",
+      statusMessage: (row.status_message as string) ?? null,
     };
   }
 
@@ -406,7 +461,7 @@ export class SqliteStore implements IStore {
     if (existing) {
       const ts = now();
       this.db.prepare(`
-        UPDATE agents SET type = ?, capabilities = ?, clearance_level = ?, api_key_hash = ?, last_seen_at = ?
+        UPDATE agents SET type = ?, capabilities = ?, clearance_level = ?, api_key_hash = ?, last_seen_at = ?, status = 'online', status_message = NULL
         WHERE name = ?
       `).run(
         agent.type,
@@ -423,14 +478,16 @@ export class SqliteStore implements IStore {
         clearance_level: agent.clearanceLevel ?? "team",
         api_key_hash: agent.apiKeyHash,
         last_seen_at: ts,
+        status: "online",
+        status_message: null,
       });
     }
 
     const id = randomUUID();
     const ts = now();
     this.db.prepare(`
-      INSERT INTO agents (id, name, type, capabilities, clearance_level, api_key_hash, last_seen_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, type, capabilities, clearance_level, api_key_hash, last_seen_at, created_at, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'online')
     `).run(
       id,
       agent.name,
@@ -451,6 +508,8 @@ export class SqliteStore implements IStore {
       apiKeyHash: agent.apiKeyHash,
       lastSeenAt: ts,
       createdAt: ts,
+      status: "online" as AgentStatus,
+      statusMessage: null,
     };
   }
 
@@ -481,6 +540,14 @@ export class SqliteStore implements IStore {
 
   async updateAgentLastSeen(id: string): Promise<void> {
     this.db.prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?").run(now(), id);
+  }
+
+  async updateAgentStatus(id: string, status: AgentStatus, statusMessage?: string): Promise<void> {
+    this.db.prepare("UPDATE agents SET status = ?, status_message = ? WHERE id = ?").run(
+      status,
+      statusMessage ?? null,
+      id,
+    );
   }
 
   async removeAgent(id: string): Promise<boolean> {
@@ -525,12 +592,31 @@ export class SqliteStore implements IStore {
   async listProjects(agentId: string): Promise<Project[]> {
     const clearance = this.getAgentClearance(agentId);
     const rows = this.db.prepare(`
-      SELECT * FROM projects ORDER BY updated_at DESC
+      SELECT * FROM projects WHERE status != 'deleted' ORDER BY updated_at DESC
     `).all() as Record<string, unknown>[];
     const maxVis = visibilityToInt(clearance);
     return rows
       .filter((r) => visibilityToInt(r.visibility as VisibilityLevel) <= maxVis)
       .map((r) => this.rowToProject(r));
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    const now = new Date().toISOString();
+    // Soft-delete all conversations in the project
+    this.db.prepare(`
+      UPDATE conversations SET status = 'deleted', updated_at = ? WHERE project_id = ? AND status != 'deleted'
+    `).run(now, id);
+    // Soft-delete the project itself
+    this.db.prepare(`
+      UPDATE projects SET status = 'deleted', updated_at = ? WHERE id = ?
+    `).run(now, id);
+  }
+
+  async renameProject(id: string, name: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE projects SET name = ?, updated_at = ? WHERE id = ?
+    `).run(name, now, id);
   }
 
   private rowToProject(row: Record<string, unknown>): Project {
@@ -676,11 +762,25 @@ export class SqliteStore implements IStore {
     const clearance = this.getAgentClearance(agentId);
     const maxVis = visibilityToInt(clearance);
     const rows = this.db.prepare(`
-      SELECT * FROM conversations WHERE project_id = ? ORDER BY updated_at DESC
+      SELECT * FROM conversations WHERE project_id = ? AND status != 'deleted' ORDER BY updated_at DESC
     `).all(projectId) as Record<string, unknown>[];
     return rows
       .filter((r) => visibilityToInt(r.default_visibility as VisibilityLevel) <= maxVis)
       .map((r) => this.rowToConversation(r));
+  }
+
+  async deleteConversation(id: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE conversations SET status = 'deleted', updated_at = ? WHERE id = ?
+    `).run(now, id);
+  }
+
+  async renameConversation(id: string, title: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?
+    `).run(title, now, id);
   }
 
   private rowToConversation(row: Record<string, unknown>): Conversation {
@@ -1507,5 +1607,205 @@ export class SqliteStore implements IStore {
       bridgeMetadata: bridgeMeta,
       createdAt: row.created_at as string,
     };
+  }
+
+  // --- GUI Users & Sessions ---
+
+  private rowToUser(row: Record<string, unknown>): User {
+    return {
+      id: row.id as string,
+      email: row.email as string,
+      passwordHash: row.password_hash as string,
+      name: row.name as string,
+      role: row.role as User["role"],
+      status: row.status as User["status"],
+      agentId: (row.agent_id as string) || null,
+      verbosity: (row.verbosity as VerbosityLevel) || "normal",
+      createdAt: row.created_at as string,
+      approvedAt: (row.approved_at as string) || null,
+      approvedBy: (row.approved_by as string) || null,
+      lastLogin: (row.last_login as string) || null,
+      lastActivity: (row.last_activity as string) || null,
+      failedLoginAttempts: (row.failed_login_attempts as number) || 0,
+      accountLocked: !!(row.account_locked as number),
+    };
+  }
+
+  async createUser(data: CreateUser): Promise<User> {
+    const id = randomUUID();
+    const ts = now();
+    const role = data.role ?? "user";
+    const status = data.status ?? "pending";
+
+    // Create a linked agent entry (type=human) for bridge interaction
+    const agentId = randomUUID();
+    this.db.prepare(
+      "INSERT INTO agents (id, name, type, capabilities, clearance_level, api_key_hash, last_seen_at, created_at) VALUES (?, ?, 'human', '[]', 'team', ?, ?, ?)"
+    ).run(agentId, data.name, `gui:${id}`, ts, ts);
+
+    this.db.prepare(
+      "INSERT INTO users (id, email, password_hash, name, role, status, agent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(id, data.email, data.passwordHash, data.name, role, status, agentId, ts);
+
+    return {
+      id,
+      email: data.email,
+      passwordHash: data.passwordHash,
+      name: data.name,
+      role,
+      status,
+      agentId,
+      verbosity: "normal",
+      createdAt: ts,
+      approvedAt: status === "approved" ? ts : null,
+      approvedBy: null,
+      lastLogin: null,
+      lastActivity: null,
+      failedLoginAttempts: 0,
+      accountLocked: false,
+    };
+  }
+
+  async getUserByEmail(email: string): Promise<User | null> {
+    const row = this.db.prepare("SELECT * FROM users WHERE email = ?").get(email) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToUser(row) : null;
+  }
+
+  async getUserById(id: string): Promise<User | null> {
+    const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToUser(row) : null;
+  }
+
+  async listUsers(): Promise<User[]> {
+    const rows = this.db.prepare("SELECT * FROM users ORDER BY created_at DESC").all() as Record<string, unknown>[];
+    return rows.map((r) => this.rowToUser(r));
+  }
+
+  async updateUserStatus(id: string, status: UserStatus, approvedBy?: string): Promise<User | null> {
+    const ts = now();
+    const result = this.db.prepare(
+      "UPDATE users SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?"
+    ).run(status, status === "approved" ? ts : null, approvedBy ?? null, id);
+
+    if (result.changes === 0) return null;
+    return this.getUserById(id);
+  }
+
+  async updateUserVerbosity(id: string, verbosity: VerbosityLevel): Promise<User | null> {
+    const result = this.db.prepare("UPDATE users SET verbosity = ? WHERE id = ?").run(verbosity, id);
+    if (result.changes === 0) return null;
+    return this.getUserById(id);
+  }
+
+  async createSession(userId: string, ip?: string, userAgent?: string): Promise<string> {
+    const id = randomUUID();
+    const ts = now();
+    // 15-day expiry
+    const expiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString();
+
+    this.db.prepare(
+      "INSERT INTO sessions (id, user_id, expires_at, last_activity, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(id, userId, expiresAt, ts, ip ?? null, userAgent ?? null);
+
+    // Update user's last_login
+    this.db.prepare("UPDATE users SET last_login = ?, last_activity = ? WHERE id = ?").run(ts, ts, userId);
+
+    return id;
+  }
+
+  async getSession(sessionId: string): Promise<(Session & { user: User }) | null> {
+    const row = this.db.prepare(
+      "SELECT s.*, u.id as u_id, u.email as u_email, u.password_hash as u_password_hash, u.name as u_name, u.role as u_role, u.status as u_status, u.agent_id as u_agent_id, u.verbosity as u_verbosity, u.created_at as u_created_at, u.approved_at as u_approved_at, u.approved_by as u_approved_by, u.last_login as u_last_login, u.last_activity as u_last_activity, u.failed_login_attempts as u_failed_login_attempts, u.account_locked as u_account_locked FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = ?"
+    ).get(sessionId) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    // Check expiry
+    if (new Date(row.expires_at as string) < new Date()) {
+      this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+      return null;
+    }
+
+    // Check idle timeout (1 hour)
+    const lastActivity = new Date(row.last_activity as string);
+    if (Date.now() - lastActivity.getTime() > 60 * 60 * 1000) {
+      this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+      return null;
+    }
+
+    return {
+      id: row.id as string,
+      userId: row.user_id as string,
+      expiresAt: row.expires_at as string,
+      lastActivity: row.last_activity as string,
+      ipAddress: (row.ip_address as string) || null,
+      userAgent: (row.user_agent as string) || null,
+      user: {
+        id: row.u_id as string,
+        email: row.u_email as string,
+        passwordHash: row.u_password_hash as string,
+        name: row.u_name as string,
+        role: row.u_role as User["role"],
+        status: row.u_status as User["status"],
+        agentId: (row.u_agent_id as string) || null,
+        verbosity: (row.u_verbosity as VerbosityLevel) || "normal",
+        createdAt: row.u_created_at as string,
+        approvedAt: (row.u_approved_at as string) || null,
+        approvedBy: (row.u_approved_by as string) || null,
+        lastLogin: (row.u_last_login as string) || null,
+        lastActivity: (row.u_last_activity as string) || null,
+        failedLoginAttempts: (row.u_failed_login_attempts as number) || 0,
+        accountLocked: !!(row.u_account_locked as number),
+      },
+    };
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+  }
+
+  async cleanExpiredSessions(): Promise<number> {
+    const ts = now();
+    const result = this.db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(ts);
+    return result.changes;
+  }
+
+  async updateSessionActivity(sessionId: string): Promise<void> {
+    const ts = now();
+    this.db.prepare("UPDATE sessions SET last_activity = ? WHERE id = ?").run(ts, sessionId);
+    // Also update user last_activity
+    this.db.prepare(
+      "UPDATE users SET last_activity = ? WHERE id = (SELECT user_id FROM sessions WHERE id = ?)"
+    ).run(ts, sessionId);
+  }
+
+  async incrementFailedLogins(userId: string): Promise<void> {
+    this.db.prepare(
+      "UPDATE users SET failed_login_attempts = failed_login_attempts + 1, account_locked = CASE WHEN failed_login_attempts + 1 >= 10 THEN 1 ELSE account_locked END WHERE id = ?"
+    ).run(userId);
+  }
+
+  async resetFailedLogins(userId: string): Promise<void> {
+    this.db.prepare(
+      "UPDATE users SET failed_login_attempts = 0, account_locked = 0 WHERE id = ?"
+    ).run(userId);
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    // Get user first to find linked agent
+    const user = await this.getUserById(id);
+    if (!user) return false;
+
+    // Delete sessions, user, and linked agent
+    this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
+    this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    if (user.agentId) {
+      this.db.prepare("DELETE FROM agents WHERE id = ?").run(user.agentId);
+    }
+    return true;
   }
 }

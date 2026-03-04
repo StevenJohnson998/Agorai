@@ -52,6 +52,8 @@ export interface AgentHighWaterMark {
   updatedAt: string;
 }
 
+export type AgentStatus = "online" | "error" | "offline";
+
 export interface Agent {
   id: string;
   name: string;
@@ -61,6 +63,8 @@ export interface Agent {
   apiKeyHash: string;
   lastSeenAt: string;
   createdAt: string;
+  status: AgentStatus;
+  statusMessage: string | null;
 }
 
 export interface Project {
@@ -326,4 +330,45 @@ export interface AgentMemory {
   scopeId: string | null;
   content: string;
   updatedAt: string;
+}
+
+// --- GUI Users & Sessions ---
+
+export type UserRole = "user" | "admin" | "superadmin";
+export type UserStatus = "pending" | "approved" | "rejected";
+export type VerbosityLevel = "concise" | "normal" | "detailed";
+
+export interface User {
+  id: string;
+  email: string;
+  passwordHash: string;
+  name: string;
+  role: UserRole;
+  status: UserStatus;
+  agentId: string | null;
+  verbosity: VerbosityLevel;
+  createdAt: string;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  lastLogin: string | null;
+  lastActivity: string | null;
+  failedLoginAttempts: number;
+  accountLocked: boolean;
+}
+
+export interface CreateUser {
+  email: string;
+  passwordHash: string;
+  name: string;
+  role?: UserRole;
+  status?: UserStatus;
+}
+
+export interface Session {
+  id: string;
+  userId: string;
+  expiresAt: string;
+  lastActivity: string;
+  ipAddress: string | null;
+  userAgent: string | null;
 }

@@ -1,0 +1,136 @@
+<div class="flex flex-col h-full">
+  <!-- Header -->
+  <div class="border-b border-slate-800 px-4 py-3 flex items-center justify-between bg-slate-900/50 shrink-0">
+    <h2 class="font-semibold text-white text-sm">Conversations</h2>
+    <div class="flex items-center gap-2">
+      <button onclick="document.getElementById('create-project-modal').classList.remove('hidden')"
+        class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition-colors border border-slate-700">
+        + Project
+      </button>
+      <button onclick="document.getElementById('create-conv-modal').classList.remove('hidden')"
+        class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium rounded-lg transition-colors">
+        + Conversation
+      </button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-y-auto p-4">
+    <% if (projects.length === 0) { %>
+      <div class="text-center py-12">
+        <p class="text-slate-500 mb-4">No projects yet. Create one to get started.</p>
+      </div>
+    <% } else { %>
+      <div class="space-y-4 max-w-2xl mx-auto">
+        <% projects.forEach(function(project) { %>
+          <div class="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-800/50 flex items-center gap-2">
+              <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              <span class="text-sm font-medium text-white"><%= project.name %></span>
+              <% if (project.description) { %>
+                <span class="text-xs text-slate-500 ml-2"><%= project.description %></span>
+              <% } %>
+            </div>
+            <% if (project.conversations && project.conversations.length > 0) { %>
+              <div class="divide-y divide-slate-800/50">
+                <% var isAdmin = user.role === 'admin' || user.role === 'superadmin';
+                   project.conversations.forEach(function(conv) {
+                     var canManage = isAdmin || conv.createdBy === user.agentId;
+                %>
+                  <div class="group/conv flex items-center hover:bg-slate-800/50 transition-colors relative">
+                    <a href="<%= envPath %>/c/<%= conv.id %>"
+                      class="flex-1 px-4 py-2.5"
+                      hx-get="<%= envPath %>/c/<%= conv.id %>"
+                      hx-target="#main-content"
+                      hx-push-url="true">
+                      <div class="flex items-center justify-between">
+                        <span class="text-sm text-slate-300"># <%= conv.title %></span>
+                        <span class="text-[10px] text-slate-600"><%= new Date(conv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) %></span>
+                      </div>
+                    </a>
+                    <% if (canManage) { %>
+                    <button class="opacity-100 lg:opacity-0 lg:group-hover/conv:opacity-100 p-2 text-slate-500 hover:text-slate-300 transition-opacity shrink-0 mr-2"
+                      onclick="event.stopPropagation(); toggleConvMenu('list-<%= conv.id %>')">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01"/></svg>
+                    </button>
+                    <div id="conv-menu-list-<%= conv.id %>" class="hidden absolute right-2 top-full z-50 mt-1 w-36 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1">
+                      <button class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700 transition-colors"
+                        onclick="startRename('<%= conv.id %>', '<%= conv.title.replace(/'/g, "\\'") %>')">
+                        Rename
+                      </button>
+                      <form method="POST" action="<%= envPath %>/c/<%= conv.id %>/delete"
+                        onsubmit="return confirm('Delete this conversation?')">
+                        <button type="submit" class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-slate-700 transition-colors">
+                          Delete
+                        </button>
+                      </form>
+                    </div>
+                    <% } %>
+                  </div>
+                <% }); %>
+              </div>
+            <% } else { %>
+              <div class="px-4 py-3 text-xs text-slate-600">No conversations in this project</div>
+            <% } %>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+
+  <!-- Create Project Modal -->
+  <div id="create-project-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 rounded-xl border border-slate-800 p-6 shadow-xl w-full max-w-sm">
+      <h3 class="text-lg font-semibold text-white mb-4">Create Project</h3>
+      <form method="POST" action="<%= envPath %>/c/create-project" class="space-y-4">
+        <div>
+          <label for="project-name" class="block text-sm font-medium text-slate-300 mb-1">Name</label>
+          <input type="text" name="name" id="project-name" required
+            class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-sm"
+            placeholder="e.g. My Project">
+        </div>
+        <div>
+          <label for="project-desc" class="block text-sm font-medium text-slate-300 mb-1">Description <span class="text-slate-600">(optional)</span></label>
+          <input type="text" name="description" id="project-desc"
+            class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-sm">
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button type="button" onclick="this.closest('.fixed').classList.add('hidden')"
+            class="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
+          <button type="submit"
+            class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition-colors">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Create Conversation Modal -->
+  <div id="create-conv-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 rounded-xl border border-slate-800 p-6 shadow-xl w-full max-w-sm">
+      <h3 class="text-lg font-semibold text-white mb-4">Create Conversation</h3>
+      <form method="POST" action="<%= envPath %>/c/create-conversation" class="space-y-4">
+        <div>
+          <label for="conv-project" class="block text-sm font-medium text-slate-300 mb-1">Project</label>
+          <select name="projectId" id="conv-project" required
+            class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-sm">
+            <% projects.forEach(function(p) { %>
+              <option value="<%= p.id %>"><%= p.name %></option>
+            <% }); %>
+          </select>
+        </div>
+        <div>
+          <label for="conv-title" class="block text-sm font-medium text-slate-300 mb-1">Title</label>
+          <input type="text" name="title" id="conv-title" required
+            class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-sm"
+            placeholder="e.g. general">
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button type="button" onclick="this.closest('.fixed').classList.add('hidden')"
+            class="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
+          <button type="submit"
+            class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition-colors">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

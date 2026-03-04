@@ -70,3 +70,11 @@ export type { Config, AgentConfig, PersonaConfig, BridgeConfig } from "./config.
 // --- Internal Agent ---
 export { runInternalAgent } from "./agent/internal-agent.js";
 export type { InternalAgentOptions } from "./agent/internal-agent.js";
+
+// --- Agent Context ---
+export { buildAgentContext, buildBridgeRules, renderForPrompt, renderForMcpInstructions } from "./agent/context.js";
+export type { AgentContext, BridgeRules, BuildContextOptions } from "./agent/context.js";
+
+// --- Keryx (Discussion Manager) ---
+export { KeryxModule } from "./keryx/index.js";
+export type { KeryxConfig, RoundStatus, Round, ConversationState, InterventionType } from "./keryx/types.js";

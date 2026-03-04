@@ -8,6 +8,7 @@
 
 import type {
   Agent,
+  AgentStatus,
   AgentRegistration,
   AgentHighWaterMark,
   Project,
@@ -36,6 +37,11 @@ import type {
   SkillScope,
   SkillFilters,
   SkillFile,
+  User,
+  CreateUser,
+  Session,
+  UserStatus,
+  VerbosityLevel,
 } from "./types.js";
 import type { StoreEventBus } from "./events.js";
 
@@ -49,12 +55,15 @@ export interface IStore {
   listAgents(): Promise<Agent[]>;
   findAgentsByCapability(capability: string): Promise<Agent[]>;
   updateAgentLastSeen(id: string): Promise<void>;
+  updateAgentStatus(id: string, status: AgentStatus, statusMessage?: string): Promise<void>;
   removeAgent(id: string): Promise<boolean>;
 
   // --- Projects (filtered by agent clearance) ---
   createProject(project: CreateProject): Promise<Project>;
   getProject(id: string, agentId: string): Promise<Project | null>;
   listProjects(agentId: string): Promise<Project[]>;
+  deleteProject(id: string): Promise<void>;
+  renameProject(id: string, name: string): Promise<void>;
 
   // --- Project Memory (filtered by agent clearance) ---
   setMemory(entry: CreateMemoryEntry): Promise<MemoryEntry>;
@@ -66,6 +75,8 @@ export interface IStore {
   createConversation(conv: CreateConversation): Promise<Conversation>;
   getConversation(id: string): Promise<Conversation | null>;
   listConversations(projectId: string, agentId: string): Promise<Conversation[]>;
+  deleteConversation(id: string): Promise<void>;
+  renameConversation(id: string, title: string): Promise<void>;
 
   // --- Subscriptions ---
   subscribe(conversationId: string, agentId: string, opts?: SubscribeOptions): Promise<void>;
@@ -115,6 +126,22 @@ export interface IStore {
 
   // --- High-water marks (passive tracking) ---
   getHighWaterMark(agentId: string, projectId: string): Promise<AgentHighWaterMark | null>;
+
+  // --- GUI Users & Sessions ---
+  createUser(data: CreateUser): Promise<User>;
+  getUserByEmail(email: string): Promise<User | null>;
+  getUserById(id: string): Promise<User | null>;
+  listUsers(): Promise<User[]>;
+  updateUserStatus(id: string, status: UserStatus, approvedBy?: string): Promise<User | null>;
+  updateUserVerbosity(id: string, verbosity: VerbosityLevel): Promise<User | null>;
+  createSession(userId: string, ip?: string, userAgent?: string): Promise<string>;
+  getSession(sessionId: string): Promise<(Session & { user: User }) | null>;
+  deleteSession(sessionId: string): Promise<void>;
+  cleanExpiredSessions(): Promise<number>;
+  updateSessionActivity(sessionId: string): Promise<void>;
+  incrementFailedLogins(userId: string): Promise<void>;
+  resetFailedLogins(userId: string): Promise<void>;
+  deleteUser(id: string): Promise<boolean>;
 
   // --- Lifecycle ---
   initialize(): Promise<void>;

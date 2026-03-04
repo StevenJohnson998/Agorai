@@ -1,0 +1,700 @@
+/**
+ * Keryx — Discussion manager tests.
+ *
+ * Grouped by phase:
+ *  1. Types & Config
+ *  2. Core State Machine
+ *  3. Adaptive Timing
+ *  4. Pattern Detection
+ *  5. Human Commands
+ *  6. Integration (CLI wiring tested via build)
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { SqliteStore } from "../store/sqlite.js";
+import { StoreEventBus } from "../store/events.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { KeryxModule } from "../keryx/module.js";
+import type { KeryxConfig } from "../keryx/types.js";
+import { estimateComplexity, calculateAdaptiveTimeout } from "../keryx/timing.js";
+import { parseCommand, parseDuration } from "../keryx/commands.js";
+import { detectLoop, detectDrift, detectDomination } from "../keryx/patterns.js";
+import type { WindowMessage, ConversationState } from "../keryx/types.js";
+
+// --- Test helpers ---
+
+let store: SqliteStore;
+let eventBus: StoreEventBus;
+let tmpDir: string;
+
+const defaultKeryxConfig: KeryxConfig = {
+  enabled: true,
+  baseTimeoutMs: 5_000, // Short for tests
+  nudgeAfterMs: 7_000,
+  maxRoundsPerTopic: 5,
+  synthesisCapability: "synthesis",
+  healthWindowSize: 10,
+};
+
+beforeEach(async () => {
+  tmpDir = mkdtempSync(join(tmpdir(), "agorai-keryx-test-"));
+  eventBus = new StoreEventBus();
+  store = new SqliteStore(join(tmpDir, "test.db"), eventBus);
+  await store.initialize();
+});
+
+afterEach(async () => {
+  await store.close();
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+async function createAgent(name: string, type = "test", capabilities: string[] = []) {
+  return store.registerAgent({
+    name,
+    type,
+    capabilities,
+    clearanceLevel: "team",
+    apiKeyHash: `hash_${name}`,
+  });
+}
+
+async function setupConversation(agentIds: string[]) {
+  const creator = agentIds[0];
+  const project = await store.createProject({ name: "TestProject", createdBy: creator });
+  const conv = await store.createConversation({
+    projectId: project.id,
+    title: "TestConversation",
+    createdBy: creator,
+  });
+  for (const id of agentIds) {
+    await store.subscribe(conv.id, id);
+  }
+  return { project, conv };
+}
+
+// --- Phase 1: Types & Config ---
+
+describe("Phase 1 — Types & Config", () => {
+  it("parses keryx config with defaults from ConfigSchema", async () => {
+    const { ConfigSchema } = await import("../config.js");
+    const config = ConfigSchema.parse({});
+    expect(config.keryx).toBeDefined();
+    expect(config.keryx.enabled).toBe(true);
+    expect(config.keryx.baseTimeoutMs).toBe(30_000);
+    expect(config.keryx.nudgeAfterMs).toBe(45_000);
+    expect(config.keryx.maxRoundsPerTopic).toBe(5);
+    expect(config.keryx.synthesisCapability).toBe("synthesis");
+    expect(config.keryx.healthWindowSize).toBe(10);
+  });
+
+  it("allows overriding keryx config values", async () => {
+    const { ConfigSchema } = await import("../config.js");
+    const config = ConfigSchema.parse({
+      keryx: { baseTimeoutMs: 60_000, maxRoundsPerTopic: 10 },
+    });
+    expect(config.keryx.baseTimeoutMs).toBe(60_000);
+    expect(config.keryx.maxRoundsPerTopic).toBe(10);
+    // Defaults still apply for unset fields
+    expect(config.keryx.enabled).toBe(true);
+  });
+
+  it("allows disabling keryx", async () => {
+    const { ConfigSchema } = await import("../config.js");
+    const config = ConfigSchema.parse({ keryx: { enabled: false } });
+    expect(config.keryx.enabled).toBe(false);
+  });
+});
+
+// --- Phase 2: Core State Machine ---
+
+describe("Phase 2 — Core State Machine", () => {
+  let keryx: KeryxModule;
+  let ac: AbortController;
+
+  beforeEach(() => {
+    ac = new AbortController();
+  });
+
+  afterEach(async () => {
+    ac.abort();
+    // Small delay for cleanup
+    await new Promise(r => setTimeout(r, 50));
+  });
+
+  it("registers as an agent on start", async () => {
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    const keryxId = keryx.getKeryxAgentId();
+    expect(keryxId).toBeDefined();
+
+    const agent = await store.getAgent(keryxId!);
+    expect(agent).not.toBeNull();
+    expect(agent!.name).toBe("keryx");
+    expect(agent!.type).toBe("moderator");
+    expect(agent!.capabilities).toContain("discussion-management");
+
+    await keryx.stop();
+  });
+
+  it("opens a round when a human sends a message", async () => {
+    const human = await createAgent("human", "custom");
+    const agent1 = await createAgent("agent1");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    // Keryx should auto-discover and subscribe
+    await new Promise(r => setTimeout(r, 100));
+
+    // Subscribe keryx to the conversation
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+
+    // Force state initialization
+    const keryxId = keryx.getKeryxAgentId()!;
+    // Trigger discovery manually
+    await (keryx as any).discoverConversations();
+
+    // Human sends a message
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "What do you think about TypeScript?",
+    });
+
+    // Wait for async processing
+    await new Promise(r => setTimeout(r, 200));
+
+    const state = keryx.getState(conv.id);
+    expect(state).toBeDefined();
+    expect(state!.currentRound).not.toBeNull();
+    expect(state!.currentRound!.status).toBe("collecting");
+    expect(state!.currentRound!.id).toBe(1);
+
+    await keryx.stop();
+  });
+
+  it("records responses and tracks agents", async () => {
+    const human = await createAgent("human", "custom");
+    const agent1 = await createAgent("agent1");
+    const agent2 = await createAgent("agent2");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Human triggers a round
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Discuss error handling patterns",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Agent1 responds
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "I recommend using Result types for recoverable errors.",
+    });
+    await new Promise(r => setTimeout(r, 100));
+
+    const state = keryx.getState(conv.id);
+    expect(state!.currentRound!.respondedAgents.has(agent1.id)).toBe(true);
+    expect(state!.currentRound!.respondedAgents.has(agent2.id)).toBe(false);
+
+    await keryx.stop();
+  });
+
+  it("closes a round when all agents respond", async () => {
+    const human = await createAgent("human", "custom");
+    const agent1 = await createAgent("agent1");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Human triggers
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Simple question",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Agent responds
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "Here is my answer.",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id);
+    // Round should have moved to synthesizing or closed
+    const round = state!.currentRound;
+    if (round) {
+      expect(["synthesizing", "closed"]).toContain(round.status);
+    }
+
+    await keryx.stop();
+  });
+
+  it("ignores its own messages", async () => {
+    const human = await createAgent("human", "custom");
+    const { conv } = await setupConversation([human.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    const keryxId = keryx.getKeryxAgentId()!;
+    await store.subscribe(conv.id, keryxId);
+    await (keryx as any).discoverConversations();
+
+    // Keryx sends its own message — should not trigger a round
+    await keryx.sendKeryxMessage(conv.id, "Test message from Keryx");
+    await new Promise(r => setTimeout(r, 100));
+
+    const state = keryx.getState(conv.id);
+    expect(state!.currentRound).toBeNull();
+
+    await keryx.stop();
+  });
+
+  it("ignores status messages", async () => {
+    const human = await createAgent("human", "custom");
+    const { conv } = await setupConversation([human.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Status message — should not trigger a round
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      type: "status",
+      content: "User joined",
+    });
+    await new Promise(r => setTimeout(r, 100));
+
+    const state = keryx.getState(conv.id);
+    expect(state!.currentRound).toBeNull();
+
+    await keryx.stop();
+  });
+});
+
+// --- Phase 3: Adaptive Timing ---
+
+describe("Phase 3 — Adaptive Timing", () => {
+  it("estimates low complexity for short simple text", () => {
+    const score = estimateComplexity("Hello world");
+    expect(score).toBeLessThan(0.2);
+  });
+
+  it("estimates high complexity for long technical text", () => {
+    const code = "```typescript\n" + "const x = 1;\n".repeat(50) + "```\n";
+    const text = "Here is a complex question with multiple parts? " +
+      "What about error handling? And performance? " +
+      "Check https://example.com/docs for reference. " +
+      code;
+    const score = estimateComplexity(text);
+    expect(score).toBeGreaterThan(0.3);
+  });
+
+  it("produces short timeout for simple prompts", () => {
+    const state: ConversationState = {
+      conversationId: "test",
+      projectId: "proj",
+      currentRound: null,
+      roundHistory: [],
+      lastSeenAt: Date.now(),
+      paused: false,
+      disabled: false,
+      messageWindow: [],
+    };
+
+    const timeout = calculateAdaptiveTimeout(
+      state,
+      "Hi",
+      2,
+      30_000,
+      new Map(),
+    );
+
+    // First round (1.5x), simple text (low complexity ~0.5x), so should be < base
+    // 30000 * ~0.5 complexity multiplier * 1.5 (round 1) ≈ 22500
+    expect(timeout).toBeLessThan(40_000);
+  });
+
+  it("produces longer timeout for complex prompts", () => {
+    const state: ConversationState = {
+      conversationId: "test",
+      projectId: "proj",
+      currentRound: null,
+      roundHistory: [],
+      lastSeenAt: Date.now(),
+      paused: false,
+      disabled: false,
+      messageWindow: [],
+    };
+
+    const complexTopic = "```\nfunction complex() { return 42; }\n```\n" +
+      "What about security? Performance? Scalability? Maintainability? " +
+      "Check https://docs.example.com/api/v2/reference for 12345 details.";
+
+    const timeout = calculateAdaptiveTimeout(
+      state,
+      complexTopic,
+      5,
+      30_000,
+      new Map(),
+    );
+
+    // Complex + many subscribers + round 1 → should be longer than base
+    expect(timeout).toBeGreaterThan(30_000);
+  });
+
+  it("uses agent history for timeout calculation", () => {
+    const state: ConversationState = {
+      conversationId: "test",
+      projectId: "proj",
+      currentRound: {
+        id: 1,
+        topic: "test",
+        status: "collecting",
+        openedAt: Date.now(),
+        triggerMessageId: "msg1",
+        expectedAgents: new Set(["agent1"]),
+        respondedAgents: new Set(),
+        responseMessageIds: [],
+        escalationLevel: 0,
+      },
+      roundHistory: [{ id: 0, topic: "", status: "closed", openedAt: 0, closedAt: 0, triggerMessageId: "", expectedAgents: new Set(), respondedAgents: new Set(), responseMessageIds: [], escalationLevel: 0 }],
+      lastSeenAt: Date.now(),
+      paused: false,
+      disabled: false,
+      messageWindow: [],
+    };
+
+    const profiles = new Map([
+      ["agent1", { agentId: "agent1", avgResponseTimeMs: 60_000, responseCount: 5 }],
+    ]);
+
+    const timeout = calculateAdaptiveTimeout(
+      state,
+      "Short question",
+      2,
+      30_000,
+      profiles,
+    );
+
+    // Should be influenced by agent's slow average response time
+    expect(timeout).toBeGreaterThan(10_000);
+  });
+});
+
+// --- Phase 4: Pattern Detection ---
+
+describe("Phase 4 — Pattern Detection", () => {
+  describe("detectLoop", () => {
+    it("detects repeated messages from same agent", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "I think we should use TypeScript for the project", timestamp: 1 },
+        { id: "2", fromAgent: "a1", content: "I think we should use TypeScript for the project", timestamp: 2 },
+      ];
+      const result = detectLoop(messages);
+      expect(result).not.toBeNull();
+      expect(result!.agentId).toBe("a1");
+      expect(result!.similarity).toBeGreaterThan(0.7);
+    });
+
+    it("does not flag different agents", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "I think we should use TypeScript", timestamp: 1 },
+        { id: "2", fromAgent: "a2", content: "I think we should use TypeScript", timestamp: 2 },
+      ];
+      const result = detectLoop(messages);
+      expect(result).toBeNull();
+    });
+
+    it("does not flag [NO_RESPONSE] as loop", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "[NO_RESPONSE]", timestamp: 1 },
+        { id: "2", fromAgent: "a1", content: "[NO_RESPONSE]", timestamp: 2 },
+      ];
+      const result = detectLoop(messages);
+      expect(result).toBeNull();
+    });
+
+    it("returns null for empty window", () => {
+      expect(detectLoop([])).toBeNull();
+    });
+
+    it("returns null for single message", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "Hello", timestamp: 1 },
+      ];
+      expect(detectLoop(messages)).toBeNull();
+    });
+
+    it("detects near-identical messages (high similarity)", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "I strongly recommend using TypeScript for the entire project", timestamp: 1 },
+        { id: "2", fromAgent: "a1", content: "I strongly recommend using TypeScript for this entire project", timestamp: 2 },
+      ];
+      const result = detectLoop(messages);
+      expect(result).not.toBeNull();
+      expect(result!.similarity).toBeGreaterThan(0.7);
+    });
+  });
+
+  describe("detectDrift", () => {
+    it("detects drift when discussion diverges from topic", () => {
+      const topic = "Database migration strategy for PostgreSQL";
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "I think we should redecorate the office and get new furniture", timestamp: 1 },
+        { id: "2", fromAgent: "a2", content: "Yes the chairs are really uncomfortable and the carpet needs replacing", timestamp: 2 },
+        { id: "3", fromAgent: "a1", content: "Maybe we should also look at the lighting in the conference room", timestamp: 3 },
+      ];
+      const result = detectDrift(topic, messages);
+      expect(result).not.toBeNull();
+      expect(result!.similarity).toBeLessThan(0.3);
+    });
+
+    it("does not flag on-topic discussion", () => {
+      const topic = "Database migration strategy for PostgreSQL";
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "We should use sequential migrations for the PostgreSQL database schema", timestamp: 1 },
+        { id: "2", fromAgent: "a2", content: "Agreed, the migration strategy should include rollback support for database changes", timestamp: 2 },
+      ];
+      const result = detectDrift(topic, messages);
+      expect(result).toBeNull();
+    });
+
+    it("returns null for empty messages", () => {
+      expect(detectDrift("topic", [])).toBeNull();
+    });
+  });
+
+  describe("detectDomination", () => {
+    it("detects dominant agent when > 40% with 3+ agents", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "Point 1", timestamp: 1 },
+        { id: "2", fromAgent: "a1", content: "Point 2", timestamp: 2 },
+        { id: "3", fromAgent: "a1", content: "Point 3", timestamp: 3 },
+        { id: "4", fromAgent: "a2", content: "Response", timestamp: 4 },
+        { id: "5", fromAgent: "a3", content: "Response", timestamp: 5 },
+      ];
+      const result = detectDomination(messages, 3);
+      expect(result).not.toBeNull();
+      expect(result!.agentId).toBe("a1");
+      expect(result!.messagePercent).toBe(60);
+    });
+
+    it("does not flag with fewer than 3 subscribers", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "Point 1", timestamp: 1 },
+        { id: "2", fromAgent: "a1", content: "Point 2", timestamp: 2 },
+        { id: "3", fromAgent: "a2", content: "Response", timestamp: 3 },
+      ];
+      const result = detectDomination(messages, 2);
+      expect(result).toBeNull();
+    });
+
+    it("does not count [NO_RESPONSE] messages", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "[NO_RESPONSE]", timestamp: 1 },
+        { id: "2", fromAgent: "a1", content: "[NO_RESPONSE]", timestamp: 2 },
+        { id: "3", fromAgent: "a1", content: "[NO_RESPONSE]", timestamp: 3 },
+        { id: "4", fromAgent: "a2", content: "Real response one", timestamp: 4 },
+        { id: "5", fromAgent: "a3", content: "Real response two", timestamp: 5 },
+        { id: "6", fromAgent: "a2", content: "Another real response", timestamp: 6 },
+        { id: "7", fromAgent: "a3", content: "Another real response too", timestamp: 7 },
+        { id: "8", fromAgent: "a2", content: "Third from a2", timestamp: 8 },
+      ];
+      const result = detectDomination(messages, 3);
+      // Real messages: a1=0, a2=3 (60%), a3=2 (40%). a2 dominates.
+      // But the point is [NO_RESPONSE] from a1 is NOT counted.
+      // This test verifies a1's NO_RESPONSE don't inflate their count.
+      // a2 at 60% IS flagged — but the test verifies a1 is NOT the dominant one.
+      expect(result).not.toBeNull();
+      expect(result!.agentId).toBe("a2");
+      // a1's [NO_RESPONSE] messages were excluded
+    });
+
+    it("returns null with insufficient data", () => {
+      const messages: WindowMessage[] = [
+        { id: "1", fromAgent: "a1", content: "Hi", timestamp: 1 },
+      ];
+      expect(detectDomination(messages, 3)).toBeNull();
+    });
+  });
+});
+
+// --- Phase 5: Human Commands ---
+
+describe("Phase 5 — Command Parser", () => {
+  describe("parseCommand", () => {
+    it("parses all valid commands", () => {
+      const commands = ["pause", "resume", "skip", "extend", "status", "interrupt", "enable", "disable"];
+      for (const cmd of commands) {
+        const result = parseCommand(`@keryx ${cmd}`);
+        expect(result).not.toBeNull();
+        expect(result!.command).toBe(cmd);
+      }
+    });
+
+    it("parses command with args", () => {
+      const result = parseCommand("@keryx extend 2m");
+      expect(result).not.toBeNull();
+      expect(result!.command).toBe("extend");
+      expect(result!.args).toBe("2m");
+    });
+
+    it("is case-insensitive", () => {
+      const result = parseCommand("@Keryx PAUSE");
+      expect(result).not.toBeNull();
+      expect(result!.command).toBe("pause");
+    });
+
+    it("returns null for non-commands", () => {
+      expect(parseCommand("Hello world")).toBeNull();
+      expect(parseCommand("@keryx")).toBeNull();
+      expect(parseCommand("@keryx invalidcmd")).toBeNull();
+    });
+
+    it("parses command embedded in longer text", () => {
+      const result = parseCommand("Hey everyone, @keryx pause please");
+      expect(result).not.toBeNull();
+      expect(result!.command).toBe("pause");
+    });
+  });
+
+  describe("parseDuration", () => {
+    it("parses seconds", () => {
+      expect(parseDuration("30s")).toBe(30_000);
+      expect(parseDuration("30sec")).toBe(30_000);
+      expect(parseDuration("30")).toBe(30_000);
+    });
+
+    it("parses minutes", () => {
+      expect(parseDuration("2m")).toBe(120_000);
+      expect(parseDuration("2min")).toBe(120_000);
+    });
+
+    it("parses hours", () => {
+      expect(parseDuration("1h")).toBe(3_600_000);
+      expect(parseDuration("1hr")).toBe(3_600_000);
+    });
+
+    it("handles decimals", () => {
+      expect(parseDuration("1.5m")).toBe(90_000);
+    });
+
+    it("returns null for invalid input", () => {
+      expect(parseDuration("abc")).toBeNull();
+      expect(parseDuration("0s")).toBeNull();
+      expect(parseDuration("-5s")).toBeNull();
+      expect(parseDuration("")).toBeNull();
+    });
+  });
+
+  describe("Command handling integration", () => {
+    let keryx: KeryxModule;
+    let ac: AbortController;
+
+    beforeEach(() => {
+      ac = new AbortController();
+    });
+
+    afterEach(async () => {
+      ac.abort();
+      await new Promise(r => setTimeout(r, 50));
+    });
+
+    it("pauses and resumes via commands", async () => {
+      const human = await createAgent("human", "custom");
+      const { conv } = await setupConversation([human.id]);
+
+      keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+      await keryx.start();
+
+      await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+      await (keryx as any).discoverConversations();
+
+      const state = keryx.getState(conv.id)!;
+      expect(state.paused).toBe(false);
+
+      // Pause
+      await store.sendMessage({
+        conversationId: conv.id,
+        fromAgent: human.id,
+        content: "@keryx pause",
+      });
+      await new Promise(r => setTimeout(r, 200));
+
+      expect(keryx.getState(conv.id)!.paused).toBe(true);
+
+      // Resume
+      await store.sendMessage({
+        conversationId: conv.id,
+        fromAgent: human.id,
+        content: "@keryx resume",
+      });
+      await new Promise(r => setTimeout(r, 200));
+
+      expect(keryx.getState(conv.id)!.paused).toBe(false);
+
+      await keryx.stop();
+    });
+
+    it("rejects commands from internal agents", async () => {
+      const internalAgent = await createAgent("internal-bot", "internal");
+      // Give it an internal: prefix ID pattern
+      const { conv } = await setupConversation([internalAgent.id]);
+
+      keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+      await keryx.start();
+
+      await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+      await (keryx as any).discoverConversations();
+
+      // Internal agent tries to pause — the agent ID starts with "internal:" in real code
+      // but in our test the agent has a regular ID. The module checks fromAgent.startsWith("internal:")
+      // so this test verifies the handler path when agent is not internal
+      const state = keryx.getState(conv.id)!;
+
+      // Send a pause from a message with an "internal:" prefixed fromAgent
+      const msg = await store.sendMessage({
+        conversationId: conv.id,
+        fromAgent: internalAgent.id,
+        content: "@keryx pause",
+      });
+
+      // Manually invoke with the right agent ID pattern
+      await keryx.handleCommand(
+        { ...msg, fromAgent: "internal:test-agent" },
+        state,
+      );
+
+      // Should still be unpaused since internal agents are rejected
+      expect(state.paused).toBe(false);
+
+      await keryx.stop();
+    });
+  });
+});
