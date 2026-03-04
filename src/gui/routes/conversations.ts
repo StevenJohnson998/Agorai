@@ -189,6 +189,29 @@ export function createConversationRoutes(store: IStore, fileStore?: IFileStore, 
     res.redirect(envPath + "/c/?toast=Project+renamed");
   });
 
+  // Toggle project access mode (visible ↔ hidden)
+  router.post("/c/toggle-access-project/:projectId", async (req, res) => {
+    const user = req.user!;
+    const bp = req.app.get("basePath") || "";
+    const envPath = bp + "/test";
+    const { projectId } = req.params;
+
+    const project = await store.getProject(projectId, user.agentId!);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
+    const isAdmin = user.role === "admin" || user.role === "superadmin";
+    if (!isAdmin && project.createdBy !== user.agentId) {
+      return res.status(403).json({ error: "Not authorized." });
+    }
+
+    const newMode = project.accessMode === "hidden" ? "visible" : "hidden";
+    await store.setProjectAccessMode(projectId, newMode);
+    const toast = newMode === "hidden" ? "Project+hidden" : "Project+visible";
+    res.redirect(envPath + "/c/?toast=" + toast);
+  });
+
   // Create conversation
   router.post("/c/create-conversation", async (req, res) => {
     const user = req.user!;
@@ -264,6 +287,33 @@ export function createConversationRoutes(store: IStore, fileStore?: IFileStore, 
       return res.redirect(303, envPath + "/c/?toast=Conversation+renamed");
     }
     res.redirect(envPath + "/c/" + conversationId + "?toast=Conversation+renamed");
+  });
+
+  // Toggle conversation access mode (visible ↔ hidden)
+  router.post("/c/:id/toggle-access", async (req, res) => {
+    const user = req.user!;
+    const bp = req.app.get("basePath") || "";
+    const envPath = bp + "/test";
+    const conversationId = req.params.id;
+
+    const conversation = await store.getConversation(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found." });
+    }
+
+    const isAdmin = user.role === "admin" || user.role === "superadmin";
+    if (!isAdmin && conversation.createdBy !== user.agentId) {
+      return res.status(403).json({ error: "Not authorized." });
+    }
+
+    const newMode = conversation.accessMode === "hidden" ? "visible" : "hidden";
+    await store.setConversationAccessMode(conversationId, newMode);
+    const toast = newMode === "hidden" ? "Conversation+hidden" : "Conversation+visible";
+
+    if (req.headers["hx-request"]) {
+      return res.redirect(303, envPath + "/c/?toast=" + toast);
+    }
+    res.redirect(envPath + "/c/" + conversationId + "?toast=" + toast);
   });
 
   // Catch-up endpoint — fetch messages since a timestamp (for SSE reconnection)
@@ -611,14 +661,16 @@ export function createConversationRoutes(store: IStore, fileStore?: IFileStore, 
     const conversationId = req.params.id;
     const { content, type, visibility, attachment_ids } = req.body;
 
-    if (!content || !content.trim()) {
-      return res.status(400).json({ error: "Message content is required." });
+    const hasContent = content && content.trim();
+    const hasAttachments = attachment_ids && typeof attachment_ids === "string" && attachment_ids.trim();
+    if (!hasContent && !hasAttachments) {
+      return res.status(400).json({ error: "Message content or attachments required." });
     }
 
     const message = await store.sendMessage({
       conversationId,
       fromAgent: user.agentId!,
-      content: content.trim(),
+      content: hasContent ? content.trim() : "📎",
       type: type || "message",
       visibility: visibility || undefined,
     });

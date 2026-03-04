@@ -47,6 +47,7 @@ import type {
   Session,
   UserStatus,
   VerbosityLevel,
+  AccessMode,
 } from "./types.js";
 import type { StoreEventBus } from "./events.js";
 
@@ -69,6 +70,7 @@ export interface IStore {
   listProjects(agentId: string): Promise<Project[]>;
   deleteProject(id: string): Promise<void>;
   renameProject(id: string, name: string): Promise<void>;
+  setProjectAccessMode(id: string, accessMode: AccessMode): Promise<void>;
 
   // --- Project Members ---
   addMember(projectId: string, agentId: string, role?: ProjectRole): Promise<ProjectMember>;
@@ -89,6 +91,7 @@ export interface IStore {
   listConversations(projectId: string, agentId: string): Promise<Conversation[]>;
   deleteConversation(id: string): Promise<void>;
   renameConversation(id: string, title: string): Promise<void>;
+  setConversationAccessMode(id: string, accessMode: AccessMode): Promise<void>;
 
   // --- Subscriptions ---
   subscribe(conversationId: string, agentId: string, opts?: SubscribeOptions): Promise<void>;

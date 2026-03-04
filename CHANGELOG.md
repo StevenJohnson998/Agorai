@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-04 — Hide/Show Toggle & Attachment-Only Messages
+
+### Added
+- **Hide/Show toggle**: Context menu button (between Rename and Delete) to toggle `access_mode` (visible ↔ hidden) on projects and conversations. Available to admins and creators only.
+  - `setProjectAccessMode()` and `setConversationAccessMode()` store methods.
+  - `POST /c/toggle-access-project/:id` and `POST /c/:id/toggle-access` routes.
+  - Button label dynamically shows "Hide" or "Show" based on current state.
+
+### Fixed
+- **Attachment-only messages**: Sending a file without text no longer silently fails. Messages with only attachments (no text) are now allowed with a 📎 placeholder.
+
 ## 2026-03-04 — GUI Attachment Support & Security Hardening
 
 ### Added

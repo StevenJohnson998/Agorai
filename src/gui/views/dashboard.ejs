@@ -118,6 +118,11 @@
                     onclick="startRenameProject('<%= project.id %>', '<%= project.name.replace(/'/g, "\\'") %>')">
                     Rename
                   </button>
+                  <form method="POST" action="<%= envPath %>/c/toggle-access-project/<%= project.id %>">
+                    <button type="submit" class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
+                      <%= project.accessMode === 'hidden' ? 'Show' : 'Hide' %>
+                    </button>
+                  </form>
                   <form method="POST" action="<%= envPath %>/c/delete-project/<%= project.id %>"
                     onsubmit="return confirm('Delete project and all its conversations?')">
                     <button type="submit" class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-slate-700 transition-colors">
@@ -151,6 +156,11 @@
                       onclick="startRename('<%= conv.id %>', '<%= conv.title.replace(/'/g, "\\'") %>')">
                       Rename
                     </button>
+                    <form method="POST" action="<%= envPath %>/c/<%= conv.id %>/toggle-access">
+                      <button type="submit" class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
+                        <%= conv.accessMode === 'hidden' ? 'Show' : 'Hide' %>
+                      </button>
+                    </form>
                     <form method="POST" action="<%= envPath %>/c/<%= conv.id %>/delete"
                       onsubmit="return confirm('Delete this conversation?')">
                       <button type="submit" class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-slate-700 transition-colors">

@@ -376,7 +376,8 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Real-time chat** | SSE-powered message stream, htmx partial swaps, auto-scroll | Done |
 | **Admin panel** | User management (approve/reject/delete), admin-only access | Done |
 | **Route protection** | `requireAuth`, `requireAdmin`, `requireConversationAccess` (subscription or admin) | Done |
-| **Context menus** | ⋮ menu on projects (new conversation, rename, delete) and conversations (rename, delete). Creator or admin only | Done |
+| **Context menus** | ⋮ menu on projects (new conversation, rename, hide/show, delete) and conversations (rename, hide/show, delete). Creator or admin only | Done |
+| **Hide/Show toggle** | Toggle `access_mode` (visible ↔ hidden) from context menu. Hidden items invisible to non-members/non-subscribers | Done |
 | **Project/conversation deletion** | Soft-delete only (`status = 'deleted'`). Data preserved in DB, hidden from listings. No hard-delete or file cleanup yet | Done |
 | **Mobile responsive** | Touch targets, sidebar toggle, responsive layout | Done |
 | **Mobile SSE bug** | Auto-scroll fixed (smart scroll + "N new" pill). Full mobile SSE reliability needs testing on actual devices | Partial fix |

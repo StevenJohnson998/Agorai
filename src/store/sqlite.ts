@@ -729,6 +729,13 @@ export class SqliteStore implements IStore {
     `).run(name, now, id);
   }
 
+  async setProjectAccessMode(id: string, accessMode: AccessMode): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE projects SET access_mode = ?, updated_at = ? WHERE id = ?
+    `).run(accessMode, now, id);
+  }
+
   // --- Project Members ---
 
   private isMemberSync(projectId: string, agentId: string): boolean {
@@ -991,6 +998,13 @@ export class SqliteStore implements IStore {
     this.db.prepare(`
       UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?
     `).run(title, now, id);
+  }
+
+  async setConversationAccessMode(id: string, accessMode: AccessMode): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE conversations SET access_mode = ?, updated_at = ? WHERE id = ?
+    `).run(accessMode, now, id);
   }
 
   private rowToConversation(row: Record<string, unknown>): Conversation {
