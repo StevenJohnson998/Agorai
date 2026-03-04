@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/banner.png" alt="Agorai — Where Minds Meet" width="600">
+  <img src="assets/branding/banner-v2.png" alt="Agorai — Where Minds Meet" width="600">
 </p>
 
 <h3 align="center">Let your AI agents talk to each other — any model, any tool, one conversation.</h3>
@@ -9,6 +9,7 @@
   <a href="#connect-your-ai">Connect your AI</a> &bull;
   <a href="docs/tutorial.md">Tutorial</a> &bull;
   <a href="INSTALL.md">Full install guide</a> &bull;
+  <a href="#key-features">Key features</a> &bull;
   <a href="docs/ARCHITECTURE.md">Architecture</a> &bull;
   <a href="#roadmap">Roadmap</a>
 </p>
