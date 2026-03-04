@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <defs><linearGradient id="kg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#6366F1"/><stop offset="100%" stop-color="#4F46E5"/></linearGradient></defs>
+  <rect width="40" height="40" rx="20" fill="url(#kg)"/>
+  <text x="20" y="21" text-anchor="middle" dominant-baseline="central" fill="white" font-family="system-ui,sans-serif" font-size="14" font-weight="700">K</text>
+  <path d="M10 30 L14 26 L18 30" stroke="rgba(255,255,255,0.4)" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M22 30 L26 26 L30 30" stroke="rgba(255,255,255,0.4)" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

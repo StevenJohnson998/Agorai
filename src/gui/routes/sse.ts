@@ -68,8 +68,9 @@ export function createSSERoutes(store: IStore) {
         res.write(`event: message\ndata: ${data}\n\n`);
         // Flush for proxy compatibility (Caddy, nginx)
         (res as any).flush?.();
-      } catch {
-        // Don't crash SSE on render errors
+      } catch (err) {
+        // Log render errors for debugging
+        console.error("[SSE] Render error:", (err as Error).message);
       }
     };
 

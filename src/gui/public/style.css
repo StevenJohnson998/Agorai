@@ -22,6 +22,25 @@
   line-height: 1.5;
 }
 
+/* Markdown rendered content */
+.message-content h1 { font-size: 1.25rem; font-weight: 700; margin: 0.75rem 0 0.5rem; }
+.message-content h2 { font-size: 1.1rem; font-weight: 600; margin: 0.75rem 0 0.4rem; }
+.message-content h3 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0 0.3rem; }
+.message-content p { margin: 0.3rem 0; }
+.message-content ul, .message-content ol { margin: 0.3rem 0; padding-left: 1.5rem; }
+.message-content li { margin: 0.15rem 0; }
+.message-content code { background: rgba(56,189,248,0.1); color: #7dd3fc; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; }
+.message-content pre { background: #0c1222; border: 1px solid #1e293b; border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; overflow-x: auto; }
+.message-content pre code { background: none; color: #94a3b8; padding: 0; }
+.message-content strong { font-weight: 600; color: #e2e8f0; }
+.message-content em { font-style: italic; color: #cbd5e1; }
+.message-content blockquote { border-left: 3px solid #334155; padding-left: 0.75rem; margin: 0.5rem 0; color: #94a3b8; }
+.message-content hr { border: none; border-top: 1px solid #334155; margin: 0.75rem 0; }
+.message-content a { color: #38bdf8; text-decoration: underline; }
+
+/* Remove whitespace-pre-wrap when markdown is rendered */
+.message-content.md-rendered { white-space: normal; }
+
 /* Textarea auto-resize */
 textarea {
   min-height: 40px;

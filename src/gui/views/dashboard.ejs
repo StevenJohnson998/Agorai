@@ -6,7 +6,9 @@
   <title><%= title %> — Agorai</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script>htmx.config.allowScriptTags = true;</script>
   <script src="https://unpkg.com/htmx-ext-sse@2.3.0/sse.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link rel="stylesheet" href="<%= basePath %>/static/style.css">
   <script>
     tailwind.config = {

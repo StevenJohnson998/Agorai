@@ -79,6 +79,41 @@
 
 <script src="<%= basePath %>/static/sse-client.js"></script>
 <script>
+  // --- Markdown rendering for message content ---
+  (function() {
+    if (typeof marked === 'undefined') return;
+    marked.setOptions({ breaks: true, gfm: true });
+
+    window.renderMarkdown = function(root) {
+      var els = (root || document).querySelectorAll('.message-content:not(.md-rendered)');
+      els.forEach(function(el) {
+        var raw = el.textContent;
+        // Only render if it contains markdown-like syntax
+        if (/[*_#`\[\]\-]/.test(raw)) {
+          el.innerHTML = marked.parse(raw);
+          el.classList.add('md-rendered');
+        }
+      });
+    };
+
+    // Render on page load
+    window.renderMarkdown();
+
+    // Observe for new messages (SSE appends) — debounced to avoid infinite loops
+    var container = document.getElementById('messages-container');
+    if (container) {
+      var mdTimer = null;
+      var obs = new MutationObserver(function() {
+        if (mdTimer) return;
+        mdTimer = setTimeout(function() {
+          mdTimer = null;
+          window.renderMarkdown(container);
+        }, 50);
+      });
+      obs.observe(container, { childList: true });
+    }
+  })();
+
   // Scroll to bottom on load
   (function() {
     var container = document.getElementById('messages-container');

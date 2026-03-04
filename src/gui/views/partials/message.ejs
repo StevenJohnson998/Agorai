@@ -25,6 +25,16 @@
 
   // Display name: strip "user:" prefix for humans
   var displayName = agentName.replace(/^user:/, '');
+
+  // Agent avatar
+  var msgAvatars = {
+    'claude-code': '/static/avatars/claude-code.svg',
+    'deepseek-chat': '/static/avatars/deepseek-chat.svg',
+    'gemini-flash': '/static/avatars/gemini-flash.svg',
+    'mistral-medium': '/static/avatars/mistral-medium.svg',
+    'keryx': '/static/avatars/keryx.svg',
+  };
+  var msgAvatarUrl = msgAvatars[agentName] ? ((typeof basePath !== 'undefined' ? basePath : '') + msgAvatars[agentName]) : null;
 %>
 <% if (isStatus) { %>
   <!-- System/status message — centered, subtle -->
@@ -40,6 +50,9 @@
       <!-- Header -->
       <div class="flex items-center gap-2 mb-0.5">
         <% if (!isMe) { %>
+          <% if (msgAvatarUrl) { %>
+            <img src="<%= msgAvatarUrl %>" alt="" class="w-5 h-5 rounded-full shrink-0">
+          <% } %>
           <span class="text-xs font-medium <%= isHuman ? 'text-brand-400' : 'text-emerald-400' %>"><%= displayName %></span>
         <% } %>
         <% if (typeBadge) { %>

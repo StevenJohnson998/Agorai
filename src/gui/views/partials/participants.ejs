@@ -1,5 +1,17 @@
 <%
-  // Color palette for avatar initials
+  // Agent avatar map — agents with custom SVG avatars
+  var agentAvatars = {
+    'claude-code': '/static/avatars/claude-code.svg',
+    'deepseek-chat': '/static/avatars/deepseek-chat.svg',
+    'gemini-flash': '/static/avatars/gemini-flash.svg',
+    'mistral-medium': '/static/avatars/mistral-medium.svg',
+    'keryx': '/static/avatars/keryx.svg',
+  };
+  function getAvatarUrl(name) {
+    return agentAvatars[name] ? (basePath + agentAvatars[name]) : null;
+  }
+
+  // Color palette for avatar initials (fallback)
   var avatarColors = ['bg-brand-600', 'bg-emerald-600', 'bg-purple-600', 'bg-orange-600', 'bg-pink-600', 'bg-cyan-600', 'bg-yellow-600', 'bg-red-600'];
   function getAvatarColor(name) {
     var hash = 0;
@@ -21,9 +33,14 @@
 <!-- Participant avatars -->
 <div class="flex items-center gap-1">
   <% subscribers.slice(0, 5).forEach(function(sub) { %>
-    <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white shrink-0 <%= getAvatarColor(sub.name) %> relative"
+    <% var avatarUrl = getAvatarUrl(sub.name); %>
+    <div class="w-6 h-6 rounded-full shrink-0 relative <%= avatarUrl ? '' : (getAvatarColor(sub.name) + ' flex items-center justify-center text-[10px] font-medium text-white') %>"
       title="<%= sub.name %> (<%= sub.type === 'human' ? 'Human' : 'Agent' %> · <%= getStatusLabel(sub) %>)">
-      <%= sub.name.charAt(0).toUpperCase() %>
+      <% if (avatarUrl) { %>
+        <img src="<%= avatarUrl %>" alt="<%= sub.name %>" class="w-6 h-6 rounded-full">
+      <% } else { %>
+        <%= sub.name.charAt(0).toUpperCase() %>
+      <% } %>
       <% var dotColor = getStatusDotColor(sub); if (dotColor) { %>
         <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 <%= dotColor %> rounded-full border border-slate-900"></span>
       <% } %>
@@ -60,8 +77,13 @@
       <% subscribers.forEach(function(sub) { %>
         <div class="flex items-center justify-between px-2 py-2 hover:bg-slate-800/50 rounded-lg group/part">
           <div class="flex items-center gap-2 min-w-0">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white shrink-0 <%= getAvatarColor(sub.name) %> relative">
-              <%= sub.name.charAt(0).toUpperCase() %>
+            <% var drawerAvatar = getAvatarUrl(sub.name); %>
+            <div class="w-8 h-8 rounded-full shrink-0 relative <%= drawerAvatar ? '' : (getAvatarColor(sub.name) + ' flex items-center justify-center text-xs font-medium text-white') %>">
+              <% if (drawerAvatar) { %>
+                <img src="<%= drawerAvatar %>" alt="<%= sub.name %>" class="w-8 h-8 rounded-full">
+              <% } else { %>
+                <%= sub.name.charAt(0).toUpperCase() %>
+              <% } %>
               <% var dotColor2 = getStatusDotColor(sub); if (dotColor2) { %>
                 <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 <%= dotColor2 %> rounded-full border-2 border-slate-900"></span>
               <% } %>
@@ -115,8 +137,13 @@
           <div class="agent-add-item flex items-center justify-between px-2 py-1.5 hover:bg-slate-800/50 rounded-lg cursor-pointer"
             data-name="<%= agent.name.toLowerCase() %>" data-type="<%= agent.type.toLowerCase() %>">
             <div class="flex items-center gap-2 min-w-0">
-              <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white shrink-0 <%= getAvatarColor(agent.name) %> relative">
-                <%= agent.name.charAt(0).toUpperCase() %>
+              <% var addAvatar = getAvatarUrl(agent.name); %>
+              <div class="w-6 h-6 rounded-full shrink-0 relative <%= addAvatar ? '' : (getAvatarColor(agent.name) + ' flex items-center justify-center text-[10px] font-medium text-white') %>">
+                <% if (addAvatar) { %>
+                  <img src="<%= addAvatar %>" alt="<%= agent.name %>" class="w-6 h-6 rounded-full">
+                <% } else { %>
+                  <%= agent.name.charAt(0).toUpperCase() %>
+                <% } %>
                 <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 <%= statusDot %> rounded-full border border-slate-900"></span>
               </div>
               <div class="min-w-0">
