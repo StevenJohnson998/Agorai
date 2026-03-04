@@ -32,6 +32,9 @@ import type {
   CreateTask,
   TaskFilters,
   TaskStatus,
+  Attachment,
+  AttachmentMetadata,
+  CreateAttachment,
   AgentMemory,
   AgentMemoryScope,
   Skill,
@@ -115,6 +118,14 @@ export interface IStore {
   completeTask(id: string, agentId: string, result?: string): Promise<Task | null>;
   releaseTask(id: string, agentId: string): Promise<Task | null>;
   updateTask(id: string, agentId: string, updates: { title?: string; description?: string; status?: TaskStatus }): Promise<Task | null>;
+
+  // --- Attachments ---
+  createAttachment(attachment: CreateAttachment): Promise<Attachment>;
+  getAttachment(id: string): Promise<Attachment | null>;
+  listAttachmentsByMessage(messageId: string): Promise<AttachmentMetadata[]>;
+  listAttachmentsByMessages(messageIds: string[]): Promise<Map<string, AttachmentMetadata[]>>;
+  linkAttachmentsToMessage(attachmentIds: string[], messageId: string, agentId: string): Promise<number>;
+  deleteAttachment(id: string): Promise<boolean>;
 
   // --- Skills (progressive disclosure) ---
   setSkill(skill: CreateSkill): Promise<Skill>;

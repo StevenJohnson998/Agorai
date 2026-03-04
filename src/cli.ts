@@ -675,12 +675,17 @@ async function cmdServe(args: string[]) {
   const { SqliteStore } = await import("./store/sqlite.js");
   const { ApiKeyAuthProvider } = await import("./bridge/auth.js");
   const { startBridgeServer } = await import("./bridge/server.js");
+  const { LocalFileStore } = await import("./store/file-store.js");
 
   const dbPath = config.database.path;
   const store = new SqliteStore(dbPath);
   await store.initialize();
 
   const auth = new ApiKeyAuthProvider(config.bridge.apiKeys, store, config.bridge.salt);
+
+  // Initialize file store for attachments
+  const fileStore = new LocalFileStore(config.fileStore.basePath);
+  await fileStore.initialize();
 
   console.log(`Starting Agorai bridge server...`);
   console.log(`  Endpoint: http://${config.bridge.host}:${config.bridge.port}/mcp`);
@@ -706,7 +711,7 @@ async function cmdServe(args: string[]) {
     }
   }
 
-  const server = await startBridgeServer({ store, auth, config });
+  const server = await startBridgeServer({ store, auth, config, fileStore });
 
   // Start GUI if enabled
   let guiServer: { server: { close: () => void } } | undefined;
@@ -718,6 +723,8 @@ async function cmdServe(args: string[]) {
       host: hostOverride ?? config.gui?.host ?? config.bridge.host,
       basePath: config.gui?.basePath ?? "",
       defaultAdmin: config.gui?.defaultAdmin,
+      fileStore,
+      fileStoreConfig: { maxFileSize: config.fileStore.maxFileSize, allowedTypes: config.fileStore.allowedTypes },
     });
   }
 

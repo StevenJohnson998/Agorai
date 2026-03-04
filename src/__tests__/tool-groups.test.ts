@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SqliteStore } from "../store/sqlite.js";
 import { createBridgeMcpServer, TOOL_GROUPS } from "../bridge/server.js";
+import { LocalFileStore } from "../store/file-store.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -47,7 +48,7 @@ afterEach(async () => {
 describe("TOOL_GROUPS constant", () => {
   it("defines all expected groups", () => {
     expect(Object.keys(TOOL_GROUPS).sort()).toEqual(
-      ["access", "core", "members", "memory", "skills", "tasks"]
+      ["access", "attachments", "core", "members", "memory", "skills", "tasks"]
     );
   });
 
@@ -75,9 +76,13 @@ describe("TOOL_GROUPS constant", () => {
     expect(TOOL_GROUPS.members).toHaveLength(3);
   });
 
-  it("all groups sum to 38 tools", () => {
+  it("attachments group has 4 tools", () => {
+    expect(TOOL_GROUPS.attachments).toHaveLength(4);
+  });
+
+  it("all groups sum to 42 tools", () => {
     const total = Object.values(TOOL_GROUPS).reduce((sum, tools) => sum + tools.length, 0);
-    expect(total).toBe(38);
+    expect(total).toBe(42);
   });
 });
 
@@ -163,5 +168,29 @@ describe("createBridgeMcpServer tool filtering", () => {
     for (const tool of TOOL_GROUPS.access) {
       expect(tools).toContain(tool);
     }
+  });
+
+  it("attachment tools only register when fileStore is provided", () => {
+    // Without fileStore: 38 tools (no attachments)
+    const serverNoStore = createBridgeMcpServer(store, agentId);
+    expect(getToolNames(serverNoStore)).toHaveLength(38);
+    for (const tool of TOOL_GROUPS.attachments) {
+      expect(getToolNames(serverNoStore)).not.toContain(tool);
+    }
+
+    // With fileStore: 42 tools (all groups including attachments)
+    const fileStore = new LocalFileStore(join(tmpDir, "attachments"));
+    const serverWithStore = createBridgeMcpServer(store, agentId, undefined, fileStore);
+    expect(getToolNames(serverWithStore)).toHaveLength(42);
+    for (const tool of TOOL_GROUPS.attachments) {
+      expect(getToolNames(serverWithStore)).toContain(tool);
+    }
+  });
+
+  it('["attachments"] with fileStore registers 18 tools (core + attachments)', () => {
+    const fileStore = new LocalFileStore(join(tmpDir, "attachments"));
+    const server = createBridgeMcpServer(store, agentId, ["attachments"], fileStore);
+    const tools = getToolNames(server);
+    expect(tools).toHaveLength(18);
   });
 });

@@ -1,5 +1,72 @@
 # Changelog
 
+## 2026-03-04 — GUI Attachment Support & Security Hardening
+
+### Added
+- **GUI file attachments**: Human users can upload, view, and download file attachments in conversations.
+  - Paperclip button in conversation input area triggers file upload.
+  - Base64 JSON upload route (`POST /c/:id/upload`) with size and content-type validation.
+  - Pending attachment pills with remove buttons before sending.
+  - Attachment chips on messages showing filename, size, open (new tab) and download buttons.
+  - Serve route (`GET /c/:id/attachment/:aid`) with safe-inline allowlist (images, PDF, text, audio, video).
+  - Force-download route (`GET /c/:id/attachment/:aid/download`).
+  - Attachments displayed in all render paths: page load, htmx send, SSE real-time, catch-up.
+  - `fileStore` and `fileStoreConfig` threaded from CLI to GUI server to conversation routes.
+
+### Security
+- **LocalFileStore path traversal protection**: `safePath()` method validates all resolved paths stay within `basePath`. Applied to `save()`, `get()`, `delete()`. Throws on `../../` or absolute path injection.
+- **Filename sanitization**: Strip path separators, null bytes, control characters from user-supplied filenames.
+- **Content-Type validation**: Strict MIME pattern validation (`type/subtype`), rejects malformed or injection attempts.
+- **XSS prevention on inline serve**: Only known-safe content types served inline; HTML/SVG/JS forced to `application/octet-stream` download. CSP header `default-src 'none'` on all served files.
+- **Content-Disposition hardening**: RFC 5987 encoding with `filename*=UTF-8''...` for unicode safety.
+- **Download route**: Always serves as `application/octet-stream` with `X-Content-Type-Options: nosniff`.
+- **5 new path traversal tests** in `file-store.test.ts`.
+
+## 2026-03-04 — v0.8.0 (File Attachments & Delegation Protocol)
+
+### Added
+- **File attachments**: Agents can share files (images, code, documents) via message attachments.
+  - `IFileStore` pluggable interface with `LocalFileStore` filesystem implementation (zero deps).
+  - Two-step workflow: `upload_attachment` → `send_message` with `attachment_ids`.
+  - `get_messages` includes `attachments` metadata array on messages that have them.
+  - `get_attachment` returns file content as base64. `delete_attachment` enforces ownership.
+  - `message_attachments` table with nullable `message_id` (upload-first pattern).
+  - Batch `listAttachmentsByMessages` prevents N+1 on `get_messages`.
+- **`attachments` tool group** (4 new MCP tools): `upload_attachment`, `get_attachment`, `list_attachments`, `delete_attachment`.
+- **`fileStore` config section**: `maxFileSize` (10MB default), `maxPerConversation` (100MB), `allowedTypes` (empty = all).
+- **Delegation protocol**: Conventions for `@agent do X` workflows using existing task system + message types.
+  - Bridge-scoped "Delegation Protocol" skill auto-created at startup.
+  - `delegationRules` in bridge instructions (conditional on `tasks` group).
+  - Convention: `proposal`+`action-request` → `status`+`action-accepted` → `result`+`action-result`.
+- **Bridge instructions** updated with `attachmentRules` (conditional on `attachments` group) and `delegationRules` (conditional on `tasks` group).
+- **~40 new tests** for file store, store attachment methods, and bridge tool integration.
+- `IFileStore`, `LocalFileStore`, `Attachment`, `AttachmentMetadata`, `CreateAttachment` exported from public API.
+
+### Changed
+- `send_message` accepts optional `attachment_ids` array (max 10) to link pre-uploaded attachments.
+- Tool count: 38 → **42** (7 groups: core, memory, tasks, skills, access, members, attachments).
+- `BridgeServerOptions` now accepts optional `fileStore: IFileStore`.
+- `createBridgeMcpServer` accepts optional `fileStore` and `config` parameters.
+
+## 2026-03-04 — Project Membership & Access Control
+
+### Added
+- **Project membership model**: `project_members` table with owner/member roles. Project creators auto-added as owner. Agents need membership to subscribe to conversations or create new ones.
+- **`access_mode`** field on projects and conversations: `visible` (default, appears in listings) or `hidden` (invisible to non-members).
+- **`members` tool group** (3 new MCP tools): `add_member`, `remove_member`, `list_members`. Owners can manage project membership.
+- **Human bypass**: Agents with `type=human` (GUI users) skip all access checks — can see and join everything. Granular human restrictions deferred to paid tier.
+- **Subscribe flow change**: Members subscribe directly. Non-members of visible projects get access request. Non-members of hidden projects get ACCESS_DENIED (no info leak).
+- **Migration**: Existing project creators backfilled as owners, existing conversation subscribers as members. Default `access_mode: visible` for backward compat.
+- **22 new tests** for membership CRUD, access filtering, human bypass.
+- **Bridge instructions** updated with membership rules (conditional on `members` tool group).
+
+### Changed
+- `list_projects` now filters hidden projects for non-members (agents only).
+- `list_conversations` now filters hidden conversations for non-subscribers (agents only).
+- `create_conversation` requires project membership for agents.
+- `respond_to_access_request` auto-adds approved agent as project member.
+- Tool count: 35 → **38** (6 groups: core, memory, tasks, skills, access, members).
+
 ## 2026-03-04 — v0.7.0 (Keryx Discussion Manager)
 
 ### Added

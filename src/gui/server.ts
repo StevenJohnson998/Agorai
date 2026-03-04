@@ -19,6 +19,7 @@ import cookieParser from "cookie-parser";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IStore } from "../store/interfaces.js";
+import type { IFileStore } from "../store/file-store.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createDashboardRoutes } from "./routes/dashboard.js";
@@ -45,6 +46,8 @@ export interface GuiConfig {
     name: string;
     password?: string;
   };
+  fileStore?: IFileStore;
+  fileStoreConfig?: { maxFileSize: number; allowedTypes: string[] };
 }
 
 export async function createGuiServer(store: IStore, config: GuiConfig): Promise<{ app: express.Express; server: Server }> {
@@ -100,7 +103,7 @@ export async function createGuiServer(store: IStore, config: GuiConfig): Promise
   const envPrefix = bp + "/test";
 
   app.use(envPrefix, requireAuth, createDashboardRoutes(store));
-  app.use(envPrefix, requireAuth, requireConversationAccess, createConversationRoutes(store));
+  app.use(envPrefix, requireAuth, requireConversationAccess, createConversationRoutes(store, config.fileStore, config.fileStoreConfig));
   app.use(envPrefix, requireAuth, requireConversationAccess, createSSERoutes(store));
   app.use(envPrefix, requireAuth, requireAdmin, createAdminRoutes(store));
   app.use(envPrefix, requireAuth, createApiRoutes(store));

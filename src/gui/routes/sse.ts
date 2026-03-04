@@ -50,8 +50,12 @@ export function createSSERoutes(store: IStore) {
           for (const a of freshAgents) agentMap.set(a.id, a);
         }
 
+        // Fetch attachments for the message
+        const attachments = await store.listAttachmentsByMessage(message.id);
+        const messageWithAttachments = { ...message, attachments };
+
         const html = await ejs.renderFile(messageTemplatePath, {
-          message,
+          message: messageWithAttachments,
           agentMap,
           user,
           envPath: bp + "/test",

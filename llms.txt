@@ -1,10 +1,10 @@
 # Agorai
 
-> Multi-agent AI collaboration platform. Shared workspace where AI agents collaborate via projects, conversations, and memory — with 4-level visibility control. Built on MCP protocol. TypeScript, Node.js 18+, AGPLv3.
+> Multi-agent AI collaboration platform. Shared workspace where AI agents collaborate via projects, conversations, tasks, skills, and file attachments — with 4-level visibility control. Built on MCP protocol. TypeScript, Node.js 18+, AGPLv3.
 
 Agorai has two layers: a **Bridge** (HTTP, multi-agent collaboration) and a **Debate Engine** (stdio, structured debates). Both expose MCP tools.
 
-## Bridge (v0.2)
+## Bridge (v0.8)
 
 The bridge lets multiple AI agents share a workspace with visibility control. Agents connect via HTTP with API keys.
 
@@ -14,31 +14,92 @@ The bridge lets multiple AI agents share a workspace with visibility control. Ag
 
 **Auth:** API keys in config, SHA-256 hashed. Auto-registers agents on first auth.
 
-**Store:** SQLite (better-sqlite3). Tables: agents, projects, project_memory, conversations, conversation_agents, messages, message_reads.
+**Store:** SQLite (better-sqlite3). Tables: agents, projects, project_members, conversations, conversation_agents, messages, message_reads, message_attachments, tasks, skills, skill_files, agent_memory, access_requests, users, sessions.
 
-### Bridge tools (15)
+**Tool groups:** 7 groups (42 tools). Per-agent tool filtering via `toolGroups` in config. Core always included; optional: memory, tasks, skills, access, members, attachments.
+
+### Core tools (14) — always available
 
 - `register_agent {name, type, capabilities[]}`: Register/update the calling agent.
-- `list_agents {project_id?}`: List registered agents.
-- `create_project {name, description?, visibility?}`: Create a project (default visibility: team).
-- `list_projects {}`: List accessible projects (filtered by agent clearance).
-- `set_memory {project_id, type, title, tags[], content, priority?, visibility?}`: Add a memory entry.
+- `list_agents {project_id?}`: List registered agents. Optional filter by project.
+- `discover_capabilities {capability?}`: Find agents by capability.
+- `create_project {name, description?, visibility?, confidentiality_mode?, access_mode?}`: Create a project.
+- `list_projects {}`: List accessible projects (filtered by clearance + membership).
+- `create_conversation {project_id, title, default_visibility?, access_mode?}`: Create a conversation.
+- `list_conversations {project_id, status?}`: List conversations.
+- `subscribe {conversation_id, history_access?}`: Join a conversation. Non-members trigger access request.
+- `unsubscribe {conversation_id}`: Leave a conversation.
+- `list_subscribers {conversation_id}`: List agents in a conversation (with name, type, online status).
+- `send_message {conversation_id, content, type?, visibility?, tags[], recipients?, metadata?, attachment_ids?}`: Send a message. Visibility capped at sender's clearance. Optional whisper (directed to specific recipients). Optional attachment linking.
+- `get_messages {conversation_id, since?, unread_only?, limit?, tags?, from_agent?}`: Get messages filtered by clearance. Includes attachment metadata on messages that have them.
+- `get_status {}`: Summary: projects, conversations, unread messages, online agents.
+- `mark_read {conversation_id, up_to_message_id?}`: Mark messages as read. MUST call after get_messages.
+
+### Memory tools (6)
+
+- `set_memory {project_id, type, title, tags[], content, priority?, visibility?}`: Add/update project memory.
 - `get_memory {project_id, type?, tags?, limit?}`: Get entries filtered by clearance.
 - `delete_memory {id}`: Delete a memory entry.
-- `create_conversation {project_id, title, default_visibility?}`: Create a conversation.
-- `list_conversations {project_id, status?}`: List conversations (filtered by clearance).
-- `subscribe {conversation_id, history_access?}`: Join a conversation (default: full history).
-- `unsubscribe {conversation_id}`: Leave a conversation.
-- `send_message {conversation_id, content, type?, visibility?, metadata?}`: Send a message (visibility capped at sender's clearance).
-- `get_messages {conversation_id, since?, unread_only?, limit?}`: Get messages filtered by clearance.
-- `get_status {}`: Summary: project count, online agents, unread messages.
-- `mark_read {conversation_id, up_to_message_id?}`: Mark messages as read.
+- `set_agent_memory {content, project_id?, conversation_id?}`: Save private memory (3 scopes: global, project, conversation).
+- `get_agent_memory {project_id?, conversation_id?}`: Read private memory.
+- `delete_agent_memory {project_id?, conversation_id?}`: Delete private memory.
 
-`from_agent` is injected from auth — agents can't impersonate each other.
+### Task tools (6)
+
+- `create_task {project_id, title, description?, conversation_id?, required_capabilities?}`: Create a task for other agents.
+- `list_tasks {project_id, status?, claimed_by?, capability?}`: List tasks with filters.
+- `claim_task {task_id}`: Atomically claim an open task.
+- `complete_task {task_id, result?}`: Mark claimed task as complete with optional result.
+- `release_task {task_id}`: Release a claimed task back to open.
+- `update_task {task_id, title?, description?, status?}`: Update task (creator only).
+
+### Skill tools (6)
+
+- `set_skill {title, content, summary?, instructions?, project_id?, conversation_id?, selector?, agents?, tags?}`: Create/update a skill (3 scopes: bridge, project, conversation).
+- `list_skills {project_id?, conversation_id?, tags?}`: List skills (metadata only — progressive disclosure tier 1).
+- `get_skill {skill_id}`: Get full skill content (tier 2).
+- `delete_skill {skill_id}`: Delete a skill (creator or listed agents).
+- `set_skill_file {skill_id, filename, content}`: Attach a file to a skill (tier 3).
+- `get_skill_file {skill_id, filename}`: Get an attached file's content (tier 3).
+
+### Access tools (3)
+
+- `list_access_requests {conversation_id}`: List pending access requests for a conversation.
+- `respond_to_access_request {request_id, action, clearance?}`: Approve/deny/silent_deny.
+- `get_my_access_requests {}`: Check status of your own access requests.
+
+### Member tools (3)
+
+- `add_member {project_id, agent_id}`: Add agent to project (owner only).
+- `remove_member {project_id, agent_id}`: Remove agent from project (owner only).
+- `list_members {project_id}`: List project members with roles.
+
+### Attachment tools (4)
+
+- `upload_attachment {conversation_id, filename, content_type, data}`: Upload a file as base64. Returns attachment metadata with ID. Requires subscription to conversation. Validated against `maxFileSize` and `allowedTypes` config.
+- `get_attachment {attachment_id}`: Download attachment content as base64. Requires subscription to the attachment's conversation.
+- `list_attachments {message_id}`: List attachments for a specific message.
+- `delete_attachment {attachment_id}`: Delete an attachment (creator only). Removes both file and metadata.
+
+**Attachment workflow:** Two-step process: (1) `upload_attachment` returns an ID with `messageId: null`, (2) `send_message` with `attachment_ids` links them to the message. This avoids mixing large base64 data with message content in one MCP call.
+
+### Delegation protocol
+
+Convention-based delegation using tasks + message types:
+- **Request:** `create_task` with `required_capabilities`, or `send_message` with `type: "proposal"` + tag `action-request`.
+- **Accept:** `claim_task`, or respond with `type: "status"` + tag `action-accepted`.
+- **Result:** `complete_task` with result, or `send_message` with `type: "result"` + tag `action-result`.
+- **Decline:** `release_task`, or explain in a regular message.
+
+A "Delegation Protocol" skill is auto-created at bridge startup.
+
+### Keryx Discussion Manager
+
+Built-in rule-based moderator (agent type `moderator`). Manages conversation rounds, adaptive timing, progressive escalation, pattern detection (loops, drift, domination). Human commands via `@keryx pause/resume/skip/extend/status/interrupt/enable/disable`. Disable with `--no-keryx`.
 
 ### Bridge CLI
 
-- `agorai serve`: Start the bridge HTTP server. Requires `bridge` section in config.
+- `agorai serve [--port N] [--host ADDR] [--gui] [--no-keryx] [--with-agent NAME]`: Start the bridge server.
 
 ## Debate Engine (v0.1)
 
@@ -52,28 +113,17 @@ Key concepts:
 
 Supported debate agents:
 - Claude (`claude -p --output-format json`)
-- Gemini (`gemini -p --output-format json`, untested)
+- Gemini (`gemini -p --output-format json`)
 - Ollama (HTTP API, any local model)
+- OpenAI-compatible APIs (LM Studio, Groq, Mistral, Deepseek, vLLM)
 
 ### Debate CLI commands
 
 - `agorai debate "<prompt>" [--agents a,b] [--roles "a=p1+p2,b=p3"] [--mode quick|full] [--thoroughness 0-1] [--max-rounds N] [--max-tokens N] [--continue <debate_id>] [--force]`
-- `agorai analyze "<prompt>" [--thoroughness 0-1]` (v0.3)
+- `agorai analyze "<prompt>" [--thoroughness 0-1]`
 - `agorai agents`: List configured debate agents.
-- `agorai project create/list/switch/archive`: Project management (stub).
-- `agorai context get/set`: Project memory (stub).
 - `agorai init`: Generate config.
 - `agorai start [--http]`: Start MCP server (stdio).
-
-### Debate MCP tools (11)
-
-- `debate`: Start/resume a multi-agent debate. Params: prompt, debate_id, agents[], roles, mode, max_rounds, thoroughness, estimate_only.
-- `analyze`: Decompose via ProjectManager (v0.3). Params: prompt, project_id, thoroughness.
-- `list_agents`: List debate agents.
-- `project_create/list/switch/archive`: Project management (stubs).
-- `context_get/set`: Project memory (stubs).
-- `handoff`: Transfer a spec to an agent (stub).
-- `join_debate`: Join a public debate (stub).
 
 ## Configuration
 
@@ -89,13 +139,18 @@ Key settings:
 - `logging`: purge strategies for info.log and debate logs.
 - `bridge` (optional): HTTP server config.
   - `bridge.port` (default: 3100), `bridge.host` (default: "127.0.0.1")
-  - `bridge.apiKeys[]`: each with key, agent name, type, capabilities, clearanceLevel.
-
-## Consensus protocols
-
-- **Vote**: weighted majority (factual questions).
-- **Debate**: iterative rounds with synthesis (design questions).
-- **Quorum**: confidence-weighted with persona bonuses (security, planned).
+  - `bridge.apiKeys[]`: each with key/keyEnv, agent name, type, capabilities, clearanceLevel, toolGroups.
+  - `bridge.rateLimit`: maxRequests (120), windowSeconds (60).
+  - `bridge.maxBodySize`: max HTTP body in bytes (512KB default).
+  - `bridge.decisionDepth`: ideal discussion rounds before convergence (0 = disabled).
+- `fileStore` (optional): attachment storage config.
+  - `fileStore.type`: "local" (default).
+  - `fileStore.basePath`: storage directory (default: "./data/attachments").
+  - `fileStore.maxFileSize`: max file size in bytes (10MB default).
+  - `fileStore.maxPerConversation`: max total size per conversation (100MB default).
+  - `fileStore.allowedTypes`: MIME type whitelist (empty = all allowed).
+- `gui` (optional): web GUI config (port, host, basePath, defaultAdmin).
+- `keryx`: discussion manager config (enabled, baseTimeoutMs, nudgeAfterMs, etc.).
 
 ## Documentation
 
@@ -109,8 +164,8 @@ Key settings:
 
 - [src/store/interfaces.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/store/interfaces.ts): IStore interface
 - [src/store/types.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/store/types.ts): Data types with visibility
+- [src/store/file-store.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/store/file-store.ts): IFileStore interface + LocalFileStore
 - [src/bridge/auth.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/bridge/auth.ts): IAuthProvider interface
 - [src/bridge/tools.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/bridge/tools.ts): Bridge tool Zod schemas
+- [src/agent/context.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/agent/context.ts): Agent context builder + bridge rules
 - [src/adapters/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/adapters/base.ts): IAgentAdapter interface
-- [src/memory/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/memory/base.ts): IBlackboard interface
-- [src/consensus/base.ts](https://github.com/StevenJohnson998/Agorai/blob/main/src/consensus/base.ts): IConsensusProtocol interface

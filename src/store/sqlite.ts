@@ -39,6 +39,9 @@ import type {
   CreateTask,
   TaskFilters,
   TaskStatus,
+  Attachment,
+  AttachmentMetadata,
+  CreateAttachment,
   AgentMemory,
   AgentMemoryScope,
   Skill,
@@ -289,6 +292,23 @@ export class SqliteStore implements IStore {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        id TEXT PRIMARY KEY,
+        message_id TEXT,
+        conversation_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        storage_ref TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (message_id) REFERENCES messages(id),
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+        FOREIGN KEY (created_by) REFERENCES agents(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_attachments_message ON message_attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON message_attachments(conversation_id);
     `);
 
     // --- Schema migrations for existing databases ---
@@ -1589,6 +1609,106 @@ export class SqliteStore implements IStore {
     ).run(agentId, scope, resolvedScopeId);
 
     return result.changes > 0;
+  }
+
+  // --- Attachments ---
+
+  async createAttachment(attachment: CreateAttachment): Promise<Attachment> {
+    const id = randomUUID();
+    const createdAt = now();
+    this.db.prepare(`
+      INSERT INTO message_attachments (id, message_id, conversation_id, filename, content_type, size, storage_ref, created_by, created_at)
+      VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, attachment.conversationId, attachment.filename, attachment.contentType, attachment.size, attachment.storageRef, attachment.createdBy, createdAt);
+
+    return {
+      id,
+      messageId: null,
+      conversationId: attachment.conversationId,
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      storageRef: attachment.storageRef,
+      createdBy: attachment.createdBy,
+      createdAt,
+    };
+  }
+
+  async getAttachment(id: string): Promise<Attachment | null> {
+    const row = this.db.prepare("SELECT * FROM message_attachments WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.rowToAttachment(row);
+  }
+
+  async listAttachmentsByMessage(messageId: string): Promise<AttachmentMetadata[]> {
+    const rows = this.db.prepare("SELECT * FROM message_attachments WHERE message_id = ?").all(messageId) as Record<string, unknown>[];
+    return rows.map(this.rowToAttachmentMetadata);
+  }
+
+  async listAttachmentsByMessages(messageIds: string[]): Promise<Map<string, AttachmentMetadata[]>> {
+    const result = new Map<string, AttachmentMetadata[]>();
+    if (messageIds.length === 0) return result;
+
+    const placeholders = messageIds.map(() => "?").join(",");
+    const rows = this.db.prepare(
+      `SELECT * FROM message_attachments WHERE message_id IN (${placeholders})`
+    ).all(...messageIds) as Record<string, unknown>[];
+
+    for (const row of rows) {
+      const msgId = row.message_id as string;
+      const meta = this.rowToAttachmentMetadata(row);
+      const existing = result.get(msgId);
+      if (existing) {
+        existing.push(meta);
+      } else {
+        result.set(msgId, [meta]);
+      }
+    }
+    return result;
+  }
+
+  async linkAttachmentsToMessage(attachmentIds: string[], messageId: string, agentId: string): Promise<number> {
+    if (attachmentIds.length === 0) return 0;
+    const stmt = this.db.prepare(
+      "UPDATE message_attachments SET message_id = ? WHERE id = ? AND created_by = ? AND message_id IS NULL"
+    );
+    let linked = 0;
+    for (const attId of attachmentIds) {
+      const result = stmt.run(messageId, attId, agentId);
+      linked += result.changes;
+    }
+    return linked;
+  }
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    const result = this.db.prepare("DELETE FROM message_attachments WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+
+  private rowToAttachment(row: Record<string, unknown>): Attachment {
+    return {
+      id: row.id as string,
+      messageId: row.message_id as string | null,
+      conversationId: row.conversation_id as string,
+      filename: row.filename as string,
+      contentType: row.content_type as string,
+      size: row.size as number,
+      storageRef: row.storage_ref as string,
+      createdBy: row.created_by as string,
+      createdAt: row.created_at as string,
+    };
+  }
+
+  private rowToAttachmentMetadata(row: Record<string, unknown>): AttachmentMetadata {
+    return {
+      id: row.id as string,
+      messageId: row.message_id as string | null,
+      filename: row.filename as string,
+      contentType: row.content_type as string,
+      size: row.size as number,
+      createdBy: row.created_by as string,
+      createdAt: row.created_at as string,
+    };
   }
 
   // --- Skills ---

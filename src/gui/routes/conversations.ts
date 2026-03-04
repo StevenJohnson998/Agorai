@@ -3,10 +3,14 @@
  */
 
 import { Router } from "express";
+import express from "express";
 import ejs from "ejs";
+import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IStore } from "../../store/interfaces.js";
+import type { IFileStore } from "../../store/file-store.js";
+import type { Message, AttachmentMetadata } from "../../store/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const guiSrcDir = __dirname.includes("/dist/")
@@ -14,7 +18,58 @@ const guiSrcDir = __dirname.includes("/dist/")
   : resolve(__dirname, "..");
 const messageTemplatePath = resolve(guiSrcDir, "views/partials/message.ejs");
 
-export function createConversationRoutes(store: IStore) {
+type MessageWithAttachments = Message & { attachments?: AttachmentMetadata[] };
+
+// Content types safe to serve inline (won't execute scripts in the browser)
+const SAFE_INLINE_TYPES = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+  "image/bmp", "image/tiff", "image/avif",
+  "application/pdf",
+  "text/plain", "text/csv",
+  "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm",
+  "video/mp4", "video/webm", "video/ogg",
+]);
+
+/** Strip path separators, null bytes, and control characters from a filename. */
+function sanitizeFilename(raw: string): string {
+  // Take only the basename (last segment after any / or \)
+  let name = raw.replace(/^.*[/\\]/, "");
+  // Remove null bytes and control characters
+  name = name.replace(/[\x00-\x1f\x7f]/g, "");
+  // Collapse to reasonable length
+  name = name.slice(0, 255);
+  return name || "attachment";
+}
+
+/** Validate a MIME content type: must match type/subtype pattern, no newlines or special chars. */
+function sanitizeContentType(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (/^[a-z0-9][a-z0-9!#$&\-.^_+]*\/[a-z0-9][a-z0-9!#$&\-.^_+]*$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+/** RFC 5987 encode a filename for Content-Disposition (handles unicode safely). */
+function contentDisposition(mode: "inline" | "attachment", filename: string): string {
+  // ASCII-safe subset for filename= parameter
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
+  // UTF-8 encoded for filename*= parameter
+  const utf8 = encodeURIComponent(filename).replace(/['()]/g, (c) => "%" + c.charCodeAt(0).toString(16));
+  return `${mode}; filename="${ascii}"; filename*=UTF-8''${utf8}`;
+}
+
+async function enrichMessagesWithAttachments(store: IStore, messages: Message[]): Promise<MessageWithAttachments[]> {
+  if (messages.length === 0) return [];
+  const messageIds = messages.map((m) => m.id);
+  const attachmentMap = await store.listAttachmentsByMessages(messageIds);
+  return messages.map((m) => ({
+    ...m,
+    attachments: attachmentMap.get(m.id) || [],
+  }));
+}
+
+export function createConversationRoutes(store: IStore, fileStore?: IFileStore, fileStoreConfig?: { maxFileSize: number; allowedTypes: string[] }) {
   const router = Router();
 
   // Conversations list — /test/c/
@@ -222,10 +277,13 @@ export function createConversationRoutes(store: IStore) {
       return res.status(400).json({ error: "since parameter is required." });
     }
 
-    const messages = await store.getMessages(conversationId, user.agentId!, { since });
+    const rawMessages = await store.getMessages(conversationId, user.agentId!, { since });
 
     // Filter out user's own messages (already rendered client-side)
-    const otherMessages = messages.filter((m) => m.fromAgent !== user.agentId);
+    const otherMessages = rawMessages.filter((m) => m.fromAgent !== user.agentId);
+
+    // Enrich with attachments
+    const messagesWithAttachments = await enrichMessagesWithAttachments(store, otherMessages);
 
     // Get agents for rendering
     const agents = await store.listAgents();
@@ -233,7 +291,7 @@ export function createConversationRoutes(store: IStore) {
 
     // Render each message to HTML
     const rendered = [];
-    for (const message of otherMessages) {
+    for (const message of messagesWithAttachments) {
       const html = await ejs.renderFile(messageTemplatePath, {
         message,
         agentMap,
@@ -264,8 +322,9 @@ export function createConversationRoutes(store: IStore) {
       });
     }
 
-    // Get messages
-    const messages = await store.getMessages(conversationId, user.agentId!);
+    // Get messages and enrich with attachments
+    const rawMessages = await store.getMessages(conversationId, user.agentId!);
+    const messages = await enrichMessagesWithAttachments(store, rawMessages);
 
     // Get agents for display names
     const agents = await store.listAgents();
@@ -426,13 +485,131 @@ export function createConversationRoutes(store: IStore) {
     });
   });
 
+  // Upload attachment (base64 JSON body)
+  router.post("/c/:id/upload", express.json({ limit: "14mb" }), async (req, res) => {
+    const user = req.user!;
+    const conversationId = req.params.id;
+
+    if (!fileStore) {
+      return res.status(501).json({ error: "File attachments are not enabled." });
+    }
+
+    const { filename: rawFilename, content_type: rawContentType, data } = req.body;
+    if (!rawFilename || !rawContentType || !data) {
+      return res.status(400).json({ error: "filename, content_type, and data are required." });
+    }
+
+    // Sanitize filename — strip path traversal, control chars
+    const filename = sanitizeFilename(String(rawFilename));
+
+    // Validate and sanitize content type
+    const contentType = sanitizeContentType(String(rawContentType));
+    if (!contentType) {
+      return res.status(400).json({ error: "Invalid content type format." });
+    }
+
+    // Decode base64
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(data, "base64");
+    } catch {
+      return res.status(400).json({ error: "Invalid base64 data." });
+    }
+
+    // Validate size
+    const maxSize = fileStoreConfig?.maxFileSize ?? 10 * 1024 * 1024;
+    if (buffer.length > maxSize) {
+      return res.status(413).json({ error: `File too large. Maximum size: ${(maxSize / (1024 * 1024)).toFixed(0)} MB.` });
+    }
+
+    // Validate content type against allowlist
+    const allowedTypes = fileStoreConfig?.allowedTypes ?? [];
+    if (allowedTypes.length > 0 && !allowedTypes.includes(contentType)) {
+      return res.status(400).json({ error: `Content type '${contentType}' is not allowed.` });
+    }
+
+    try {
+      const id = randomUUID();
+      const storageRef = await fileStore.save(conversationId, id, buffer);
+      const attachment = await store.createAttachment({
+        conversationId,
+        filename,
+        contentType,
+        size: buffer.length,
+        storageRef,
+        createdBy: user.agentId!,
+      });
+      res.json({ id: attachment.id, filename: attachment.filename, contentType: attachment.contentType, size: attachment.size });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // Serve attachment (inline for safe types, forced download for dangerous types like HTML)
+  router.get("/c/:id/attachment/:aid", async (req, res) => {
+    const conversationId = req.params.id;
+    const attachmentId = req.params.aid;
+
+    if (!fileStore) {
+      return res.status(501).json({ error: "File attachments are not enabled." });
+    }
+
+    const attachment = await store.getAttachment(attachmentId);
+    if (!attachment || attachment.conversationId !== conversationId) {
+      return res.status(404).json({ error: "Attachment not found." });
+    }
+
+    try {
+      const data = await fileStore.get(attachment.storageRef);
+      // Only serve inline for known-safe content types; force download for anything else (prevents XSS via HTML/SVG)
+      const isSafe = SAFE_INLINE_TYPES.has(attachment.contentType);
+      const mode = isSafe ? "inline" : "attachment";
+      const servedType = isSafe ? attachment.contentType : "application/octet-stream";
+      res.setHeader("Content-Type", servedType);
+      res.setHeader("Content-Disposition", contentDisposition(mode, attachment.filename));
+      res.setHeader("Content-Length", data.length.toString());
+      res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(data);
+    } catch {
+      res.status(404).json({ error: "Attachment file not found." });
+    }
+  });
+
+  // Download attachment (force download)
+  router.get("/c/:id/attachment/:aid/download", async (req, res) => {
+    const conversationId = req.params.id;
+    const attachmentId = req.params.aid;
+
+    if (!fileStore) {
+      return res.status(501).json({ error: "File attachments are not enabled." });
+    }
+
+    const attachment = await store.getAttachment(attachmentId);
+    if (!attachment || attachment.conversationId !== conversationId) {
+      return res.status(404).json({ error: "Attachment not found." });
+    }
+
+    try {
+      const data = await fileStore.get(attachment.storageRef);
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Disposition", contentDisposition("attachment", attachment.filename));
+      res.setHeader("Content-Length", data.length.toString());
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(data);
+    } catch {
+      res.status(404).json({ error: "Attachment file not found." });
+    }
+  });
+
   // Send a message
   router.post("/c/:id/send", async (req, res) => {
     const user = req.user!;
     const bp = req.app.get("basePath") || "";
     const envPath = bp + "/test";
     const conversationId = req.params.id;
-    const { content, type, visibility } = req.body;
+    const { content, type, visibility, attachment_ids } = req.body;
 
     if (!content || !content.trim()) {
       return res.status(400).json({ error: "Message content is required." });
@@ -446,12 +623,24 @@ export function createConversationRoutes(store: IStore) {
       visibility: visibility || undefined,
     });
 
+    // Link pending attachments to this message
+    if (attachment_ids && typeof attachment_ids === "string" && attachment_ids.trim()) {
+      const ids = attachment_ids.split(",").map((id: string) => id.trim()).filter(Boolean);
+      if (ids.length > 0) {
+        await store.linkAttachmentsToMessage(ids, message.id, user.agentId!);
+      }
+    }
+
+    // Fetch attachments for the message
+    const attachments = await store.listAttachmentsByMessage(message.id);
+    const messageWithAttachments: MessageWithAttachments = { ...message, attachments };
+
     // Return the message fragment for htmx
     const agents = await store.listAgents();
     const agentMap = new Map(agents.map((a) => [a.id, a]));
 
     res.render("partials/message", {
-      message,
+      message: messageWithAttachments,
       agentMap,
       user,
       envPath,

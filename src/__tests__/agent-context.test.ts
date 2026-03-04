@@ -45,6 +45,8 @@ describe("buildBridgeRules", () => {
     expect(rules.mentionRules).toContain("@agent-name");
     expect(rules.accessRequestRules).toContain("access request");
     expect(rules.skillsRules).toContain("progressive disclosure");
+    expect(rules.attachmentRules).toContain("upload_attachment");
+    expect(rules.delegationRules).toContain("Delegation protocol");
   });
 
   it("includes all sections when toolGroups contains 'all'", () => {
@@ -53,10 +55,12 @@ describe("buildBridgeRules", () => {
     expect(rules.skillsRules).toBeDefined();
   });
 
-  it("omits access/skills rules when only 'core' group active", () => {
+  it("omits access/skills/attachment/delegation rules when only 'core' group active", () => {
     const rules = buildBridgeRules(["core"]);
     expect(rules.accessRequestRules).toBeUndefined();
     expect(rules.skillsRules).toBeUndefined();
+    expect(rules.attachmentRules).toBeUndefined();
+    expect(rules.delegationRules).toBeUndefined();
     // Core rules still present
     expect(rules.messageTracking).toContain("mark_read");
     expect(rules.visibilityRules).toContain("visibility");
@@ -72,6 +76,18 @@ describe("buildBridgeRules", () => {
     const rules = buildBridgeRules(["core", "skills"]);
     expect(rules.skillsRules).toContain("progressive disclosure");
     expect(rules.accessRequestRules).toBeUndefined();
+  });
+
+  it("includes attachment rules when attachments group present", () => {
+    const rules = buildBridgeRules(["core", "attachments"]);
+    expect(rules.attachmentRules).toContain("upload_attachment");
+    expect(rules.delegationRules).toBeUndefined();
+  });
+
+  it("includes delegation rules when tasks group present", () => {
+    const rules = buildBridgeRules(["core", "tasks"]);
+    expect(rules.delegationRules).toContain("Delegation protocol");
+    expect(rules.attachmentRules).toBeUndefined();
   });
 });
 
@@ -138,6 +154,29 @@ describe("renderForMcpInstructions", () => {
         "- Tier 2 (content): Call get_skill(skill_id) to load the full content of a skill you need.",
         "- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.",
         "Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.",
+      );
+    }
+
+    if (activeGroups.has("attachments")) {
+      instructionParts.push(
+        "",
+        "IMPORTANT — File attachments:",
+        "Agents can share files (images, code, documents) via message attachments.",
+        "Two-step workflow: (1) upload_attachment → get attachment ID, (2) send_message with attachment_ids to link them.",
+        "To download: get_messages returns attachment metadata, then get_attachment to fetch content as base64.",
+        "Attachments belong to a conversation. Only the creator can delete their attachments.",
+      );
+    }
+
+    if (activeGroups.has("tasks")) {
+      instructionParts.push(
+        "",
+        "IMPORTANT — Delegation protocol:",
+        "To delegate work to another agent, use the task system (create_task with required_capabilities).",
+        "For informal delegation in conversation, use message type 'proposal' with tag 'action-request'.",
+        "When accepting delegated work, respond with type 'status' and tag 'action-accepted'.",
+        "When reporting results, use type 'result' with tag 'action-result'.",
+        "To decline, explain why in a regular message.",
       );
     }
 

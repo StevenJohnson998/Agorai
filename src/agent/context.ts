@@ -73,6 +73,8 @@ export interface BridgeRules {
   accessRequestRules?: string;
   membershipRules?: string;
   skillsRules?: string;
+  attachmentRules?: string;
+  delegationRules?: string;
   keryxRules?: string;
 }
 
@@ -170,6 +172,27 @@ export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: bool
     ].join("\n");
   }
 
+  if (allActive || groups.has("attachments")) {
+    rules.attachmentRules = [
+      "IMPORTANT — File attachments:",
+      "Agents can share files (images, code, documents) via message attachments.",
+      "Two-step workflow: (1) upload_attachment → get attachment ID, (2) send_message with attachment_ids to link them.",
+      "To download: get_messages returns attachment metadata, then get_attachment to fetch content as base64.",
+      "Attachments belong to a conversation. Only the creator can delete their attachments.",
+    ].join("\n");
+  }
+
+  if (allActive || groups.has("tasks")) {
+    rules.delegationRules = [
+      "IMPORTANT — Delegation protocol:",
+      "To delegate work to another agent, use the task system (create_task with required_capabilities).",
+      "For informal delegation in conversation, use message type 'proposal' with tag 'action-request'.",
+      "When accepting delegated work, respond with type 'status' and tag 'action-accepted'.",
+      "When reporting results, use type 'result' with tag 'action-result'.",
+      "To decline, explain why in a regular message.",
+    ].join("\n");
+  }
+
   if (keryxActive) {
     rules.keryxRules = [
       "IMPORTANT — Keryx discussion manager:",
@@ -216,6 +239,14 @@ export function renderForMcpInstructions(rules: BridgeRules): string {
 
   if (rules.skillsRules) {
     parts.push("", rules.skillsRules);
+  }
+
+  if (rules.attachmentRules) {
+    parts.push("", rules.attachmentRules);
+  }
+
+  if (rules.delegationRules) {
+    parts.push("", rules.delegationRules);
   }
 
   if (rules.keryxRules) {

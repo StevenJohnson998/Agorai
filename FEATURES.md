@@ -1,5 +1,32 @@
 # Features
 
+## File Attachments & Delegation Protocol (v0.8)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **IFileStore interface** | Pluggable storage abstraction. `save()`, `get()`, `delete()`, `initialize()` | Done |
+| **LocalFileStore** | Filesystem-based implementation. Layout: `basePath/{conversationId}/{attachmentId}` | Done |
+| **message_attachments table** | SQLite table with nullable `message_id` for upload-first workflow | Done |
+| **upload_attachment** | MCP tool: decode base64, validate size/type, store file, create metadata | Done |
+| **get_attachment** | MCP tool: verify subscription, return file content as base64 | Done |
+| **list_attachments** | MCP tool: list attachments for a message | Done |
+| **delete_attachment** | MCP tool: ownership-enforced deletion (file + metadata) | Done |
+| **send_message + attachment_ids** | Link pre-uploaded attachments when sending a message (max 10) | Done |
+| **get_messages + attachments** | Batch-fetches attachment metadata, includes on messages that have them | Done |
+| **fileStore config** | `maxFileSize` (10MB), `maxPerConversation` (100MB), `allowedTypes` (empty = all) | Done |
+| **Delegation Protocol skill** | Bridge-scoped skill auto-created at startup: conventions for `proposal`/`result` delegation | Done |
+| **delegationRules** | Bridge instructions for delegation workflow (conditional on `tasks` group) | Done |
+| **attachmentRules** | Bridge instructions for attachment workflow (conditional on `attachments` group) | Done |
+| **GUI file upload** | Paperclip button in conversation form, base64 JSON upload, pending attachment pills | Done |
+| **GUI attachment display** | Attachment chips on messages: filename, size, open/download buttons. All render paths (page, htmx, SSE, catch-up) | Done |
+| **GUI serve/download** | Inline serve for safe types (images, PDF, text, audio, video), force-download for others | Done |
+| **Path traversal protection** | `LocalFileStore.safePath()` validates resolved paths stay within basePath | Done |
+| **Filename/content-type sanitization** | Strip path separators, null bytes, control chars. Strict MIME validation | Done |
+| **XSS prevention on serve** | Safe-inline allowlist, CSP `default-src 'none'`, nosniff on all attachment routes | Done |
+| **Enterprise file backends** | S3, SharePoint, Google Drive implementations of IFileStore | Planned |
+| **Streaming upload** | Multipart upload for large files (avoid base64 overhead) | Planned |
+| **Orphan cleanup** | Scheduler to delete unlinked attachments after TTL | Planned |
+
 ## Keryx Discussion Manager (v0.7)
 
 Built-in rule-based moderator that manages multi-agent conversations. Registers as type `moderator`. Manages process, never generates content. Zero LLM dependency — all pure TypeScript.
@@ -142,11 +169,11 @@ Built-in rule-based moderator that manages multi-agent conversations. Registers 
 | **Subscription enforcement** | `get_messages`, `send_message`, `list_subscribers` require subscription | Done (v0.2.2) |
 | **list_agents project filter** | `project_id` parameter filters to agents in that project's conversations | Done (v0.2.2) |
 | **Opaque error responses** | Access failures return "Not found or access denied" (no resource leak) | Done (v0.2.2) |
-| Permission matrix | Per-project agent × resource × action | Planned (v0.3) |
-| **Config isolation** | Protect `agorai.config.json` from filesystem-capable agents — restricted dir permissions, env var pass-keys, sandboxed agent scope | Planned (v0.5) |
-| **Project access control** | Explicit project membership (invite/request) independent of clearance. Clearance only affects message visibility, not project/conversation access | Planned (v0.6) |
-| Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.6) |
-| Redaction | Replace sensitive data with tokens instead of blocking | Planned (v0.6+) |
+| Permission matrix | Per-project agent × resource × action | Planned (v0.8) |
+| **Config isolation** | Protect `agorai.config.json` from filesystem-capable agents — restricted dir permissions, env var pass-keys, sandboxed agent scope | Planned (v0.8+) |
+| **Project access control** | Explicit project membership (owner/member roles), access_mode (visible/hidden), human bypass. Clearance = message visibility, membership = project access | Done |
+| Auto-classification | Sentinel AI auto-tags messages by sensitivity | Planned (v0.9) |
+| Redaction | Replace sensitive data with tokens instead of blocking | Planned (v0.9+) |
 
 ## Debate Engine (v0.1)
 
@@ -207,7 +234,7 @@ Built-in rule-based moderator that manages multi-agent conversations. Registers 
 | Debate protocol | Iterative synthesis with 30% dissent threshold | Done |
 | Quorum protocol | Confidence-weighted with persona bonus | Planned |
 
-### Bridge MCP Tools (29)
+### Bridge MCP Tools (38)
 
 | Tool | Description | Status |
 |------|-------------|--------|
@@ -237,6 +264,18 @@ Built-in rule-based moderator that manages multi-agent conversations. Registers 
 | `complete_task` | Mark a claimed task as completed with optional result | Done (v0.5) |
 | `release_task` | Release a claim back to open (by claimer or creator) | Done (v0.5) |
 | `update_task` | Update task title/description/status (creator only) | Done (v0.5) |
+| `set_skill` | Create/update a skill in a scope (bridge/project/conversation) | Done (v0.6) |
+| `list_skills` | List skills metadata for a scope (progressive disclosure tier 1) | Done (v0.6) |
+| `get_skill` | Get full skill content by ID (tier 2) | Done (v0.6) |
+| `delete_skill` | Delete a skill (creator or listed agents) | Done (v0.6) |
+| `set_skill_file` | Attach/update a file on a skill (tier 3) | Done (v0.6) |
+| `get_skill_file` | Get a file attached to a skill | Done (v0.6) |
+| `set_agent_memory` | Save private agent memory (global/project/conversation scope) | Done (v0.5) |
+| `get_agent_memory` | Read private agent memory for a scope | Done (v0.5) |
+| `delete_agent_memory` | Delete private agent memory for a scope | Done (v0.5) |
+| `add_member` | Add an agent as project member (owner only) | Done |
+| `remove_member` | Remove agent from project, unsubscribe from all conversations | Done |
+| `list_members` | List project members with roles | Done |
 
 ### Debate MCP Tools (11)
 
@@ -250,7 +289,7 @@ Built-in rule-based moderator that manages multi-agent conversations. Registers 
 | `join_debate` | Join public debate | Stub |
 | `project_create/list/switch/archive` | Project management | Stub |
 
-## v0.5 — "Discover, Decide, Deliver" (Planned)
+## v0.5 — "Discover, Decide, Deliver"
 
 | Feature | Description | Status |
 |---------|-------------|--------|
@@ -310,20 +349,20 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | Feature | Description | Status |
 |---------|-------------|--------|
 | **Context convention (MCP instructions)** | Instruct agents to provide context when @mentioning someone new — the sender briefs the newcomer, not the bridge | Done (v0.4.0) |
-| **`--onboarding` flag** | `subscribe --onboarding <agent-name>`: when adding an agent to a conversation, a designated agent auto-sends a context brief to the newcomer | Planned (v0.5) |
-| **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.6) |
-| **Orchestrator digest** | Orchestrator agent (internal, always subscribed) maintains running digests in project memory. New subscribers receive digest instead of raw history | Planned (v0.6) |
-| **Archive conversation** | `archive_conversation` tool — AI-summarizes key decisions into project memory (type: `digest`), then deletes detailed messages. Conversation marked `archived`. Keeps the "why" at project level without the noise | Planned (v0.6) |
+| **`--onboarding` flag** | `subscribe --onboarding <agent-name>`: when adding an agent to a conversation, a designated agent auto-sends a context brief to the newcomer | Planned (v0.8) |
+| **Search messages** | `search_messages` tool — full-text search within a conversation, with optional date/agent/tag filters | Planned (v0.8) |
+| **Orchestrator digest** | Orchestrator agent (internal, always subscribed) maintains running digests in project memory. New subscribers receive digest instead of raw history | Planned (v0.9) |
+| **Archive conversation** | `archive_conversation` tool — AI-summarizes key decisions into project memory (type: `digest`), then deletes detailed messages. Conversation marked `archived`. Keeps the "why" at project level without the noise | Planned (v0.9) |
 
 ## Orchestrator Agent (Planned)
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **Role** | Internal agent responsible for conversation-level coordination: digest maintenance, smart routing, conflict detection, task tracking | Planned (v0.6) |
-| **Digest maintenance** | Subscribes to all conversations, maintains summaries in project memory (`type: "digest"`). Updates every N messages or on-demand | Planned (v0.6) |
-| **Onboarding brief** | When a new agent subscribes, orchestrator provides a context summary (key points, decisions, open TODOs) | Planned (v0.6) |
-| **Smart routing** | Routes messages to the best agent based on capabilities and @mention patterns | Planned (v0.6) |
-| **Conflict detection** | Flags contradictory decisions or duplicate work across conversations | Planned (v0.7) |
+| **Role** | Internal agent responsible for conversation-level coordination: digest maintenance, smart routing, conflict detection, task tracking | Planned (v0.9) |
+| **Digest maintenance** | Subscribes to all conversations, maintains summaries in project memory (`type: "digest"`). Updates every N messages or on-demand | Planned (v0.9) |
+| **Onboarding brief** | When a new agent subscribes, orchestrator provides a context summary (key points, decisions, open TODOs) | Planned (v0.9) |
+| **Smart routing** | Routes messages to the best agent based on capabilities and @mention patterns | Planned (v0.9) |
+| **Conflict detection** | Flags contradictory decisions or duplicate work across conversations | Planned (v1.0) |
 
 ## GUI MVP (v0.6.2)
 
@@ -340,10 +379,11 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **Context menus** | ⋮ menu on projects (new conversation, rename, delete) and conversations (rename, delete). Creator or admin only | Done |
 | **Project/conversation deletion** | Soft-delete only (`status = 'deleted'`). Data preserved in DB, hidden from listings. No hard-delete or file cleanup yet | Done |
 | **Mobile responsive** | Touch targets, sidebar toggle, responsive layout | Done |
-| **Mobile SSE bug** | Agent replies don't auto-appear on mobile browsers (need manual refresh). SSE connection likely dropped by mobile Safari/Chrome. Priority fix for demo | Bug |
+| **Mobile SSE bug** | Auto-scroll fixed (smart scroll + "N new" pill). Full mobile SSE reliability needs testing on actual devices | Partial fix |
 | **Participant management** | "+participant" button to add Users or AIs to conversations. Avatar pills with status dots, add/remove drawer | Done |
 | **Agent health status** | Agents tracked as online/error/offline. Red/green/grey status dots. System messages for unavailable/recovery/join events | Done |
 | **Collaboration tuning** | Collaboration window (decisionDepth × agentCount), anti-impersonation, early consensus stopping via [NO_RESPONSE] | Done |
+| **File attachments** | Upload files via paperclip button, pending pills, attachment chips on messages with open/download. Security: path traversal protection, filename sanitization, XSS prevention, safe-inline allowlist | Done |
 | **Verbosity control** | User preference (Concise/Normal/Detailed) that controls agent response length via bridge-level skill | Planned |
 | **Debate moderation** | Optional moderator role per conversation. Admin sets preferred moderator or random. Moderator gets synthesis instructions, others defer. Config: `moderation.enabled` + `moderation.preferredModerator` | Planned |
 | **Hard-delete & file cleanup** | Permanently delete soft-deleted projects/conversations and associated data (messages, subscriptions, memory, access requests). Admin-only purge tool | Planned |
@@ -364,7 +404,7 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **v0.2** | **Bridge — shared workspace, projects, conversations, memory, visibility, auth, 16 tools** |
 | v0.2.x | Reliability & isolation — session recovery, heartbeat, data isolation, npm publish, internal agent runner |
 | **v0.3** | **SSE Push Notifications — 3-layer EventBus→Dispatcher→Client, visibility gating, proxy SSE, agent fast-path** |
-| v0.3.x | Permissions, Threading & Capabilities — per-project matrix, agent capabilities (tag dictionary) |
+| v0.3.x | Context convention, discovery rules, access control enhancements |
 | **v0.4** | **Message Metadata Overhaul — bridgeMetadata/agentMetadata separation, confidentiality modes, high-water mark tracking, anti-forge** |
 | v0.4.x | Strict mode enforcement, context convention in MCP instructions, discovery rules, access control |
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming (atomic + release + heartbeat), structured conversations, directed messages, message tags, filter by agent, agent memory (private scratchpad, 3 scopes), instruction matrix (scope × selector, replaces playbook), internal agents default active** |

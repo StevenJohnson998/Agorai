@@ -57,8 +57,8 @@ describe("calculateTimeout", () => {
 
   it("returns base timeout for short prompts (http)", () => {
     const timeout = calculateTimeout(100, "http");
-    // 100/4 = 25 tokens → 15000 + 25*15 = 15375
-    expect(timeout).toBe(15375);
+    // 100/4 = 25 tokens → 60000 + 25*15 = 60375
+    expect(timeout).toBe(60375);
   });
 
   it("caps at 10 minutes for http", () => {

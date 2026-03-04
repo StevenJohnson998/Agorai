@@ -151,12 +151,22 @@ export const ConfigSchema = z.object({
         clearanceLevel: z.enum(["public", "team", "confidential", "restricted"]).default("team"),
         /** MCP tool groups exposed to this agent. Omit or ["all"] for all tools. */
         toolGroups: z.array(
-          z.enum(["all", "core", "memory", "tasks", "skills", "access", "members"])
+          z.enum(["all", "core", "memory", "tasks", "skills", "access", "members", "attachments"])
         ).optional(),
       })).default([]),
     })
     .optional()
     .describe("Bridge HTTP server config. Absent = bridge disabled."),
+
+  fileStore: z
+    .object({
+      type: z.enum(["local"]).default("local"),
+      basePath: z.string().default("./data/attachments"),
+      maxFileSize: z.number().int().min(1024).default(10 * 1024 * 1024),
+      maxPerConversation: z.number().int().min(0).default(100 * 1024 * 1024),
+      allowedTypes: z.array(z.string()).default([]),
+    })
+    .default({}),
 
   gui: z
     .object({

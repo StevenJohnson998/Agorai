@@ -47,16 +47,27 @@
     <!-- @mention autocomplete dropdown -->
     <div id="mention-dropdown" class="hidden absolute bottom-full left-3 right-3 mb-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-50 max-h-48 overflow-y-auto"></div>
 
+    <!-- Pending attachment pills -->
+    <div id="attachment-pills" class="hidden flex flex-wrap gap-1.5 mb-2"></div>
+
     <form id="send-form" hx-post="<%= envPath %>/c/<%= conversation.id %>/send"
           hx-target="#messages-container"
           hx-swap="beforeend"
           hx-on::before-request="this.querySelector('#send-btn').disabled=true;this.querySelector('#send-icon').classList.add('hidden');this.querySelector('#send-spinner').classList.remove('hidden')"
-          hx-on::after-request="this.reset();this.querySelector('textarea').style.height='auto';this.querySelector('#send-btn').disabled=false;this.querySelector('#send-icon').classList.remove('hidden');this.querySelector('#send-spinner').classList.add('hidden');closeMentionDropdown();scrollChatToBottom(false)"
+          hx-on::after-request="this.reset();this.querySelector('textarea').style.height='auto';this.querySelector('#send-btn').disabled=false;this.querySelector('#send-icon').classList.remove('hidden');this.querySelector('#send-spinner').classList.add('hidden');closeMentionDropdown();clearPendingAttachments();scrollChatToBottom(false)"
           class="flex gap-2">
+      <input type="hidden" name="attachment_ids" id="attachment-ids">
       <textarea id="msg-input" name="content" rows="1" placeholder="Type a message... (@ to mention)"
         class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"
         onkeydown="handleMentionKey(event)"
         oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';handleMentionInput(this)"></textarea>
+      <input type="file" id="file-input" class="hidden">
+      <button type="button" id="attach-btn" title="Attach file"
+        class="px-2 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors text-sm self-end min-w-[44px] min-h-[44px] flex items-center justify-center"
+        onclick="document.getElementById('file-input').click()">
+        <svg id="attach-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+        <svg id="attach-spinner" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      </button>
       <button type="submit" id="send-btn" title="Send message"
         class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium self-end min-w-[44px] min-h-[44px] flex items-center justify-center">
         <svg id="send-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
@@ -87,6 +98,82 @@
       });
     }
   })();
+
+  // --- File attachment upload ---
+  var pendingAttachments = [];
+  var attachEnvPath = '<%= envPath %>';
+  var attachConvId = '<%= conversation.id %>';
+
+  function renderAttachmentPills() {
+    var container = document.getElementById('attachment-pills');
+    var hiddenInput = document.getElementById('attachment-ids');
+    if (pendingAttachments.length === 0) {
+      container.classList.add('hidden');
+      container.innerHTML = '';
+      hiddenInput.value = '';
+      return;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = pendingAttachments.map(function(att, i) {
+      var sizeStr = att.size < 1048576 ? (att.size / 1024).toFixed(1) + ' KB' : (att.size / 1048576).toFixed(1) + ' MB';
+      return '<span class="inline-flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-full px-2.5 py-1 text-xs text-slate-300">'
+        + '<svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>'
+        + '<span class="truncate max-w-[150px]">' + att.filename + '</span>'
+        + '<span class="text-slate-500">' + sizeStr + '</span>'
+        + '<button type="button" onclick="removeAttachment(' + i + ')" class="text-slate-500 hover:text-red-400 ml-0.5" title="Remove">'
+        + '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>'
+        + '</button></span>';
+    }).join('');
+    hiddenInput.value = pendingAttachments.map(function(a) { return a.id; }).join(',');
+  }
+
+  function removeAttachment(idx) {
+    pendingAttachments.splice(idx, 1);
+    renderAttachmentPills();
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments = [];
+    renderAttachmentPills();
+  }
+
+  document.getElementById('file-input').addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var attachBtn = document.getElementById('attach-btn');
+    var attachIcon = document.getElementById('attach-icon');
+    var attachSpinner = document.getElementById('attach-spinner');
+    attachBtn.disabled = true;
+    attachIcon.classList.add('hidden');
+    attachSpinner.classList.remove('hidden');
+
+    var reader = new FileReader();
+    reader.onload = function() {
+      var base64 = reader.result.split(',')[1];
+      fetch(attachEnvPath + '/c/' + attachConvId + '/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ filename: file.name, content_type: file.type || 'application/octet-stream', data: base64 })
+      })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'Upload failed'); });
+        return r.json();
+      })
+      .then(function(att) {
+        pendingAttachments.push(att);
+        renderAttachmentPills();
+      })
+      .catch(function(err) { alert('Upload failed: ' + err.message); })
+      .finally(function() {
+        attachBtn.disabled = false;
+        attachIcon.classList.remove('hidden');
+        attachSpinner.classList.add('hidden');
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  });
 
   // --- @mention autocomplete ---
   var mentionAgents = <%- JSON.stringify((typeof subscribers !== 'undefined' ? subscribers : []).map(function(s) {

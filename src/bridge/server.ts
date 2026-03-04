@@ -12,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { IStore } from "../store/interfaces.js";
+import type { IFileStore } from "../store/file-store.js";
 import type { IAuthProvider, AuthResult } from "./auth.js";
 import type { Config } from "../config.js";
 import type { MessageCreatedEvent, AccessRequestCreatedEvent, TaskCreatedEvent, TaskUpdatedEvent } from "../store/events.js";
@@ -66,6 +67,10 @@ import {
   AddMemberSchema,
   RemoveMemberSchema,
   ListMembersSchema,
+  UploadAttachmentSchema,
+  GetAttachmentSchema,
+  ListAttachmentsSchema,
+  DeleteAttachmentSchema,
 } from "./tools.js";
 
 const log = createLogger("bridge");
@@ -128,6 +133,7 @@ export interface BridgeServerOptions {
   store: IStore;
   auth: IAuthProvider;
   config: Config;
+  fileStore?: IFileStore;
 }
 
 const ACCESS_DENIED = { content: [{ type: "text" as const, text: JSON.stringify({ error: "Not found or access denied" }) }] };
@@ -160,9 +166,12 @@ export const TOOL_GROUPS: Record<string, string[]> = {
   members: [
     "add_member", "remove_member", "list_members",
   ],
+  attachments: [
+    "upload_attachment", "get_attachment", "list_attachments", "delete_attachment",
+  ],
 };
 
-export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups?: string[]): McpServer {
+export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups?: string[], fileStore?: IFileStore, config?: Config): McpServer {
   // Resolve which tool groups are active
   const activeGroups = new Set(
     (!toolGroups || toolGroups.length === 0 || toolGroups.includes("all"))
@@ -576,6 +585,24 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         metadata: args.metadata as Record<string, unknown> | undefined,
       });
 
+      // Link attachments if provided
+      if (args.attachment_ids && args.attachment_ids.length > 0) {
+        // Verify all attachments belong to this conversation and were created by sender
+        for (const attId of args.attachment_ids) {
+          const att = await store.getAttachment(attId);
+          if (!att) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Attachment ${attId} not found` }) }] };
+          }
+          if (att.conversationId !== args.conversation_id) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Attachment ${attId} belongs to a different conversation` }) }] };
+          }
+          if (att.createdBy !== agentId) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Attachment ${attId} was created by another agent` }) }] };
+          }
+        }
+        await store.linkAttachmentsToMessage(args.attachment_ids, message.id, agentId);
+      }
+
       // Response: include bridgeMetadata + agentMetadata (sender sees their own), exclude deprecated metadata
       const { metadata: _deprecated, ...rest } = message;
       return { content: [{ type: "text" as const, text: JSON.stringify(rest, null, 2) }] };
@@ -599,12 +626,20 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         fromAgent: args.from_agent,
       });
 
+      // Batch-fetch attachments for all messages
+      const messageIds = messages.map((m) => m.id);
+      const attachmentsByMessage = messageIds.length > 0
+        ? await store.listAttachmentsByMessages(messageIds)
+        : new Map();
+
       // Shape response: strip agentMetadata for non-sender, exclude deprecated metadata
       const shaped = messages.map((msg) => {
         const { metadata: _deprecated, agentMetadata, ...rest } = msg;
+        const attachments = attachmentsByMessage.get(msg.id) ?? [];
         return {
           ...rest,
           agentMetadata: msg.fromAgent === agentId ? agentMetadata : null,
+          ...(attachments.length > 0 ? { attachments } : {}),
         };
       });
       return { content: [{ type: "text" as const, text: JSON.stringify(shaped, null, 2) }] };
@@ -1187,13 +1222,108 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   );
   } // members
 
+  // --- Attachment tools ---
+
+  if (activeGroups.has("attachments") && fileStore) {
+  const fileStoreConfig = config?.fileStore;
+  const maxFileSize = fileStoreConfig?.maxFileSize ?? 10 * 1024 * 1024;
+  const allowedTypes = fileStoreConfig?.allowedTypes ?? [];
+
+  server.tool(
+    "upload_attachment",
+    "Upload a file attachment to a conversation. Returns attachment metadata with an ID to use in send_message's attachment_ids.",
+    UploadAttachmentSchema.shape,
+    async (args) => {
+      const subscribed = await store.isSubscribed(args.conversation_id, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
+      // Decode base64
+      const data = Buffer.from(args.data, "base64");
+      if (data.length > maxFileSize) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: `File too large (${data.length} bytes, max ${maxFileSize})` }) }] };
+      }
+
+      // Check allowed types
+      if (allowedTypes.length > 0 && !allowedTypes.includes(args.content_type)) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Content type '${args.content_type}' not allowed` }) }] };
+      }
+
+      const attachmentId = randomUUID();
+      const storageRef = await fileStore.save(args.conversation_id, attachmentId, data);
+
+      const attachment = await store.createAttachment({
+        conversationId: args.conversation_id,
+        filename: args.filename,
+        contentType: args.content_type,
+        size: data.length,
+        storageRef,
+        createdBy: agentId,
+      });
+
+      // Return metadata (no storageRef)
+      const { storageRef: _ref, ...metadata } = attachment;
+      return { content: [{ type: "text" as const, text: JSON.stringify(metadata, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "get_attachment",
+    "Download an attachment's content as base64. Requires subscription to the attachment's conversation.",
+    GetAttachmentSchema.shape,
+    async (args) => {
+      const attachment = await store.getAttachment(args.attachment_id);
+      if (!attachment) return ACCESS_DENIED;
+
+      const subscribed = await store.isSubscribed(attachment.conversationId, agentId);
+      if (!subscribed) return ACCESS_DENIED;
+
+      const data = await fileStore.get(attachment.storageRef);
+      return { content: [{ type: "text" as const, text: JSON.stringify({
+        id: attachment.id,
+        filename: attachment.filename,
+        content_type: attachment.contentType,
+        size: attachment.size,
+        data: data.toString("base64"),
+      }, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "list_attachments",
+    "List attachments for a specific message.",
+    ListAttachmentsSchema.shape,
+    async (args) => {
+      const attachments = await store.listAttachmentsByMessage(args.message_id);
+      return { content: [{ type: "text" as const, text: JSON.stringify(attachments, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "delete_attachment",
+    "Delete an attachment you created. Removes both the file and metadata.",
+    DeleteAttachmentSchema.shape,
+    async (args) => {
+      const attachment = await store.getAttachment(args.attachment_id);
+      if (!attachment) return ACCESS_DENIED;
+
+      if (attachment.createdBy !== agentId) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Only the creator can delete an attachment" }) }] };
+      }
+
+      await fileStore.delete(attachment.storageRef);
+      const deleted = await store.deleteAttachment(args.attachment_id);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ deleted, attachment_id: args.attachment_id }) }] };
+    },
+  );
+  } // attachments
+
   return server;
 }
 
 export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   close: () => Promise<void>;
 }> {
-  const { store, auth, config } = opts;
+  const { store, auth, config, fileStore } = opts;
   const bridgeConfig = config.bridge!;
 
   const rateLimiter = new RateLimiter(
@@ -1212,6 +1342,47 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
   });
   const systemAgentId = systemAgent.id;
   log.info(`Registered system agent: agorai-system (${systemAgentId})`);
+
+  // Auto-create Delegation Protocol skill if it doesn't exist
+  const delegationSkillTitle = "Delegation Protocol";
+  const existingSkills = await store.listSkills("bridge");
+  const hasDelegationSkill = existingSkills.some((s) => s.title === delegationSkillTitle);
+  if (!hasDelegationSkill) {
+    await store.setSkill({
+      scope: "bridge",
+      title: delegationSkillTitle,
+      summary: "Conventions for requesting, accepting, and reporting delegated work between agents.",
+      instructions: "Use the delegation protocol when assigning work to other agents. Create tasks for formal delegation, or use proposal/result message types for lightweight delegation.",
+      tags: ["delegation", "protocol"],
+      content: [
+        "# Delegation Protocol",
+        "",
+        "## Requesting work",
+        "- Formal: create_task with required_capabilities targeting the right agent type",
+        "- Lightweight: send_message with type='proposal' and tag 'action-request'",
+        "- Always provide clear context — the target agent may not have conversation history",
+        "",
+        "## Accepting work",
+        "- Formal: claim_task to atomically claim the task",
+        "- Lightweight: respond with type='status' and tag 'action-accepted'",
+        "",
+        "## Reporting results",
+        "- Formal: complete_task with result text",
+        "- Lightweight: send_message with type='result' and tag 'action-result'",
+        "",
+        "## Declining",
+        "- Formal: release_task to make it available for others",
+        "- Lightweight: explain why in a regular message",
+        "",
+        "## Best practices",
+        "- Include acceptance criteria in the request",
+        "- Provide intermediate status updates for long tasks",
+        "- Link tasks to conversations for context",
+      ].join("\n"),
+      createdBy: systemAgentId,
+    });
+    log.info("Created Delegation Protocol skill (bridge scope)");
+  }
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
@@ -1309,7 +1480,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         sessionIdGenerator: () => randomUUID(),
       });
 
-      const mcpServer = createBridgeMcpServer(store, authResult.agentId!, authResult.toolGroups);
+      const mcpServer = createBridgeMcpServer(store, authResult.agentId!, authResult.toolGroups, fileStore, config);
       await mcpServer.connect(transport);
 
       // Track whether onclose fired before we finish registration

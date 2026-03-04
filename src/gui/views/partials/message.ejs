@@ -49,6 +49,27 @@
       </div>
       <!-- Content -->
       <div class="text-sm text-slate-200 whitespace-pre-wrap break-words message-content"><%= message.content %></div>
+      <% if (message.attachments && message.attachments.length > 0) { %>
+        <div class="mt-1.5 space-y-1">
+          <% message.attachments.forEach(function(att) { %>
+            <div class="flex items-center gap-2 text-xs bg-slate-900/50 rounded px-2 py-1.5 border border-slate-700/50">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+              <span class="text-slate-300 truncate flex-1"><%= att.filename %></span>
+              <span class="text-slate-500"><%= att.size < 1048576 ? (att.size / 1024).toFixed(1) + ' KB' : (att.size / 1048576).toFixed(1) + ' MB' %></span>
+              <a href="<%= envPath %>/c/<%= message.conversationId %>/attachment/<%= att.id %>"
+                 target="_blank" rel="noopener" title="Open"
+                 class="text-brand-400 hover:text-brand-300 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+              </a>
+              <a href="<%= envPath %>/c/<%= message.conversationId %>/attachment/<%= att.id %>/download"
+                 title="Download"
+                 class="text-brand-400 hover:text-brand-300 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              </a>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
     </div>
   </div>
 <% } %>

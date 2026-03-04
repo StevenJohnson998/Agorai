@@ -131,6 +131,8 @@ export const SendMessageSchema = z.object({
   recipients: z.array(z.string().max(MAX.id)).max(20).optional()
     .describe("Directed message (whisper): only these agent IDs + you can see the message. Omit for broadcast."),
   metadata: z.record(z.unknown()).optional().describe("Private metadata (only visible to you). Do not include keys starting with '_bridge'."),
+  attachment_ids: z.array(z.string().max(MAX.id)).max(10).optional()
+    .describe("IDs of previously uploaded attachments to link to this message."),
 });
 
 export const GetMessagesSchema = z.object({
@@ -261,6 +263,27 @@ export const GetAgentMemorySchema = z.object({
 export const DeleteAgentMemorySchema = z.object({
   project_id: z.string().max(MAX.id).optional().describe("Project ID for project-scoped memory"),
   conversation_id: z.string().max(MAX.id).optional().describe("Conversation ID for conversation-scoped memory"),
+});
+
+// --- Attachments ---
+
+export const UploadAttachmentSchema = z.object({
+  conversation_id: z.string().max(MAX.id).describe("Conversation ID"),
+  filename: z.string().min(1).max(MAX.name).describe("Original filename"),
+  content_type: z.string().max(MAX.id).describe("MIME type (e.g. image/png, text/plain)"),
+  data: z.string().max(14 * 1024 * 1024).describe("File content as base64-encoded string"),
+});
+
+export const GetAttachmentSchema = z.object({
+  attachment_id: z.string().max(MAX.id).describe("Attachment ID to download"),
+});
+
+export const ListAttachmentsSchema = z.object({
+  message_id: z.string().max(MAX.id).describe("Message ID to list attachments for"),
+});
+
+export const DeleteAttachmentSchema = z.object({
+  attachment_id: z.string().max(MAX.id).describe("Attachment ID to delete"),
 });
 
 // --- Project Members ---

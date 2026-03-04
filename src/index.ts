@@ -9,6 +9,8 @@
 // --- Store ---
 export { SqliteStore } from "./store/sqlite.js";
 export { StoreEventBus } from "./store/events.js";
+export { LocalFileStore } from "./store/file-store.js";
+export type { IFileStore } from "./store/file-store.js";
 export type { MessageCreatedEvent, AccessRequestCreatedEvent, TaskCreatedEvent, TaskUpdatedEvent } from "./store/events.js";
 export type { IStore } from "./store/interfaces.js";
 export type {
@@ -47,6 +49,9 @@ export type {
   SkillMetadata,
   SkillFile,
   SkillFilters,
+  Attachment,
+  AttachmentMetadata,
+  CreateAttachment,
 } from "./store/types.js";
 
 // --- Bridge ---

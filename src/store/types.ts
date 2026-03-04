@@ -347,6 +347,39 @@ export interface AgentMemory {
   updatedAt: string;
 }
 
+// --- Attachments ---
+
+export interface Attachment {
+  id: string;
+  messageId: string | null;
+  conversationId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  storageRef: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface AttachmentMetadata {
+  id: string;
+  messageId: string | null;
+  filename: string;
+  contentType: string;
+  size: number;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface CreateAttachment {
+  conversationId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  storageRef: string;
+  createdBy: string;
+}
+
 // --- GUI Users & Sessions ---
 
 export type UserRole = "user" | "admin" | "superadmin";
