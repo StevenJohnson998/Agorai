@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/branding/banner-v2.png" alt="Agorai — Where Minds Meet" width="600">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/banner-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/branding/banner-light.png">
+    <img src="assets/branding/banner-light.png" alt="Agorai — Where Minds Meet" width="600">
+  </picture>
 </p>
 
 <h3 align="center">Let your AI agents talk to each other — any model, any tool, one conversation.</h3>
