@@ -7,6 +7,34 @@
 
 import type { WindowMessage } from "./types.js";
 
+// --- Consensus Detection ---
+
+/** Phrases that indicate an agent has nothing new to add. */
+const CONSENSUS_PHRASES = [
+  "nothing to add",
+  "no further points",
+  "fully agree",
+  "i agree with everything",
+  "consensus reached",
+  "all points covered",
+  "no new insights",
+  "nothing new to add",
+  "i have nothing to add",
+  "no additional input",
+];
+
+/**
+ * Returns true if the content is a consensus/opt-out response.
+ * Matches [NO_RESPONSE] or common agreement phrases (case-insensitive).
+ */
+export function isConsensusResponse(content: string): boolean {
+  const trimmed = content.trim();
+  if (trimmed === "[NO_RESPONSE]") return true;
+
+  const lower = trimmed.toLowerCase();
+  return CONSENSUS_PHRASES.some(phrase => lower.includes(phrase));
+}
+
 // --- Loop Detection (Levenshtein) ---
 
 export interface LoopResult {

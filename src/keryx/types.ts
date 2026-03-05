@@ -27,6 +27,8 @@ export interface Round {
   expectedAgents: Set<string>;
   /** Agent IDs that have responded in this round. */
   respondedAgents: Set<string>;
+  /** Agent ID → response content (for consensus detection). */
+  responseContents: Map<string, string>;
   /** Message IDs of responses in this round. */
   responseMessageIds: string[];
   /** Timeout handle for the round timer. */

@@ -19,7 +19,7 @@ import type {
 import * as templates from "./templates.js";
 import { calculateAdaptiveTimeout } from "./timing.js";
 import { parseCommand, parseDuration } from "./commands.js";
-import { detectLoop, detectDrift, detectDomination } from "./patterns.js";
+import { detectLoop, detectDrift, detectDomination, isConsensusResponse } from "./patterns.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("keryx");
@@ -159,9 +159,11 @@ export class KeryxModule {
 
     if (!currentRound || currentRound.status === "idle" || currentRound.status === "closed") {
       // No active round — check if this is a human message to open one
-      if (this.isHumanMessage(message)) {
-        setImmediate(() => this.openRound(state, message));
-      }
+      setImmediate(async () => {
+        if (await this.isHumanMessage(message)) {
+          this.openRound(state, message);
+        }
+      });
       return;
     }
 
@@ -203,7 +205,7 @@ export class KeryxModule {
       return;
     }
 
-    // Get subscribers (exclude Keryx)
+    // Get subscribers (exclude Keryx, moderators, humans)
     const subscribers = await this.store.getSubscribers(state.conversationId);
     const expectedAgents = new Set<string>();
     const agentNames: string[] = [];
@@ -212,7 +214,7 @@ export class KeryxModule {
       if (sub.agentId === this.keryxAgent?.id) continue;
       if (sub.agentId === triggerMessage.fromAgent) continue; // Don't expect the trigger author
       const agent = await this.store.getAgent(sub.agentId);
-      if (agent && agent.type !== "moderator" && agent.type !== "keryx") {
+      if (agent && agent.type !== "moderator" && agent.type !== "keryx" && agent.type !== "human") {
         expectedAgents.add(sub.agentId);
         agentNames.push(agent.name);
       }
@@ -237,6 +239,7 @@ export class KeryxModule {
       triggerMessageId: triggerMessage.id,
       expectedAgents,
       respondedAgents: new Set(),
+      responseContents: new Map(),
       responseMessageIds: [],
       escalationLevel: 0,
     };
@@ -266,8 +269,15 @@ export class KeryxModule {
     const round = state.currentRound;
     if (!round || (round.status !== "open" && round.status !== "collecting")) return;
 
+    // Enforce one response per agent per round — ignore duplicates
+    if (round.respondedAgents.has(message.fromAgent)) {
+      log.debug(`Agent ${message.fromAgent} already responded in round ${round.id} — ignoring duplicate`);
+      return;
+    }
+
     // Record the response
     round.respondedAgents.add(message.fromAgent);
+    round.responseContents.set(message.fromAgent, message.content);
     round.responseMessageIds.push(message.id);
 
     // Update agent profile
@@ -307,14 +317,12 @@ export class KeryxModule {
     }
 
     round.closedAt = Date.now();
-    round.status = "synthesizing";
 
-    const noResponseCount = round.responseMessageIds.filter(
-      async (id) => {
-        // We can't easily check content here, so count from window
-        return false;
-      }
-    ).length;
+    // Count consensus responses
+    let consensusCount = 0;
+    for (const content of round.responseContents.values()) {
+      if (isConsensusResponse(content)) consensusCount++;
+    }
 
     // Send round close message
     await this.sendKeryxMessage(
@@ -323,15 +331,44 @@ export class KeryxModule {
         roundNumber: round.id,
         respondedCount: round.respondedAgents.size,
         totalCount: round.expectedAgents.size,
-        noResponseCount: 0, // Simplified — we don't track NO_RESPONSE content here
+        noResponseCount: consensusCount,
       }),
     );
 
-    // Delegate synthesis
-    await this.delegateSynthesis(state, round);
+    const allConsensus = consensusCount === round.respondedAgents.size && round.respondedAgents.size > 0;
+
+    if (allConsensus) {
+      // All agents said consensus/[NO_RESPONSE] → conclude
+      await this.sendKeryxMessage(
+        state.conversationId,
+        templates.discussionConcluded({ reason: "consensus", roundNumber: round.id }),
+      );
+      round.status = "synthesizing";
+      await this.delegateFinalSynthesis(state, round);
+    } else if (round.id >= this.config.maxRoundsPerTopic) {
+      // Max rounds reached → forced conclusion
+      await this.sendKeryxMessage(
+        state.conversationId,
+        templates.discussionConcluded({
+          reason: "max_rounds",
+          roundNumber: round.id,
+          maxRounds: this.config.maxRoundsPerTopic,
+        }),
+      );
+      round.status = "synthesizing";
+      await this.delegateFinalSynthesis(state, round);
+    } else {
+      // More discussion needed → auto-open next round
+      round.status = "closed";
+      state.roundHistory.push(round);
+      state.currentRound = null;
+
+      setImmediate(() => this.runPatternDetection(state));
+      await this.autoOpenNextRound(state);
+    }
   }
 
-  private async delegateSynthesis(state: ConversationState, round: Round): Promise<void> {
+  private async delegateFinalSynthesis(state: ConversationState, round: Round): Promise<void> {
     if (this.signal.aborted) return;
 
     // Find an agent with synthesis capability
@@ -347,13 +384,12 @@ export class KeryxModule {
       subscriberIds.has(a.id) && a.id !== this.keryxAgent?.id,
     );
 
-    // Fallback: pick the least-active agent in this round
+    // Fallback: pick a random agent that responded in this round
     if (!synthAgent) {
-      const leastActive = [...round.expectedAgents]
-        .filter(id => !round.respondedAgents.has(id) || round.respondedAgents.has(id))
-        .sort()[0]; // Just pick first available
-      if (leastActive) {
-        synthAgent = await this.store.getAgent(leastActive) ?? undefined;
+      const responders = [...round.respondedAgents];
+      if (responders.length > 0) {
+        const randomId = responders[Math.floor(Math.random() * responders.length)];
+        synthAgent = await this.store.getAgent(randomId) ?? undefined;
       }
     }
 
@@ -387,7 +423,70 @@ export class KeryxModule {
       }
     }, synthesisTimeout);
 
-    log.info(`Synthesis delegated to ${synthAgent.name} for round ${round.id}`);
+    log.info(`Final synthesis delegated to ${synthAgent.name} for round ${round.id}`);
+  }
+
+  private async autoOpenNextRound(state: ConversationState): Promise<void> {
+    if (this.signal.aborted) return;
+
+    const roundNumber = state.roundHistory.length + 1;
+
+    // Safety: should not exceed max rounds (closeRound already checks, but be safe)
+    if (roundNumber > this.config.maxRoundsPerTopic) return;
+
+    // Use the original topic from Round 1
+    const originalTopic = state.roundHistory[0]?.topic ?? "Discussion";
+
+    // Get subscribers (exclude Keryx, moderators, and humans)
+    const subscribers = await this.store.getSubscribers(state.conversationId);
+    const expectedAgents = new Set<string>();
+    const agentNames: string[] = [];
+
+    for (const sub of subscribers) {
+      if (sub.agentId === this.keryxAgent?.id) continue;
+      const agent = await this.store.getAgent(sub.agentId);
+      if (agent && agent.type !== "moderator" && agent.type !== "keryx" && agent.type !== "human") {
+        expectedAgents.add(sub.agentId);
+        agentNames.push(agent.name);
+      }
+    }
+
+    if (expectedAgents.size === 0) {
+      log.debug(`No agents for auto round ${roundNumber} in ${state.conversationId}`);
+      return;
+    }
+
+    const timeoutMs = this.calculateTimeout(state, originalTopic, expectedAgents.size);
+
+    const round: Round = {
+      id: roundNumber,
+      topic: originalTopic,
+      status: "open",
+      openedAt: Date.now(),
+      triggerMessageId: state.roundHistory[0]?.triggerMessageId ?? "",
+      expectedAgents,
+      respondedAgents: new Set(),
+      responseContents: new Map(),
+      responseMessageIds: [],
+      escalationLevel: 0,
+    };
+
+    state.currentRound = round;
+
+    await this.sendKeryxMessage(
+      state.conversationId,
+      templates.roundContinue({
+        roundNumber,
+        topic: originalTopic,
+        expectedAgents: agentNames,
+        timeoutSeconds: Math.round(timeoutMs / 1000),
+      }),
+    );
+
+    round.status = "collecting";
+    this.startEscalationChain(state, timeoutMs);
+
+    log.info(`Auto round ${roundNumber} opened in ${state.conversationId} (${expectedAgents.size} agents)`);
   }
 
   private async handlePotentialSynthesis(state: ConversationState, message: Message): Promise<void> {
@@ -420,7 +519,6 @@ export class KeryxModule {
     const round = state.currentRound;
     if (!round) return;
 
-    /** Check if there are still non-responders. Returns false if all responded (round should close). */
     const hasNonResponders = (): boolean => {
       for (const id of round.expectedAgents) {
         if (!round.respondedAgents.has(id)) return true;
@@ -428,44 +526,44 @@ export class KeryxModule {
       return false;
     };
 
-    // Level 0: silent wait at timeout
+    /** Check if a strict majority has responded — close round with partial responses. */
+    const hasMajority = (): boolean => {
+      return round.respondedAgents.size > 0 &&
+        round.respondedAgents.size > round.expectedAgents.size / 2;
+    };
+
+    // Level 0: silent wait — at baseTimeout, check if majority responded
     round.timeoutHandle = setTimeout(() => {
       if (this.signal.aborted) return;
       if (round.status !== "collecting") return;
       if (!hasNonResponders()) { this.checkRoundCompletion(state); return; }
 
-      round.escalationLevel = 1;
-      log.debug(`Round ${round.id} timeout reached (silent wait)`);
+      // If majority already responded, give 10s grace period for stragglers
+      if (hasMajority()) {
+        log.info(`Round ${round.id}: majority responded (${round.respondedAgents.size}/${round.expectedAgents.size}), waiting 10s for stragglers`);
+        round.timeoutHandle = setTimeout(() => {
+          if (this.signal.aborted) return;
+          if (round.status !== "collecting") return;
+          log.info(`Round ${round.id}: grace period ended (${round.respondedAgents.size}/${round.expectedAgents.size}), closing`);
+          this.closeRound(state);
+        }, 10_000);
+        return;
+      }
 
-      // Level 1: nudge at timeout × 1.5
+      round.escalationLevel = 1;
+      this.sendNudge(state, round);
+      log.debug(`Round ${round.id} nudge sent`);
+
+      // Level 1: force-close at baseTimeout × 0.5 after nudge (1.5× from start)
       round.timeoutHandle = setTimeout(() => {
         if (this.signal.aborted) return;
         if (round.status !== "collecting") return;
         if (!hasNonResponders()) { this.checkRoundCompletion(state); return; }
 
-        this.sendNudge(state, round);
         round.escalationLevel = 2;
-
-        // Level 2: CC backup at timeout × 2.5 (from start)
-        round.timeoutHandle = setTimeout(() => {
-          if (this.signal.aborted) return;
-          if (round.status !== "collecting") return;
-          if (!hasNonResponders()) { this.checkRoundCompletion(state); return; }
-
-          round.escalationLevel = 3;
-
-          // Level 3: escalate to human at timeout × 4.0 (from start)
-          round.timeoutHandle = setTimeout(() => {
-            if (this.signal.aborted) return;
-            if (round.status !== "collecting") return;
-            if (!hasNonResponders()) { this.checkRoundCompletion(state); return; }
-
-            this.escalateToHuman(state, round);
-          }, baseTimeoutMs * 1.5); // 2.5 + 1.5 = 4.0 from start
-
-        }, baseTimeoutMs); // 1.5 + 1.0 = 2.5 from start
-
-      }, baseTimeoutMs * 0.5); // 1.0 + 0.5 = 1.5 from start
+        log.info(`Round ${round.id}: force-closing after timeout (${round.respondedAgents.size}/${round.expectedAgents.size} responded)`);
+        this.closeRound(state);
+      }, baseTimeoutMs * 0.5); // 1.0 + 0.5 = 1.5× from start
 
     }, baseTimeoutMs);
   }
@@ -490,32 +588,6 @@ export class KeryxModule {
         elapsedSeconds: elapsed,
       }),
     );
-  }
-
-  private async escalateToHuman(state: ConversationState, round: Round): Promise<void> {
-    const nonResponders: string[] = [];
-    for (const agentId of round.expectedAgents) {
-      if (!round.respondedAgents.has(agentId)) {
-        const agent = await this.store.getAgent(agentId);
-        if (agent) nonResponders.push(agent.name);
-      }
-    }
-
-    const elapsed = Math.round((Date.now() - round.openedAt) / 1000);
-    await this.sendKeryxMessage(
-      state.conversationId,
-      templates.escalateToHuman({
-        roundNumber: round.id,
-        nonResponders,
-        elapsedSeconds: elapsed,
-      }),
-    );
-
-    // Force-close the round after escalation
-    round.status = "closed";
-    round.closedAt = Date.now();
-    state.roundHistory.push(round);
-    state.currentRound = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -563,7 +635,7 @@ export class KeryxModule {
   // ---------------------------------------------------------------------------
 
   private isKeryxCommand(content: string): boolean {
-    return /@keryx\s+(pause|resume|skip|extend|status|interrupt|enable|disable)/i.test(content);
+    return /@keryx\s+(pause|resume|skip|extend|status|interrupt|enable|disable|summary)/i.test(content);
   }
 
   async handleCommand(message: Message, state: ConversationState): Promise<void> {
@@ -683,6 +755,46 @@ export class KeryxModule {
         await this.sendKeryxMessage(state.conversationId, "⏹️ Keryx **disabled** for this conversation.");
         log.info(`Disabled by ${message.fromAgent} in ${state.conversationId}`);
         break;
+
+      case "summary": {
+        // Force a synthesis of the discussion so far
+        const round = state.currentRound;
+        if (round && (round.status === "open" || round.status === "collecting")) {
+          // Close current round first, then synthesize
+          if (round.timeoutHandle) {
+            clearTimeout(round.timeoutHandle);
+            round.timeoutHandle = undefined;
+          }
+          round.closedAt = Date.now();
+          round.status = "synthesizing";
+          await this.sendKeryxMessage(
+            state.conversationId,
+            `📝 Summary requested — closing round ${round.id} and requesting synthesis.`,
+          );
+          await this.delegateFinalSynthesis(state, round);
+        } else if (!round || round.status === "closed" || round.status === "idle") {
+          // No active round — create a temporary round for synthesis
+          const lastRound = state.roundHistory[state.roundHistory.length - 1];
+          if (!lastRound) {
+            await this.sendKeryxMessage(state.conversationId, "No discussion to summarize yet.");
+            break;
+          }
+          const synthRound: Round = {
+            ...lastRound,
+            status: "synthesizing" as const,
+          };
+          state.currentRound = synthRound;
+          await this.sendKeryxMessage(
+            state.conversationId,
+            `📝 Summary requested — requesting synthesis of the full discussion.`,
+          );
+          await this.delegateFinalSynthesis(state, synthRound);
+        } else {
+          await this.sendKeryxMessage(state.conversationId, "Cannot summarize right now — a synthesis is already in progress.");
+        }
+        log.info(`Summary requested by ${message.fromAgent} in ${state.conversationId}`);
+        break;
+      }
     }
   }
 
@@ -696,54 +808,48 @@ export class KeryxModule {
     const window = state.messageWindow;
     if (window.length < 3) return;
 
+    // Exclude synthesis messages from loop detection — they naturally repeat
+    // round content and would false-positive the similarity check.
+    const closedRound = state.roundHistory[state.roundHistory.length - 1];
+    const synthesisId = closedRound?.synthesisMessageId;
+    const loopWindow = synthesisId
+      ? window.filter((m) => m.id !== synthesisId)
+      : window;
+
     // Loop detection
-    const loop = detectLoop(window);
+    // TODO: Loop detection disabled — false positives (flags humans, flags normal
+    // cross-round similarity). Needs: exclude human agents, only flag within same round,
+    // higher similarity threshold.
+    const loop = detectLoop(loopWindow);
     if (loop) {
       const agent = await this.store.getAgent(loop.agentId);
       if (agent) {
-        const lastRound = state.roundHistory[state.roundHistory.length - 1];
-        await this.sendKeryxMessage(
-          state.conversationId,
-          templates.loopDetected({
-            agentName: agent.name,
-            roundNumber: lastRound?.id ?? 0,
-          }),
-        );
-        log.info(`Loop detected for ${agent.name} in ${state.conversationId}`);
+        log.info(`Loop detected (suppressed) for ${agent.name} in ${state.conversationId}`);
       }
     }
 
     // Drift detection
+    // TODO: Drift detection disabled — false positives on short conversations.
+    // Cosine similarity on bag-of-words is too noisy with small message windows.
+    // Needs: better threshold tuning or semantic similarity approach.
     const lastRound = state.roundHistory[state.roundHistory.length - 1];
     if (lastRound) {
       const recentWindow = window.slice(-10);
       const drift = detectDrift(lastRound.topic, recentWindow);
       if (drift) {
-        await this.sendKeryxMessage(
-          state.conversationId,
-          templates.driftDetected({
-            originalTopic: lastRound.topic,
-            roundNumber: lastRound.id,
-          }),
-        );
-        log.info(`Drift detected in ${state.conversationId} (similarity: ${drift.similarity.toFixed(2)})`);
+        log.info(`Drift detected (suppressed) in ${state.conversationId} (similarity: ${drift.similarity.toFixed(2)})`);
       }
     }
 
     // Domination detection
+    // TODO: Disabled — false positives with small agent counts (2 agents = 50%+ is normal).
+    // Needs: scale threshold by participant count, exclude humans.
     const subscribers = await this.store.getSubscribers(state.conversationId);
     const domination = detectDomination(window, subscribers.length);
     if (domination) {
       const agent = await this.store.getAgent(domination.agentId);
       if (agent) {
-        await this.sendKeryxMessage(
-          state.conversationId,
-          templates.dominationWarning({
-            agentName: agent.name,
-            messagePercent: domination.messagePercent,
-          }),
-        );
-        log.info(`Domination detected: ${agent.name} at ${domination.messagePercent}% in ${state.conversationId}`);
+        log.info(`Domination detected (suppressed): ${agent.name} at ${domination.messagePercent}% in ${state.conversationId}`);
       }
     }
   }
@@ -795,18 +901,23 @@ export class KeryxModule {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  private isHumanMessage(message: Message): boolean {
-    // Heuristic: non-internal, non-keryx, non-system agents are "human"
-    // We check the agent type from cache or store
+  /** Cache of agent types to avoid repeated DB lookups. */
+  private agentTypeCache = new Map<string, string>();
+
+  private async isHumanMessage(message: Message): Promise<boolean> {
     if (message.fromAgent === this.keryxAgent?.id) return false;
+    if (message.type !== "message") return false;
 
-    // Quick check: internal agents have "internal:" prefix
-    if (message.fromAgent.startsWith("internal:")) return false;
+    // Check cache first
+    let agentType = this.agentTypeCache.get(message.fromAgent);
+    if (!agentType) {
+      const agent = await this.store.getAgent(message.fromAgent);
+      agentType = agent?.type ?? "unknown";
+      this.agentTypeCache.set(message.fromAgent, agentType);
+    }
 
-    // Check agent type
-    // We can't make this async in a sync context, so use a conservative approach:
-    // If the message is type "message" (not status/system), and not from an internal agent, treat as human trigger
-    return message.type === "message";
+    // Only human-type agents trigger new rounds
+    return agentType === "human";
   }
 
   async sendKeryxMessage(conversationId: string, content: string): Promise<Message> {
@@ -890,10 +1001,11 @@ export class KeryxModule {
           "5. **Commands**: Humans can control rounds with @keryx commands (pause, resume, skip, interrupt, etc.).",
           "",
           "## Round Flow",
-          "1. Human posts a message → Keryx opens a round",
+          "1. Human posts a message → Keryx opens Round 1",
           "2. All participants respond (or [NO_RESPONSE])",
-          "3. Keryx closes the round and requests a synthesis",
-          "4. Synthesis agent summarizes → next round or done",
+          "3. Keryx closes the round → auto-opens next round if discussion continues",
+          "4. Rounds repeat until all agents say [NO_RESPONSE] or max rounds reached",
+          "5. Keryx requests a final synthesis covering the full discussion",
         ].join("\n"),
         createdBy: this.keryxAgent.id,
       });

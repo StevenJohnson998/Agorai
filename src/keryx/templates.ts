@@ -44,8 +44,11 @@ export interface SynthesisRequestParams {
 }
 
 export function synthesisRequest(p: SynthesisRequestParams): string {
+  const roundRef = p.roundNumber > 1
+    ? `the full discussion (rounds 1–${p.roundNumber})`
+    : `the discussion from round ${p.roundNumber}`;
   return [
-    `🔄 @${p.agentName} — Please synthesize the discussion from round ${p.roundNumber}.`,
+    `🔄 @${p.agentName} — Please synthesize ${roundRef}.`,
     `Topic: ${p.topic}`,
     `Summarize key points, areas of agreement/disagreement, and any open questions.`,
   ].join("\n");
@@ -125,6 +128,38 @@ export interface DominationWarningParams {
 
 export function dominationWarning(p: DominationWarningParams): string {
   return `⚖️ @${p.agentName} — You account for ${p.messagePercent}% of recent messages. Please allow space for other participants.`;
+}
+
+// --- Auto-round progression templates ---
+
+export interface RoundContinueParams {
+  roundNumber: number;
+  topic: string;
+  expectedAgents: string[];
+  timeoutSeconds: number;
+}
+
+export function roundContinue(p: RoundContinueParams): string {
+  const agentList = p.expectedAgents.map(a => `@${a}`).join(", ");
+  return [
+    `📋 **Round ${p.roundNumber}** — Continuing: ${p.topic}`,
+    `Participants: ${agentList}`,
+    `Build on previous responses or challenge ideas. Use [NO_RESPONSE] if you have nothing new to add.`,
+    `Timeout: ${p.timeoutSeconds}s.`,
+  ].join("\n");
+}
+
+export interface DiscussionConcludedParams {
+  reason: "consensus" | "max_rounds";
+  roundNumber: number;
+  maxRounds?: number;
+}
+
+export function discussionConcluded(p: DiscussionConcludedParams): string {
+  if (p.reason === "consensus") {
+    return `🏁 **Discussion concluded** — All participants have nothing new to add. Requesting final synthesis.`;
+  }
+  return `🏁 **Round limit reached** (${p.roundNumber}/${p.maxRounds}) — Requesting final synthesis.`;
 }
 
 export function paused(): string {

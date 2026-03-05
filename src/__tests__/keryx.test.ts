@@ -21,7 +21,7 @@ import { KeryxModule } from "../keryx/module.js";
 import type { KeryxConfig } from "../keryx/types.js";
 import { estimateComplexity, calculateAdaptiveTimeout } from "../keryx/timing.js";
 import { parseCommand, parseDuration } from "../keryx/commands.js";
-import { detectLoop, detectDrift, detectDomination } from "../keryx/patterns.js";
+import { detectLoop, detectDrift, detectDomination, isConsensusResponse } from "../keryx/patterns.js";
 import type { WindowMessage, ConversationState } from "../keryx/types.js";
 
 // --- Test helpers ---
@@ -34,7 +34,7 @@ const defaultKeryxConfig: KeryxConfig = {
   enabled: true,
   baseTimeoutMs: 5_000, // Short for tests
   nudgeAfterMs: 7_000,
-  maxRoundsPerTopic: 5,
+  maxRoundsPerTopic: 3,
   synthesisCapability: "synthesis",
   healthWindowSize: 10,
 };
@@ -83,9 +83,9 @@ describe("Phase 1 — Types & Config", () => {
     const config = ConfigSchema.parse({});
     expect(config.keryx).toBeDefined();
     expect(config.keryx.enabled).toBe(true);
-    expect(config.keryx.baseTimeoutMs).toBe(30_000);
-    expect(config.keryx.nudgeAfterMs).toBe(45_000);
-    expect(config.keryx.maxRoundsPerTopic).toBe(5);
+    expect(config.keryx.baseTimeoutMs).toBe(45_000);
+    expect(config.keryx.nudgeAfterMs).toBe(60_000);
+    expect(config.keryx.maxRoundsPerTopic).toBe(3);
     expect(config.keryx.synthesisCapability).toBe("synthesis");
     expect(config.keryx.healthWindowSize).toBe(10);
   });
@@ -141,7 +141,7 @@ describe("Phase 2 — Core State Machine", () => {
   });
 
   it("opens a round when a human sends a message", async () => {
-    const human = await createAgent("human", "custom");
+    const human = await createAgent("human", "human");
     const agent1 = await createAgent("agent1");
     const { conv } = await setupConversation([human.id, agent1.id]);
 
@@ -179,7 +179,7 @@ describe("Phase 2 — Core State Machine", () => {
   });
 
   it("records responses and tracks agents", async () => {
-    const human = await createAgent("human", "custom");
+    const human = await createAgent("human", "human");
     const agent1 = await createAgent("agent1");
     const agent2 = await createAgent("agent2");
     const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
@@ -214,7 +214,7 @@ describe("Phase 2 — Core State Machine", () => {
   });
 
   it("closes a round when all agents respond", async () => {
-    const human = await createAgent("human", "custom");
+    const human = await createAgent("human", "human");
     const agent1 = await createAgent("agent1");
     const { conv } = await setupConversation([human.id, agent1.id]);
 
@@ -241,17 +241,21 @@ describe("Phase 2 — Core State Machine", () => {
     await new Promise(r => setTimeout(r, 300));
 
     const state = keryx.getState(conv.id);
-    // Round should have moved to synthesizing or closed
+    // With auto-progression, substantive response → Round 1 closed, Round 2 auto-opened
+    expect(state!.roundHistory.length).toBe(1);
+    expect(state!.roundHistory[0].id).toBe(1);
+    expect(state!.roundHistory[0].status).toBe("closed");
+    // Round 2 should now be active
     const round = state!.currentRound;
-    if (round) {
-      expect(["synthesizing", "closed"]).toContain(round.status);
-    }
+    expect(round).not.toBeNull();
+    expect(round!.id).toBe(2);
+    expect(round!.status).toBe("collecting");
 
     await keryx.stop();
   });
 
   it("ignores its own messages", async () => {
-    const human = await createAgent("human", "custom");
+    const human = await createAgent("human", "human");
     const { conv } = await setupConversation([human.id]);
 
     keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
@@ -272,7 +276,7 @@ describe("Phase 2 — Core State Machine", () => {
   });
 
   it("ignores status messages", async () => {
-    const human = await createAgent("human", "custom");
+    const human = await createAgent("human", "human");
     const { conv } = await setupConversation([human.id]);
 
     keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
@@ -380,10 +384,11 @@ describe("Phase 3 — Adaptive Timing", () => {
         triggerMessageId: "msg1",
         expectedAgents: new Set(["agent1"]),
         respondedAgents: new Set(),
+        responseContents: new Map(),
         responseMessageIds: [],
         escalationLevel: 0,
       },
-      roundHistory: [{ id: 0, topic: "", status: "closed", openedAt: 0, closedAt: 0, triggerMessageId: "", expectedAgents: new Set(), respondedAgents: new Set(), responseMessageIds: [], escalationLevel: 0 }],
+      roundHistory: [{ id: 0, topic: "", status: "closed", openedAt: 0, closedAt: 0, triggerMessageId: "", expectedAgents: new Set(), respondedAgents: new Set(), responseContents: new Map(), responseMessageIds: [], escalationLevel: 0 }],
       lastSeenAt: Date.now(),
       paused: false,
       disabled: false,
@@ -627,7 +632,7 @@ describe("Phase 5 — Command Parser", () => {
     });
 
     it("pauses and resumes via commands", async () => {
-      const human = await createAgent("human", "custom");
+      const human = await createAgent("human", "human");
       const { conv } = await setupConversation([human.id]);
 
       keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
@@ -696,5 +701,253 @@ describe("Phase 5 — Command Parser", () => {
 
       await keryx.stop();
     });
+  });
+});
+
+// --- Phase 6: Consensus Detection ---
+
+describe("Phase 6 — Consensus Detection", () => {
+  describe("isConsensusResponse", () => {
+    it("detects [NO_RESPONSE]", () => {
+      expect(isConsensusResponse("[NO_RESPONSE]")).toBe(true);
+      expect(isConsensusResponse("  [NO_RESPONSE]  ")).toBe(true);
+    });
+
+    it("detects agreement phrases", () => {
+      expect(isConsensusResponse("I have nothing to add.")).toBe(true);
+      expect(isConsensusResponse("No further points from me.")).toBe(true);
+      expect(isConsensusResponse("I fully agree with the above.")).toBe(true);
+      expect(isConsensusResponse("I agree with everything said so far.")).toBe(true);
+      expect(isConsensusResponse("Consensus reached on all points.")).toBe(true);
+      expect(isConsensusResponse("All points covered by previous speakers.")).toBe(true);
+      expect(isConsensusResponse("No new insights to offer.")).toBe(true);
+      expect(isConsensusResponse("Nothing new to add here.")).toBe(true);
+      expect(isConsensusResponse("I have nothing to add to this discussion.")).toBe(true);
+      expect(isConsensusResponse("No additional input from me.")).toBe(true);
+    });
+
+    it("is case-insensitive for phrases", () => {
+      expect(isConsensusResponse("NOTHING TO ADD")).toBe(true);
+      expect(isConsensusResponse("Fully Agree")).toBe(true);
+    });
+
+    it("rejects substantive responses", () => {
+      expect(isConsensusResponse("I think we should use a different approach.")).toBe(false);
+      expect(isConsensusResponse("Here are my thoughts on the topic.")).toBe(false);
+      expect(isConsensusResponse("I disagree with point 3.")).toBe(false);
+    });
+  });
+});
+
+// --- Phase 7: Auto-Round Progression ---
+
+describe("Phase 7 — Auto-Round Progression", () => {
+  let keryx: KeryxModule;
+  let ac: AbortController;
+
+  beforeEach(() => {
+    ac = new AbortController();
+  });
+
+  afterEach(async () => {
+    ac.abort();
+    await new Promise(r => setTimeout(r, 50));
+  });
+
+  it("auto-opens Round 2 after Round 1 closes with substantive responses", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const agent2 = await createAgent("agent2");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Human triggers Round 1
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "What do you think about microservices?",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Both agents respond substantively
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "Microservices provide better scalability but add complexity.",
+    });
+    await new Promise(r => setTimeout(r, 100));
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent2.id,
+      content: "I prefer a modular monolith for smaller teams.",
+    });
+    await new Promise(r => setTimeout(r, 400));
+
+    const state = keryx.getState(conv.id)!;
+    // Round 1 should be in history, Round 2 should be current
+    expect(state.roundHistory.length).toBe(1);
+    expect(state.roundHistory[0].id).toBe(1);
+    expect(state.currentRound).not.toBeNull();
+    expect(state.currentRound!.id).toBe(2);
+    expect(state.currentRound!.status).toBe("collecting");
+
+    await keryx.stop();
+  });
+
+  it("goes to final synthesis when all agents respond with [NO_RESPONSE]", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Human triggers Round 1
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Simple question.",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Agent responds with [NO_RESPONSE]
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "[NO_RESPONSE]",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    // Should go directly to synthesizing (no Round 2)
+    const round = state.currentRound;
+    if (round) {
+      expect(round.status).toBe("synthesizing");
+    }
+    // No auto-opened Round 2
+    expect(state.roundHistory.length).toBe(0); // round stays as currentRound during synthesis
+
+    await keryx.stop();
+  });
+
+  it("forces synthesis at max rounds", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    // maxRoundsPerTopic = 2 for this test
+    const config = { ...defaultKeryxConfig, maxRoundsPerTopic: 2 };
+    keryx = new KeryxModule(store, config, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Human triggers Round 1
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Debate topic",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Agent responds substantively → Round 1 closes, Round 2 auto-opens
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "Here is my detailed analysis.",
+    });
+    await new Promise(r => setTimeout(r, 400));
+
+    // Round 2 should be open
+    let state = keryx.getState(conv.id)!;
+    expect(state.currentRound?.id).toBe(2);
+
+    // Agent responds substantively in Round 2 → should trigger synthesis (max rounds)
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "Further analysis on the topic.",
+    });
+    await new Promise(r => setTimeout(r, 400));
+
+    state = keryx.getState(conv.id)!;
+    // Should be synthesizing (final), not auto-opening Round 3
+    if (state.currentRound) {
+      expect(state.currentRound.status).toBe("synthesizing");
+      expect(state.currentRound.id).toBe(2);
+    }
+
+    await keryx.stop();
+  });
+
+  it("detects consensus phrases as stop condition", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const agent2 = await createAgent("agent2");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+
+    // Human triggers Round 1
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Discuss TypeScript benefits",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Both agents respond substantively → Round 2 opens
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "TypeScript improves type safety.",
+    });
+    await new Promise(r => setTimeout(r, 100));
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent2.id,
+      content: "It also has great IDE support.",
+    });
+    await new Promise(r => setTimeout(r, 400));
+
+    // Round 2 should be open
+    let state = keryx.getState(conv.id)!;
+    expect(state.currentRound?.id).toBe(2);
+
+    // Both agents respond with consensus phrases → should trigger final synthesis
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "I have nothing to add to this discussion.",
+    });
+    await new Promise(r => setTimeout(r, 100));
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent2.id,
+      content: "Nothing to add from me either.",
+    });
+    await new Promise(r => setTimeout(r, 400));
+
+    state = keryx.getState(conv.id)!;
+    // Should be in synthesis (all consensus), not opening Round 3
+    if (state.currentRound) {
+      expect(state.currentRound.status).toBe("synthesizing");
+    }
+
+    await keryx.stop();
   });
 });
