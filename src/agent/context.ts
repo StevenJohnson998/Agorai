@@ -84,6 +84,8 @@ export interface BuildContextOptions {
   conversationId?: string;
   includeMessages?: boolean;
   messageLimit?: number;
+  /** If set, exclude messages created after this timestamp (Keryx round isolation). */
+  messageCutoffTimestamp?: string;
   activeToolGroups?: string[];
   decisionDepth?: number;
   keryxActive?: boolean;
@@ -271,6 +273,7 @@ export async function buildAgentContext(opts: BuildContextOptions): Promise<Agen
     conversationId,
     includeMessages = false,
     messageLimit = 20,
+    messageCutoffTimestamp,
     activeToolGroups,
     decisionDepth,
     keryxActive,
@@ -382,17 +385,23 @@ export async function buildAgentContext(opts: BuildContextOptions): Promise<Agen
   // Build agent name map for messages
   let recentMessages: AgentContext["recentMessages"] | undefined;
   if (includeMessages && messages.length > 0) {
+    // Apply Keryx round cutoff: exclude messages after the cutoff timestamp
+    // This ensures agents don't see other agents' current-round responses
+    const filteredMessages = messageCutoffTimestamp
+      ? messages.filter((m) => m.createdAt <= messageCutoffTimestamp)
+      : messages;
+
     const agentNameMap = new Map<string, string>();
     agentNameMap.set(agentId, agent.name);
 
-    for (const msg of messages) {
+    for (const msg of filteredMessages) {
       if (!agentNameMap.has(msg.fromAgent)) {
         const sender = await store.getAgent(msg.fromAgent);
         agentNameMap.set(msg.fromAgent, sender?.name ?? msg.fromAgent);
       }
     }
 
-    recentMessages = { messages, agentNameMap };
+    recentMessages = filteredMessages.length > 0 ? { messages: filteredMessages, agentNameMap } : undefined;
   }
 
   return {

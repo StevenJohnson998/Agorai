@@ -58,6 +58,10 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
   let lastHeartbeat = Date.now();
   const heartbeatIntervalMs = 30_000;
 
+  // 429 rate-limit cooldown: exponential backoff per agent
+  let cooldownUntil = 0;
+  let consecutiveRateLimits = 0;
+
   // Track agent health status (DB-only, no broadcast messages)
   let currentStatus: "online" | "error" = "online";
   let isFirstRun = true;
@@ -104,6 +108,12 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
     try {
       const now = Date.now();
 
+      // Skip processing if in 429 cooldown
+      if (now < cooldownUntil) {
+        await interruptibleSleep(pollIntervalMs, signal);
+        continue;
+      }
+
       // Heartbeat
       if (now - lastHeartbeat >= heartbeatIntervalMs) {
         log.info(`Heartbeat: ${agentName} alive, ${subscribedConversations.size} conversation(s) tracked${eventBusActive ? " + event bus" : ""}`);
@@ -130,14 +140,25 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
           decisionDepth,
         );
 
-        if (result === "error" && currentStatus !== "error") {
+        if (result === "rate_limited") {
+          consecutiveRateLimits++;
+          const backoffMs = Math.min(30_000 * Math.pow(2, consecutiveRateLimits - 1), 300_000); // 30s, 60s, 120s, 240s, max 5min
+          cooldownUntil = Date.now() + backoffMs;
+          log.warn(`Rate limited — cooldown ${backoffMs / 1000}s (attempt ${consecutiveRateLimits})`);
+        } else if (result === "error" && currentStatus !== "error") {
           currentStatus = "error";
           await store.updateAgentStatus(resolvedAgentId, "error", "API error");
           log.warn(`Status changed to ERROR for ${agentName}`);
-        } else if (result === "ok" && currentStatus === "error") {
-          currentStatus = "online";
-          await store.updateAgentStatus(resolvedAgentId, "online");
-          log.info(`Status recovered to ONLINE for ${agentName}`);
+        } else if (result === "ok") {
+          if (consecutiveRateLimits > 0) {
+            consecutiveRateLimits = 0;
+            cooldownUntil = 0;
+          }
+          if (currentStatus === "error") {
+            currentStatus = "online";
+            await store.updateAgentStatus(resolvedAgentId, "online");
+            log.info(`Status recovered to ONLINE for ${agentName}`);
+          }
         }
       };
 
@@ -179,16 +200,16 @@ export async function runInternalAgent(options: InternalAgentOptions): Promise<v
 }
 
 /**
- * Discover new conversations across all projects. Subscribe to any not yet tracked.
- * Posts "joined" system message only for conversations that already have activity
- * (avoids spam on initial startup when subscribing to all existing conversations).
+ * Discover conversations the agent is already subscribed to and track them.
+ * Agents no longer auto-subscribe — they must be explicitly added to conversations
+ * (by the creator, via GUI, or via MCP subscribe tool).
  */
 async function discoverConversations(
   store: IStore,
   agentId: string,
-  agentName: string,
+  _agentName: string,
   tracked: Set<string>,
-  isFirstRun: boolean,
+  _isFirstRun: boolean,
 ): Promise<void> {
   const projects = await store.listProjects(agentId);
 
@@ -198,23 +219,10 @@ async function discoverConversations(
     for (const conv of conversations) {
       if (!tracked.has(conv.id)) {
         const alreadySubscribed = await store.isSubscribed(conv.id, agentId);
-        if (!alreadySubscribed) {
-          await store.subscribe(conv.id, agentId);
-          // Post "joined" message only if conversation has messages and it's not first run
-          if (!isFirstRun) {
-            const msgs = await store.getMessages(conv.id, agentId, { limit: 1 });
-            if (msgs.length > 0) {
-              await store.sendMessage({
-                conversationId: conv.id,
-                fromAgent: agentId,
-                content: `📥 ${agentName} joined the conversation.`,
-                type: "status",
-              });
-            }
-          }
+        if (alreadySubscribed) {
+          tracked.add(conv.id);
+          log.info(`Tracking conversation: ${conv.title} (${conv.id})`);
         }
-        tracked.add(conv.id);
-        log.info(`Subscribed to: ${conv.title} (${conv.id})`);
       }
     }
   }
@@ -235,7 +243,7 @@ async function processConversation(
   mode: "passive" | "active",
   customSystemPrompt?: string,
   decisionDepth?: number,
-): Promise<"ok" | "skipped" | "error"> {
+): Promise<"ok" | "skipped" | "error" | "rate_limited"> {
   // Get unread messages
   const unreadMessages = await store.getMessages(conversationId, agentId, {
     unreadOnly: true,
@@ -244,10 +252,102 @@ async function processConversation(
 
   if (unreadMessages.length === 0) return "skipped";
 
-  // Filter out own messages and status messages (status msgs should not trigger responses)
+  // ---------------------------------------------------------------------------
+  // Keryx gateway: if conversation is Keryx-managed, agents only respond when
+  // Keryx opens a round and mentions them. All other messages are marked read
+  // silently. Context is cut off at the round-open timestamp so agents don't
+  // see other agents' current-round responses (independent, unbiased answers).
+  // ---------------------------------------------------------------------------
+  const isKeryxManaged = await (async () => {
+    const subscribers = await store.getSubscribers(conversationId);
+    for (const sub of subscribers) {
+      const agent = await store.getAgent(sub.agentId);
+      if (agent && (agent.name === "keryx" || agent.type === "moderator")) return true;
+    }
+    return false;
+  })();
+
+  if (isKeryxManaged) {
+    const mentionPattern = new RegExp(
+      `@${agentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      "i",
+    );
+
+    // Find the latest Keryx round-open message in unread
+    const keryxRoundOpen = [...unreadMessages].reverse().find(
+      (m) => m.type === "status" && m.tags?.includes("keryx") && /Round \d+/i.test(m.content) && /Participants:/.test(m.content),
+    );
+
+    // Also detect Keryx direct requests (synthesis, nudge) — Keryx status messages
+    // that @mention us and ask for action. Exclude pattern warnings (🔁 loop, 📐 drift,
+    // ⚠️ domination) which are informational, not actionable.
+    const keryxActionPattern = /🔄|Please synthesize|⏰|Please respond/;
+    const keryxDirectRequest = !keryxRoundOpen
+      ? [...unreadMessages].reverse().find(
+          (m) => m.type === "status" && m.tags?.includes("keryx") && mentionPattern.test(m.content) && keryxActionPattern.test(m.content),
+        )
+      : null;
+
+    if (!keryxRoundOpen && !keryxDirectRequest) {
+      // No actionable Keryx message in unread — mark everything read silently
+      log.debug(`Keryx-managed ${conversationId}: no round-open or direct request — waiting`);
+      await store.markRead(unreadMessages.map((m) => m.id), agentId);
+      return "skipped";
+    }
+
+    // The Keryx message we're responding to (round-open or direct request)
+    const keryxTrigger = keryxRoundOpen ?? keryxDirectRequest!;
+
+    // For round-open: check if we're listed as a participant
+    if (keryxRoundOpen && !mentionPattern.test(keryxRoundOpen.content)) {
+      log.debug(`Keryx round in ${conversationId} doesn't include us — skipping`);
+      await store.markRead(unreadMessages.map((m) => m.id), agentId);
+      return "skipped";
+    }
+
+    // Check if we already responded after this Keryx trigger
+    const recentMsgs = await store.getMessages(conversationId, agentId, { limit: 30 });
+    const triggerIdx = recentMsgs.findIndex((m) => m.id === keryxTrigger.id);
+    if (triggerIdx >= 0) {
+      const msgsAfterTrigger = recentMsgs.slice(triggerIdx + 1);
+      if (msgsAfterTrigger.some((m) => m.fromAgent === agentId && m.type !== "status")) {
+        log.info(`Already responded to Keryx trigger in ${conversationId} — skipping`);
+        await store.markRead(unreadMessages.map((m) => m.id), agentId);
+        return "skipped";
+      }
+    }
+
+    // Round 1 ("Topic:"): cut context at round timestamp for independent answers.
+    // Round 2+ ("Continuing:"): full context so agents can build on previous rounds.
+    // Direct requests (synthesis, nudge): full context.
+    const isRoundOpen = !!keryxRoundOpen;
+    const isContinuationRound = isRoundOpen && /Continuing:/.test(keryxTrigger.content);
+    const cutoffTimestamp = (isRoundOpen && !isContinuationRound) ? keryxTrigger.createdAt : undefined;
+    log.info(`Keryx ${isContinuationRound ? "round-continue" : isRoundOpen ? "round-open" : "direct request"} in ${conversationId} — generating response`);
+    await store.markRead(unreadMessages.map((m) => m.id), agentId);
+
+    const context = await buildAgentContext({
+      store,
+      agentId,
+      conversationId,
+      includeMessages: true,
+      messageLimit: 20,
+      messageCutoffTimestamp: cutoffTimestamp,
+      decisionDepth,
+      keryxActive: true,
+    });
+    const rendered = renderForPrompt(context, mode);
+
+    return invokeAndSend(store, adapter, rendered, customSystemPrompt, conversationId, agentId, unreadMessages);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Non-Keryx conversation: standard flow (passive/active mode)
+  // ---------------------------------------------------------------------------
+
+  // Filter out own messages and status messages
   const otherMessages = unreadMessages.filter((m) => m.fromAgent !== agentId && m.type !== "status");
   if (otherMessages.length === 0) {
-    // Only our own messages or status messages — mark them read and move on
     await store.markRead(unreadMessages.map((m) => m.id), agentId);
     return "skipped";
   }
@@ -266,64 +366,7 @@ async function processConversation(
     return "skipped";
   }
 
-  // Active mode: anti-loop guard with collaboration window.
-  // Agents respond to human/external messages always. For internal-only messages,
-  // allow up to `decisionDepth` rounds of inter-agent collaboration after the last
-  // human message, then stop to prevent infinite ping-pong.
-  if (mode === "active" && !hasMention) {
-    const hasNonInternalSender = await (async () => {
-      for (const msg of otherMessages) {
-        const sender = await store.getAgent(msg.fromAgent);
-        if (sender && sender.type !== "internal") return true;
-      }
-      return false;
-    })();
-
-    if (!hasNonInternalSender) {
-      // All unread are from internal agents. Check if we're within the collaboration window.
-      // Count consecutive internal-only messages since the last human/external message.
-      const maxRounds = decisionDepth ?? 3;
-      const recentMessages = await store.getMessages(conversationId, agentId, { limit: 50 });
-
-      let internalRounds = 0;
-      // Walk backwards from the most recent message
-      for (let i = recentMessages.length - 1; i >= 0; i--) {
-        const msg = recentMessages[i];
-        // Skip status messages entirely (system noise — whispers, join/leave, etc.)
-        if (msg.type === "status") continue;
-        const sender = await store.getAgent(msg.fromAgent);
-        // Skip system agent messages (agorai-system)
-        if (sender && sender.type === "system") continue;
-        // Hit a human or external agent message — stop counting
-        if (!sender || sender.type !== "internal") break;
-        internalRounds++;
-      }
-
-      // Each "round" = all agents respond once. With N agents, N messages = 1 round.
-      // Use a generous threshold: maxRounds * number of known internal agents in conversation.
-      const subscribers = await store.getSubscribers(conversationId);
-      const internalSubCount = await (async () => {
-        let count = 0;
-        for (const sub of subscribers) {
-          const a = await store.getAgent(sub.agentId);
-          if (a && a.type === "internal") count++;
-        }
-        return Math.max(count, 1);
-      })();
-
-      const maxInternalMessages = maxRounds * internalSubCount;
-
-      if (internalRounds >= maxInternalMessages) {
-        log.info(`Skipping in ${conversationId}: ${internalRounds} internal messages since last human (limit: ${maxInternalMessages}, depth: ${maxRounds})`);
-        await store.markRead(unreadMessages.map((m) => m.id), agentId);
-        return "skipped";
-      }
-
-      log.info(`Collaboration window: ${internalRounds}/${maxInternalMessages} internal messages — continuing`);
-    }
-  }
-
-  // Build full context from store (identity, rules, skills, memory, messages)
+  // Build full context from store
   const context = await buildAgentContext({
     store,
     agentId,
@@ -334,7 +377,21 @@ async function processConversation(
   });
   const rendered = renderForPrompt(context, mode);
 
-  // Call adapter — mark read ONLY after successful send
+  return invokeAndSend(store, adapter, rendered, customSystemPrompt, conversationId, agentId, unreadMessages);
+}
+
+/**
+ * Invoke the LLM adapter and send the response. Shared by Keryx-gated and normal paths.
+ */
+async function invokeAndSend(
+  store: IStore,
+  adapter: IAgentAdapter,
+  rendered: { conversationPrompt: string; systemPrompt: string },
+  customSystemPrompt: string | undefined,
+  conversationId: string,
+  agentId: string,
+  unreadMessages: { id: string }[],
+): Promise<"ok" | "skipped" | "error" | "rate_limited"> {
   try {
     log.info(`Generating response for conversation ${conversationId}...`);
     const invokeOpts: AgentInvokeOptions = {
@@ -345,7 +402,7 @@ async function processConversation(
 
     // Let the LLM opt out of responding
     const trimmed = response.content.trim();
-    if (!trimmed || trimmed === "[NO_RESPONSE]") {
+    if (!trimmed || trimmed.includes("[NO_RESPONSE]")) {
       log.debug(`No response needed for ${conversationId} — marking read`);
       await store.markRead(unreadMessages.map((m) => m.id), agentId);
       return "ok";
@@ -366,8 +423,14 @@ async function processConversation(
     log.debug(`Marked ${unreadMessages.length} messages read in ${conversationId}`);
     return "ok";
   } catch (err) {
-    log.error(`Adapter/send failed in ${conversationId}: ${err instanceof Error ? err.message : String(err)}`);
-    // Messages NOT marked read — they will be retried on next poll
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // Detect rate limiting (429)
+    if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit") || errMsg.toLowerCase().includes("too many requests")) {
+      log.warn(`Rate limited in ${conversationId}: ${errMsg} — backing off silently`);
+      await store.markRead(unreadMessages.map((m) => m.id), agentId);
+      return "rate_limited";
+    }
+    log.error(`Adapter/send failed in ${conversationId}: ${errMsg}`);
     return "error";
   }
 }
