@@ -48,6 +48,16 @@
         </div>
         <% } %>
 
+        <!-- Rate warning icon (admin only) -->
+        <% if (user.role === 'admin' || user.role === 'superadmin') { %>
+        <div id="rate-warning" class="hidden relative cursor-pointer" title="High message rate detected">
+          <svg class="w-5 h-5 text-red-500 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+          </svg>
+          <span id="rate-warning-count" class="absolute -top-1 -right-1 bg-red-600 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center"></span>
+        </div>
+        <% } %>
+
         <!-- Verbosity -->
         <select id="verbosity-select"
           class="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1 focus:ring-brand-500 focus:border-brand-500"
@@ -392,6 +402,34 @@
         history.replaceState(null, '', url.pathname + url.hash);
       }
     })();
+
+    // Rate warning polling (admin only)
+    <% if (user.role === 'admin' || user.role === 'superadmin') { %>
+    (function() {
+      var el = document.getElementById('rate-warning');
+      var countEl = document.getElementById('rate-warning-count');
+      if (!el) return;
+      var tooltip = '';
+      function checkRate() {
+        fetch('<%= envPath %>/api/rate-warning')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.warning) {
+              el.classList.remove('hidden');
+              countEl.textContent = data.conversations.length;
+              tooltip = 'High message rate (' + data.threshold + '/' + data.windowMinutes + 'min):\n' +
+                data.conversations.map(function(c) { return c.title + ': ' + c.count + ' msgs'; }).join('\n');
+              el.title = tooltip;
+            } else {
+              el.classList.add('hidden');
+            }
+          })
+          .catch(function() {});
+      }
+      checkRate();
+      setInterval(checkRate, 30000);
+    })();
+    <% } %>
   </script>
 </body>
 </html>

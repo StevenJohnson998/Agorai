@@ -17,7 +17,7 @@
           var subscriberIds = subscribers.map(function(s) { return s.agentId; });
           var availableAgents = (typeof agents !== 'undefined' ? agents : []).filter(function(a) {
             if (subscriberIds.indexOf(a.id) !== -1) return false;
-            return a.type === 'human' || (a.capabilities && a.capabilities.indexOf('chat') !== -1);
+            return a.type === 'human' || a.type === 'claude-code' || a.type === 'claude-desktop' || a.type === 'internal' || a.type === 'moderator' || (a.capabilities && a.capabilities.indexOf('chat') !== -1);
           });
         %>
         <%- include('partials/participants', { user: user, conversation: conversation, subscribers: subscribers, agents: availableAgents, envPath: envPath, basePath: basePath }) %>
@@ -44,8 +44,9 @@
 
   <!-- Input area -->
   <div class="border-t border-slate-800 p-3 bg-slate-900/50 shrink-0 relative">
-    <!-- @mention autocomplete dropdown -->
+    <!-- Autocomplete dropdowns (mention + slash commands) -->
     <div id="mention-dropdown" class="hidden absolute bottom-full left-3 right-3 mb-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-50 max-h-48 overflow-y-auto"></div>
+    <div id="slash-dropdown" class="hidden absolute bottom-full left-3 right-3 mb-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-50 max-h-48 overflow-y-auto"></div>
 
     <!-- Pending attachment pills -->
     <div id="attachment-pills" class="hidden flex flex-wrap gap-1.5 mb-2"></div>
@@ -61,7 +62,7 @@
         class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"
         onkeydown="handleMentionKey(event)"
         oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';handleMentionInput(this)"></textarea>
-      <input type="file" id="file-input" class="hidden">
+      <input type="file" id="file-input" class="hidden" accept="image/*,video/*,audio/*,application/pdf,text/*,.doc,.docx,.xls,.xlsx,.pptx,.csv,.json,.md,.zip">
       <button type="button" id="attach-btn" title="Attach file"
         class="px-2 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors text-sm self-end min-w-[44px] min-h-[44px] flex items-center justify-center"
         onclick="document.getElementById('file-input').click()">
@@ -338,5 +339,138 @@
     if (!mentionDropdown.contains(e.target) && e.target.id !== 'msg-input') {
       closeMentionDropdown();
     }
+    if (!slashDropdown.contains(e.target) && e.target.id !== 'msg-input') {
+      closeSlashDropdown();
+    }
   });
+
+  // --- Slash command autocomplete ---
+  var slashCommands = [
+    { name: 'pause', desc: 'Pause Keryx round management', insert: '@keryx pause' },
+    { name: 'resume', desc: 'Resume Keryx round management', insert: '@keryx resume' },
+    { name: 'skip', desc: 'Skip the current round', insert: '@keryx skip' },
+    { name: 'status', desc: 'Show current round status', insert: '@keryx status' },
+    { name: 'extend', desc: 'Extend round timeout (e.g. /extend 2m)', insert: '@keryx extend ', partial: true },
+    { name: 'interrupt', desc: 'Interrupt the current round', insert: '@keryx interrupt' },
+    { name: 'enable', desc: 'Enable Keryx for this conversation', insert: '@keryx enable' },
+    { name: 'disable', desc: 'Disable Keryx for this conversation', insert: '@keryx disable' },
+    { name: 'summary', desc: 'Request a synthesis of the discussion', insert: '@keryx summary' },
+  ];
+
+  var slashDropdown = document.getElementById('slash-dropdown');
+  var slashActive = false;
+  var slashSelectedIdx = 0;
+
+  function getSlashQuery(textarea) {
+    var pos = textarea.selectionStart;
+    var text = textarea.value.substring(0, pos);
+    // Only trigger if "/" is at the very start of the input
+    if (text.length === 0 || text[0] !== '/') return null;
+    // No spaces allowed in query (means they already picked or are typing a message)
+    var query = text.substring(1);
+    if (/\s/.test(query) && !query.startsWith('extend')) return null;
+    // For /extend, only allow space after "extend" for the duration arg
+    if (query.indexOf(' ') !== -1 && !query.startsWith('extend')) return null;
+    return { query: query.split(' ')[0] };
+  }
+
+  function getFilteredCommands(query) {
+    var q = query.toLowerCase();
+    return slashCommands.filter(function(c) {
+      return c.name.indexOf(q) !== -1;
+    });
+  }
+
+  function renderSlashDropdown(commands, selectedIdx) {
+    if (commands.length === 0) { closeSlashDropdown(); return; }
+    var html = '';
+    commands.forEach(function(cmd, i) {
+      var selected = i === selectedIdx ? 'bg-slate-700' : '';
+      html += '<div class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-700 ' + selected + '" data-idx="' + i + '" onmousedown="selectSlashCommand(' + i + ')">'
+        + '<span class="text-sm text-brand-400 font-mono shrink-0">/' + cmd.name + '</span>'
+        + '<span class="text-xs text-slate-500 truncate">' + cmd.desc + '</span>'
+        + '</div>';
+    });
+    slashDropdown.innerHTML = html;
+    slashDropdown.classList.remove('hidden');
+    var el = slashDropdown.children[selectedIdx];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function closeSlashDropdown() {
+    slashDropdown.classList.add('hidden');
+    slashDropdown.innerHTML = '';
+    slashActive = false;
+    slashSelectedIdx = 0;
+  }
+
+  function selectSlashCommand(idx) {
+    var textarea = document.getElementById('msg-input');
+    var result = getSlashQuery(textarea);
+    if (!result) { closeSlashDropdown(); return; }
+    var filtered = getFilteredCommands(result.query);
+    if (idx >= filtered.length) return;
+    var cmd = filtered[idx];
+    if (cmd.partial) {
+      // Partial insert (e.g. /extend) — leave cursor at end for user to type arg
+      textarea.value = cmd.insert;
+      textarea.selectionStart = textarea.selectionEnd = cmd.insert.length;
+    } else {
+      textarea.value = cmd.insert;
+      textarea.selectionStart = textarea.selectionEnd = cmd.insert.length;
+      // Auto-send completed commands
+      textarea.focus();
+      closeSlashDropdown();
+      textarea.closest('form').requestSubmit();
+      return;
+    }
+    textarea.focus();
+    closeSlashDropdown();
+  }
+
+  // Override input handler to support both @ and /
+  var _origMentionInput = handleMentionInput;
+  handleMentionInput = function(textarea) {
+    // Check slash first (only at start of input)
+    var slashResult = getSlashQuery(textarea);
+    if (slashResult) {
+      closeMentionDropdown();
+      slashActive = true;
+      var filtered = getFilteredCommands(slashResult.query);
+      slashSelectedIdx = Math.min(slashSelectedIdx, Math.max(filtered.length - 1, 0));
+      renderSlashDropdown(filtered, slashSelectedIdx);
+      return;
+    }
+    closeSlashDropdown();
+    _origMentionInput(textarea);
+  };
+
+  // Override key handler to support both @ and /
+  var _origMentionKey = handleMentionKey;
+  handleMentionKey = function(event) {
+    if (slashActive) {
+      var textarea = event.target;
+      var result = getSlashQuery(textarea);
+      var filtered = result ? getFilteredCommands(result.query) : [];
+      if (filtered.length === 0) { closeSlashDropdown(); _origMentionKey(event); return; }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        slashSelectedIdx = (slashSelectedIdx + 1) % filtered.length;
+        renderSlashDropdown(filtered, slashSelectedIdx);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        slashSelectedIdx = (slashSelectedIdx - 1 + filtered.length) % filtered.length;
+        renderSlashDropdown(filtered, slashSelectedIdx);
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        selectSlashCommand(slashSelectedIdx);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSlashDropdown();
+      }
+      return;
+    }
+    _origMentionKey(event);
+  };
 </script>

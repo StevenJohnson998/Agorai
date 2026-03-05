@@ -69,6 +69,18 @@ export function createApiRoutes(store: IStore) {
     });
   });
 
+  /** Rate warning — admin only. Returns conversations exceeding message rate threshold. */
+  router.get("/api/rate-warning", async (req, res) => {
+    const user = req.user!;
+    if (user.role !== "admin" && user.role !== "superadmin") {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const threshold = req.app.get("rateWarningThreshold") as number || 50;
+    const windowMinutes = req.app.get("rateWarningWindowMinutes") as number || 10;
+    const hotConversations = await store.getHighRateConversations(threshold, windowMinutes);
+    res.json({ warning: hotConversations.length > 0, threshold, windowMinutes, conversations: hotConversations });
+  });
+
   router.patch("/api/settings/verbosity", async (req, res) => {
     const user = req.user!;
     const { verbosity } = req.body;
