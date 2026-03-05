@@ -105,6 +105,9 @@ export interface IStore {
   markRead(messageIds: string[], agentId: string): Promise<void>;
   getUnreadCount(agentId: string): Promise<number>;
 
+  /** Get conversations exceeding a message rate threshold within a time window. */
+  getHighRateConversations(threshold: number, windowMinutes: number): Promise<Array<{ conversationId: string; title: string; count: number }>>;
+
   // --- Access Requests ---
   createAccessRequest(req: CreateAccessRequest): Promise<AccessRequest>;
   getAccessRequest(id: string): Promise<AccessRequest | null>;

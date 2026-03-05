@@ -180,6 +180,10 @@ export const ConfigSchema = z.object({
         name: z.string(),
         password: z.string().optional(),
       }).optional(),
+      /** Rate warning: show alert when any conversation exceeds this many messages in the window. */
+      rateWarningThreshold: z.number().int().min(1).default(50),
+      /** Rate warning window in minutes. */
+      rateWarningWindowMinutes: z.number().int().min(1).default(10),
     })
     .optional()
     .describe("Web GUI config. Absent = GUI disabled."),
@@ -187,9 +191,9 @@ export const ConfigSchema = z.object({
   keryx: z
     .object({
       enabled: z.boolean().default(true),
-      baseTimeoutMs: z.number().default(30_000),
-      nudgeAfterMs: z.number().default(45_000),
-      maxRoundsPerTopic: z.number().default(5),
+      baseTimeoutMs: z.number().default(45_000),
+      nudgeAfterMs: z.number().default(60_000),
+      maxRoundsPerTopic: z.number().default(3),
       synthesisCapability: z.string().default("synthesis"),
       healthWindowSize: z.number().default(10),
     })

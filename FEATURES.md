@@ -35,12 +35,17 @@ Built-in rule-based moderator that manages multi-agent conversations. Registers 
 |---------|-------------|--------|
 | **Round lifecycle** | State machine: IDLE → OPEN → COLLECTING → SYNTHESIZING → CLOSED (+ INTERRUPTED). Triggered by human messages only | Done |
 | **Adaptive timing** | Dynamic timeout from prompt complexity, agent history, round number, subscriber count. No fixed floor/ceiling | Done |
-| **Progressive escalation** | 4-level chain: silent wait → nudge → CC backup → escalate to human (at baseTimeout × 1.0, 1.5, 2.5, 4.0) | Done |
+| **Progressive escalation** | 2-level chain: silent wait (majority → close early) → nudge → force-close (at baseTimeout × 1.0, 1.5) | Done |
+| **Majority close** | If ≥50% of expected agents responded when timeout fires, close round immediately (don't wait for stragglers) | Done |
+| **Auto-round progression** | Rounds auto-open after close if discussion continues. Stop conditions: all agents consensus/[NO_RESPONSE], or max rounds reached | Done |
+| **Final synthesis** | Synthesis requested once at end of discussion (all rounds), not after every round | Done |
+| **Consensus detection** | `isConsensusResponse()` — detects [NO_RESPONSE] + 10 agreement phrases (case-insensitive) | Done |
 | **Synthesis delegation** | Finds best agent by `synthesisCapability`. Falls back to least-active agent in round | Done |
-| **Loop detection** | Levenshtein distance on consecutive messages from same agent (similarity > 0.7 = loop) | Done |
-| **Drift detection** | Cosine similarity on bag-of-words TF vectors (similarity < 0.3 = drift) | Done |
-| **Domination detection** | Message count ratio per agent (> 40% with 3+ agents) | Done |
-| **Human commands** | `@keryx pause/resume/skip/extend/status/interrupt/enable/disable`. Duration parsing (30s, 2m, 1h) | Done |
+| **Loop detection** | Levenshtein distance on consecutive messages from same agent (similarity > 0.7 = loop) | Done (muted — false positives) |
+| **Drift detection** | Cosine similarity on bag-of-words TF vectors (similarity < 0.3 = drift) | Done (muted — false positives) |
+| **Domination detection** | Message count ratio per agent (> 40% with 3+ agents) | Done (muted — false positives with few agents) |
+| **Human commands** | `@keryx pause/resume/skip/extend/status/interrupt/enable/disable/summary`. Duration parsing (30s, 2m, 1h) | Done |
+| **`/command` autocomplete** | GUI slash commands with dropdown autocomplete, keyboard nav, auto-send on selection | Done |
 | **Interrupt flow** | Cancel timers, wait for human follow-up, re-open round with context | Done |
 | **Behavioral skill** | Auto-creates bridge-level Keryx protocol skill on start | Done |
 | **Bridge rules injection** | `keryxRules` in MCP instructions + LLM system prompt when active | Done |
@@ -50,6 +55,7 @@ Built-in rule-based moderator that manages multi-agent conversations. Registers 
 | **`--no-keryx` flag** | Disable Keryx on `agorai serve` | Done |
 | **Config section** | `keryx.enabled`, `baseTimeoutMs`, `nudgeAfterMs`, `maxRoundsPerTopic`, `synthesisCapability`, `healthWindowSize` | Done |
 | **Moderator agent type** | Registers as `moderator` — agents see it as a process manager, not a peer | Done |
+| **Ordered conversation mode** | Alternative to parallel rounds: each AI talks in turn (round-robin). Max rounds = `maxRoundsPerTopic × number of AIs`. `conversationMode: "parallel" \| "ordered"` | Planned |
 
 ## Message Metadata & Confidentiality (v0.4)
 
@@ -411,8 +417,8 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **v0.5** | **"Discover, Decide, Deliver" — capability catalog, task claiming (atomic + release + heartbeat), structured conversations, directed messages, message tags, filter by agent, agent memory (private scratchpad, 3 scopes), instruction matrix (scope × selector, replaces playbook), internal agents default active** |
 | **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting by name, skill files, tag filtering. Replaces instruction matrix. 35 tools** |
 | v0.6.x | Context optimization — per-agent tool groups (done), meta-tool pattern (2 tools replace 35, ~90% savings), description trimming |
-| **v0.7** | **Keryx discussion manager — round lifecycle, adaptive timing, progressive escalation, pattern detection (loop/drift/domination), human commands, synthesis delegation. Zero LLM dependency** |
-| v0.8 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows |
+| **v0.7** | **Keryx discussion manager — round lifecycle, adaptive timing, progressive escalation, pattern detection (loop/drift/domination), human commands, synthesis delegation. Auto-round progression, consensus detection, majority close, `/command` autocomplete. Zero LLM dependency** |
+| v0.8 | Task dependencies & sub-tasks, explicit project membership (clearance ≠ access), full-text message search, conversation templates/workflows, Keryx ordered conversation mode (round-robin turns) |
 | v0.9 | Search & orchestration — debate engine via bridge, orchestrator agent (digest, onboarding, smart routing). Sentinel AI (auto-classification, redaction) |
 | v0.9.x | **Claude integration** — Claude SDK adapter (`@anthropic-ai/sdk`), GUI-managed Claude Code instance (admin start/stop, poll loop), Claude Agent SDK exploration |
 | v1.0 | Distribution — web dashboard (admin), GUI (user-facing, @mention autocomplete), human participants (agent type `human`, same clearance model), A2A protocol, conflict detection |
