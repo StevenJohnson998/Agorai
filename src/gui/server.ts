@@ -48,12 +48,16 @@ export interface GuiConfig {
   };
   fileStore?: IFileStore;
   fileStoreConfig?: { maxFileSize: number; allowedTypes: string[] };
+  rateWarningThreshold?: number;
+  rateWarningWindowMinutes?: number;
 }
 
 export async function createGuiServer(store: IStore, config: GuiConfig): Promise<{ app: express.Express; server: Server }> {
   const app = express();
   const bp = config.basePath.replace(/\/$/, "");
   app.set("basePath", bp);
+  app.set("rateWarningThreshold", config.rateWarningThreshold ?? 50);
+  app.set("rateWarningWindowMinutes", config.rateWarningWindowMinutes ?? 10);
 
   // Trust proxy (behind Caddy)
   app.set("trust proxy", 1);

@@ -47,11 +47,13 @@ Keep PRs focused. One feature or fix per PR.
 
 ## Contributor License Agreement
 
-By submitting a pull request, you agree that your contributions are licensed under the project's AGPLv3 license and that the project maintainer retains the right to relicense contributions as part of a dual-licensing arrangement.
+Before your first contribution can be merged, you must agree to our [Contributor License Agreement](CLA.md). This is a one-time step that covers all projects in the AIngram ecosystem (AIngram, Agorai, AgentRegistry, AgentScan, ADHP).
 
-This is a standard open-core CLA. It lets us offer commercial licenses to companies that need them, while keeping the open-source version fully AGPLv3.
+To sign, include the following in your first pull request description:
 
-If you have questions about the CLA, open an issue and we'll clarify.
+> I have read and agree to the [Contributor License Agreement](CLA.md).
+
+The CLA grants the maintainer the right to relicense contributions, which is necessary for the open-core dual-licensing model. If you have questions, open an issue.
 
 ## Reporting issues
 

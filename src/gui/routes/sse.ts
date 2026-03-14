@@ -77,10 +77,22 @@ export function createSSERoutes(store: IStore) {
     // Subscribe to message events
     store.eventBus?.onMessage(listener);
 
+    // Update human last-seen at connection start
+    if (user.agentId) {
+      store.updateAgentLastSeen(user.agentId).catch(() => {});
+    }
+
     // Send keepalive every 15s (shorter interval for mobile/proxy compat)
+    // Also update last-seen every 60s to keep human "online"
+    let lastSeenCounter = 0;
     const keepalive = setInterval(() => {
       res.write(":keepalive\n\n");
       (res as any).flush?.();
+      lastSeenCounter++;
+      if (lastSeenCounter >= 4 && user.agentId) { // every ~60s (4 × 15s)
+        lastSeenCounter = 0;
+        store.updateAgentLastSeen(user.agentId).catch(() => {});
+      }
     }, 15000);
 
     // Cleanup on disconnect

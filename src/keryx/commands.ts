@@ -13,14 +13,15 @@ export type KeryxCommand =
   | "status"
   | "interrupt"
   | "enable"
-  | "disable";
+  | "disable"
+  | "summary";
 
 export interface ParsedCommand {
   command: KeryxCommand;
   args?: string;
 }
 
-const COMMAND_REGEX = /@keryx\s+(pause|resume|skip|extend|status|interrupt|enable|disable)(?:\s+(.+))?/i;
+const COMMAND_REGEX = /@keryx\s+(pause|resume|skip|extend|status|interrupt|enable|disable|summary)(?:\s+(.+))?/i;
 
 /**
  * Parse a @keryx command from message content.

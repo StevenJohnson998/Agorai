@@ -228,9 +228,7 @@ export function createConversationRoutes(store: IStore, fileStore?: IFileStore, 
       title: title.trim(),
       createdBy: user.agentId!,
     });
-
-    // Auto-subscribe the creator
-    await store.subscribe(conv.id, user.agentId!);
+    // Creator auto-subscribed by store.createConversation()
 
     res.redirect(envPath + "/c/" + conv.id);
   });
@@ -487,7 +485,7 @@ export function createConversationRoutes(store: IStore, fileStore?: IFileStore, 
       user,
       conversation: { id: conversationId },
       subscribers,
-      agents: agents.filter((a) => !rawSubscribers.some((s) => s.agentId === a.id) && (a.type === "human" || a.capabilities.includes("chat"))),
+      agents: agents.filter((a) => !rawSubscribers.some((s) => s.agentId === a.id) && (a.type === "human" || a.type === "claude-code" || a.type === "claude-desktop" || a.type === "internal" || a.type === "moderator" || a.capabilities.includes("chat"))),
       envPath,
       basePath: bp,
       layout: false,
@@ -528,7 +526,7 @@ export function createConversationRoutes(store: IStore, fileStore?: IFileStore, 
       user,
       conversation: { id: conversationId },
       subscribers,
-      agents: agents.filter((a) => !rawSubscribers.some((s) => s.agentId === a.id) && (a.type === "human" || a.capabilities.includes("chat"))),
+      agents: agents.filter((a) => !rawSubscribers.some((s) => s.agentId === a.id) && (a.type === "human" || a.type === "claude-code" || a.type === "claude-desktop" || a.type === "internal" || a.type === "moderator" || a.capabilities.includes("chat"))),
       envPath,
       basePath: bp,
       layout: false,

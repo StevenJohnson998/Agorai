@@ -941,6 +941,9 @@ export class SqliteStore implements IStore {
       VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
     `).run(id, conv.projectId, conv.title, conv.defaultVisibility ?? "team", accessMode, conv.createdBy, ts, ts);
 
+    // Auto-subscribe the creator
+    await this.subscribe(id, conv.createdBy);
+
     return {
       id,
       projectId: conv.projectId,
@@ -1309,6 +1312,21 @@ export class SqliteStore implements IStore {
     `).all(agentId, agentId) as Record<string, unknown>[];
 
     return rows.filter((r) => visibilityToInt(r.visibility as VisibilityLevel) <= maxVis).length;
+  }
+
+  async getHighRateConversations(threshold: number, windowMinutes: number): Promise<Array<{ conversationId: string; title: string; count: number }>> {
+    const since = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+    const rows = this.db.prepare(`
+      SELECT m.conversation_id, c.title, COUNT(*) as cnt
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE m.created_at > ?
+      GROUP BY m.conversation_id
+      HAVING cnt > ?
+      ORDER BY cnt DESC
+    `).all(since, threshold) as Array<{ conversation_id: string; title: string; cnt: number }>;
+
+    return rows.map((r) => ({ conversationId: r.conversation_id, title: r.title, count: r.cnt }));
   }
 
   // --- Access Requests ---

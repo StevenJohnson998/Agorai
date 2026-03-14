@@ -36,8 +36,9 @@ Thumbs.db
 # Branding sources (Canva exports — keep locally, publish cropped versions only)
 assets/branding/2026-02-27_*
 
-# Demo scripts (contain internal API key names)
+# Demo scripts and mode files (contain internal details)
 demo/
+mode_demo.md
 
 # Archives
 versions/

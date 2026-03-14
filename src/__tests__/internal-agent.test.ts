@@ -75,6 +75,22 @@ async function setupConversation(creatorId: string) {
 }
 
 /**
+ * Pre-register an internal agent and subscribe it to a conversation.
+ * Must be called before runAgentBriefly so the agent can discover the conversation.
+ */
+async function preSubscribeAgent(convId: string, agentName: string) {
+  const agent = await store.registerAgent({
+    name: agentName,
+    type: "internal",
+    capabilities: ["chat"],
+    clearanceLevel: "team",
+    apiKeyHash: `internal:${agentName}`,
+  });
+  await store.subscribe(convId, agent.id);
+  return agent;
+}
+
+/**
  * Run the agent for a fixed number of poll cycles by aborting after a delay.
  */
 async function runAgentBriefly(
@@ -91,7 +107,7 @@ async function runAgentBriefly(
 }
 
 describe("Internal Agent — Discovery & Subscription", () => {
-  it("discovers and subscribes to existing conversations", async () => {
+  it("does NOT auto-subscribe to conversations", async () => {
     const other = await createTestAgent("other-agent");
     const { conv } = await setupConversation(other.id);
 
@@ -106,9 +122,47 @@ describe("Internal Agent — Discovery & Subscription", () => {
       pollIntervalMs: 50,
     });
 
-    // Agent should have subscribed to the conversation
+    // Agent should NOT have auto-subscribed
     const isSubbed = await store.isSubscribed(conv.id, (await store.getAgentByApiKey("internal:test-bot"))!.id);
-    expect(isSubbed).toBe(true);
+    expect(isSubbed).toBe(false);
+  });
+
+  it("tracks conversations it is already subscribed to", async () => {
+    const other = await createTestAgent("other-agent2");
+    const { conv } = await setupConversation(other.id);
+
+    const adapter = createMockAdapter("track-bot");
+
+    // Pre-subscribe the agent before running
+    const agent = await store.registerAgent({
+      name: "track-bot",
+      type: "internal",
+      capabilities: ["chat"],
+      clearanceLevel: "team",
+      apiKeyHash: "internal:track-bot",
+    });
+    await store.subscribe(conv.id, agent.id);
+
+    // Send a message for the agent to respond to
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: other.id,
+      content: "Hello track-bot",
+    });
+
+    await runAgentBriefly({
+      store,
+      adapter,
+      agentId: "internal:track-bot",
+      agentName: "track-bot",
+      mode: "active",
+      pollIntervalMs: 50,
+    }, 300);
+
+    // Agent should have responded (it was pre-subscribed)
+    const messages = await store.getMessages(conv.id, agent.id);
+    const agentMessages = messages.filter((m) => m.fromAgent === agent.id);
+    expect(agentMessages.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -117,6 +171,7 @@ describe("Internal Agent — Active Mode", () => {
     const other = await createTestAgent("sender");
     const { conv } = await setupConversation(other.id);
     await store.subscribe(conv.id, other.id);
+    await preSubscribeAgent(conv.id, "responder");
 
     // Send a message from another agent
     await store.sendMessage({
@@ -150,6 +205,7 @@ describe("Internal Agent — Passive Mode", () => {
     const other = await createTestAgent("chatter");
     const { conv } = await setupConversation(other.id);
     await store.subscribe(conv.id, other.id);
+    await preSubscribeAgent(conv.id, "passive-bot");
 
     // Send a message WITHOUT @mention
     await store.sendMessage({
@@ -180,6 +236,7 @@ describe("Internal Agent — Passive Mode", () => {
     const other = await createTestAgent("mentioner");
     const { conv } = await setupConversation(other.id);
     await store.subscribe(conv.id, other.id);
+    await preSubscribeAgent(conv.id, "mention-bot");
 
     // Send a message WITH @mention
     await store.sendMessage({
@@ -208,9 +265,16 @@ describe("Internal Agent — Passive Mode", () => {
   });
 });
 
-describe("Internal Agent — Anti-Ping-Pong", () => {
-  it("active mode: skips internal-only messages after collaboration window exhausted", async () => {
-    // Create internal sender agents
+describe("Internal Agent — Keryx Gateway", () => {
+  it("Keryx-managed: skips when no round-open in unread", async () => {
+    // Create a Keryx-like moderator so the conversation is detected as Keryx-managed
+    const keryxAgent = await store.registerAgent({
+      name: "keryx",
+      type: "moderator",
+      capabilities: ["discussion-management"],
+      clearanceLevel: "restricted",
+      apiKeyHash: "internal:keryx",
+    });
     const otherInternal = await store.registerAgent({
       name: "other-internal",
       type: "internal",
@@ -218,31 +282,24 @@ describe("Internal Agent — Anti-Ping-Pong", () => {
       clearanceLevel: "team",
       apiKeyHash: "hash_other_internal",
     });
-    const otherInternal2 = await store.registerAgent({
-      name: "other-internal-2",
-      type: "internal",
-      capabilities: ["chat"],
-      clearanceLevel: "team",
-      apiKeyHash: "hash_other_internal_2",
-    });
     const { conv } = await setupConversation(otherInternal.id);
     await store.subscribe(conv.id, otherInternal.id);
-    await store.subscribe(conv.id, otherInternal2.id);
+    await store.subscribe(conv.id, keryxAgent.id);
 
-    // Fill the conversation with many internal-only messages to exhaust
-    // the collaboration window (decisionDepth defaults to 3, with 3 internal
-    // agents that's 9 messages max). Send 15 to be well past the limit.
-    for (let i = 0; i < 15; i++) {
+    await preSubscribeAgent(conv.id, "gated-bot");
+
+    // Send messages WITHOUT a Keryx round-open — agent should skip
+    for (let i = 0; i < 5; i++) {
       await store.sendMessage({
         conversationId: conv.id,
-        fromAgent: i % 2 === 0 ? otherInternal.id : otherInternal2.id,
-        content: `Internal message round ${i}`,
+        fromAgent: otherInternal.id,
+        content: `Internal message ${i}`,
       });
     }
 
     let invokeCount = 0;
     const adapter: IAgentAdapter = {
-      name: "anti-loop-bot",
+      name: "gated-bot",
       async isAvailable() { return true; },
       async invoke(): Promise<AgentResponse> {
         invokeCount++;
@@ -253,21 +310,79 @@ describe("Internal Agent — Anti-Ping-Pong", () => {
     await runAgentBriefly({
       store,
       adapter,
-      agentId: "internal:anti-loop-bot",
-      agentName: "anti-loop-bot",
+      agentId: "internal:gated-bot",
+      agentName: "gated-bot",
       mode: "active",
       pollIntervalMs: 50,
-      decisionDepth: 3,
     }, 300);
 
-    // Should NOT have invoked — collaboration window exhausted
+    // Should NOT have invoked — no Keryx round-open in unread
     expect(invokeCount).toBe(0);
 
-    // Messages should still be marked read (not left unread for infinite retry)
-    const agentRecord = await store.getAgentByApiKey("internal:anti-loop-bot");
+    // Messages should still be marked read
+    const agentRecord = await store.getAgentByApiKey("internal:gated-bot");
     const unread = await store.getMessages(conv.id, agentRecord!.id, { unreadOnly: true });
     const fromOther = unread.filter((m) => m.fromAgent !== agentRecord!.id);
     expect(fromOther).toHaveLength(0);
+  });
+
+  it("Keryx-managed: responds to direct request (e.g. synthesis)", async () => {
+    const keryxAgent = await store.registerAgent({
+      name: "keryx",
+      type: "moderator",
+      capabilities: ["discussion-management"],
+      clearanceLevel: "restricted",
+      apiKeyHash: "internal:keryx_synth",
+    });
+    const otherInternal = await store.registerAgent({
+      name: "other-internal-synth",
+      type: "internal",
+      capabilities: ["chat"],
+      clearanceLevel: "team",
+      apiKeyHash: "hash_other_internal_synth",
+    });
+    const { conv } = await setupConversation(otherInternal.id);
+    await store.subscribe(conv.id, otherInternal.id);
+    await store.subscribe(conv.id, keryxAgent.id);
+    await preSubscribeAgent(conv.id, "synth-bot");
+
+    // Send a Keryx synthesis request (NOT a round-open — no "Participants:")
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: keryxAgent.id,
+      content: "🔄 @synth-bot — Please synthesize the discussion from round 1.\nTopic: Test topic\nSummarize key points.",
+      type: "status",
+      tags: ["keryx"],
+    });
+
+    let invokeCount = 0;
+    const adapter: IAgentAdapter = {
+      name: "synth-bot",
+      async isAvailable() { return true; },
+      async invoke(): Promise<AgentResponse> {
+        invokeCount++;
+        return { content: "Here is my synthesis.", confidence: 0.8, durationMs: 10 };
+      },
+    };
+
+    await runAgentBriefly({
+      store,
+      adapter,
+      agentId: "internal:synth-bot",
+      agentName: "synth-bot",
+      mode: "active",
+      pollIntervalMs: 50,
+    }, 300);
+
+    // SHOULD have invoked — Keryx direct request with @mention
+    expect(invokeCount).toBe(1);
+
+    // Verify response was sent
+    const agentRecord = await store.getAgentByApiKey("internal:synth-bot");
+    const messages = await store.getMessages(conv.id, agentRecord!.id);
+    const agentMessages = messages.filter((m) => m.fromAgent === agentRecord!.id);
+    expect(agentMessages.length).toBeGreaterThanOrEqual(1);
+    expect(agentMessages[0].content).toBe("Here is my synthesis.");
   });
 
   it("active mode: responds to @mention from internal agents", async () => {
@@ -280,6 +395,7 @@ describe("Internal Agent — Anti-Ping-Pong", () => {
     });
     const { conv } = await setupConversation(otherInternal.id);
     await store.subscribe(conv.id, otherInternal.id);
+    await preSubscribeAgent(conv.id, "mention-active-bot");
 
     // Send a message with @mention from internal agent
     await store.sendMessage({
@@ -313,6 +429,7 @@ describe("Internal Agent — Self-filtering", () => {
     const other = await createTestAgent("starter");
     const { conv } = await setupConversation(other.id);
     await store.subscribe(conv.id, other.id);
+    await preSubscribeAgent(conv.id, "self-filter");
 
     // First, send a real message to trigger a response
     await store.sendMessage({
@@ -351,6 +468,7 @@ describe("Internal Agent — Mark Read", () => {
     const other = await createTestAgent("mark-sender");
     const { conv } = await setupConversation(other.id);
     await store.subscribe(conv.id, other.id);
+    await preSubscribeAgent(conv.id, "mark-bot");
 
     const msg = await store.sendMessage({
       conversationId: conv.id,
@@ -381,6 +499,7 @@ describe("Internal Agent — Mark Read", () => {
     const other = await createTestAgent("fail-sender");
     const { conv } = await setupConversation(other.id);
     await store.subscribe(conv.id, other.id);
+    await preSubscribeAgent(conv.id, "fail-bot");
 
     const msg = await store.sendMessage({
       conversationId: conv.id,

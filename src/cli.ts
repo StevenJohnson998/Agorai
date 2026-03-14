@@ -725,6 +725,8 @@ async function cmdServe(args: string[]) {
       defaultAdmin: config.gui?.defaultAdmin,
       fileStore,
       fileStoreConfig: { maxFileSize: config.fileStore.maxFileSize, allowedTypes: config.fileStore.allowedTypes },
+      rateWarningThreshold: config.gui?.rateWarningThreshold,
+      rateWarningWindowMinutes: config.gui?.rateWarningWindowMinutes,
     });
   }
 

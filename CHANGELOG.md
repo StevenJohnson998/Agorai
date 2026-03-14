@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-03-05 — Keryx Auto-Round Progression & GUI Slash Commands
+
+### Added
+- **Auto-round progression**: Rounds auto-open after close when discussion continues. Stop conditions: all agents consensus/[NO_RESPONSE], or max rounds reached (default 3). Final synthesis covers the full discussion (all rounds), not just the last round.
+- **Consensus detection**: `isConsensusResponse()` in `patterns.ts` — detects `[NO_RESPONSE]` + 10 agreement phrases (case-insensitive). Used by `closeRound` to determine stop condition.
+- **`responseContents`**: New field on `Round` interface — maps agentId → response content for consensus checking.
+- **Majority close**: If ≥50% of expected agents responded when first timeout fires, close round immediately instead of waiting for stragglers.
+- **`/command` autocomplete**: GUI slash commands with dropdown autocomplete (same UX as @mention). Keyboard nav (arrows, Enter/Tab, Escape). Commands: `/pause`, `/resume`, `/skip`, `/status`, `/extend`, `/interrupt`, `/enable`, `/disable`, `/summary`.
+- **`/summary` command**: Force-request a synthesis of the discussion. Closes active round if needed, or synthesizes from history.
+- **`roundContinue` template**: Different wording for Round 2+ ("Build on previous responses or challenge ideas").
+- **`discussionConcluded` template**: Two variants — consensus ("All participants have nothing new to add") and max rounds ("Round limit reached").
+- **Continuation round context**: Internal agents in Round 2+ get full conversation context (not cut off at round-open) so they can build on previous rounds.
+- **10 new tests** (Phase 6: consensus detection, Phase 7: auto-progression). Total: 496.
+
+### Changed
+- **Escalation chain simplified**: 4 levels over 4 min → 2 levels over ~67s. Silent wait → nudge → force-close.
+- **Default timeouts lowered**: `baseTimeoutMs` 60s → 45s, `nudgeAfterMs` 90s → 60s.
+- **`maxRoundsPerTopic` default**: 5 → 3.
+- **`synthesisRequest` template**: Now references "full discussion (rounds 1–N)" instead of just last round.
+- **Humans excluded from rounds**: `openRound` now filters out `type === "human"` agents from expected participants.
+
+### Muted (log-only, pending proper fixes)
+- **Loop detection**: False positives — flags humans, flags normal cross-round similarity.
+- **Drift detection**: False positives — cosine similarity on bag-of-words too noisy with short texts.
+- **Domination detection**: False positives — with 2 agents, >50% is normal.
+- **Human escalation**: Removed — replaced by force-close in simplified escalation chain.
+
 ## 2026-03-04 — Hide/Show Toggle & Attachment-Only Messages
 
 ### Added

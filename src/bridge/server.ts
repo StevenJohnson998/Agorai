@@ -368,8 +368,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         accessMode: args.access_mode,
         createdBy: agentId,
       });
-      // Auto-subscribe the creator and include skills metadata
-      await store.subscribe(conv.id, agentId);
+      // Creator auto-subscribed by store.createConversation() — fetch skills metadata
       const agent = await store.getAgent(agentId);
       const matchingSkills = agent
         ? await store.getMatchingSkills(
