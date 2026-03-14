@@ -3,7 +3,7 @@
   "version": "0.0.8",
   "description": "Lightweight client to connect AI agents to an Agorai bridge",
   "type": "module",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "bin": {
     "agorai-connect": "./dist/cli.js"
   },
