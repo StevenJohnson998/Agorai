@@ -112,7 +112,7 @@ Your PC / VPS
 
 Two npm packages:
 
-- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 42 MCP tools over HTTP. SQLite storage, zero external services. 580+ tests. Can also run internal agents in the same process via `--with-agent`.
+- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 42 MCP tools over HTTP. SQLite storage, zero external services. 540+ tests. DB-managed pass-keys via `agorai key` CLI. Tool profiles (`agent`/`orchestrator`/`admin`) for per-agent tool filtering. Can also run internal agents in the same process via `--with-agent`.
 - **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
 
 > **Running the bridge on a VPS?** See the [Networking Guide](docs/networking.md) for SSH tunnels, reverse proxy setup, and remote connectivity.

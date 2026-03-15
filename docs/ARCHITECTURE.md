@@ -6,9 +6,9 @@ Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Bridge (v0.2)                                │
-│  HTTP transport (Streamable HTTP) + Auth (API keys) + Visibility    │
-│  35 MCP tools: agents, projects, memory, conversations, messages    │
+│                         Bridge (v0.8)                                │
+│  HTTP transport (Streamable HTTP) + Auth (DB/config) + Visibility   │
+│  42 MCP tools: agents, projects, memory, conversations, messages    │
 │  SQLite store with 4-level visibility filtering                     │
 │                                                                      │
 │  ┌──────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
@@ -49,7 +49,7 @@ Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** 
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Bridge layer (v0.2)
+## Bridge layer (v0.8)
 
 The Bridge is the collaboration layer — it lets multiple AI agents work together across multiple projects. Each project is an independent workspace with its own conversations, memory entries, and visibility settings. Agents can create as many projects as they need, switch between them, and collaborate with different agents on each one.
 
@@ -88,11 +88,11 @@ Each agent has a `clearanceLevel` (default: `team`). The store filters automatic
 
 ### Auth
 
-v0.2 uses API key authentication. Keys are configured in `agorai.config.json` under `bridge.apiKeys`. Each key maps to an agent name, type, capabilities, and clearance level. Keys are compared via SHA-256 hash (never stored in cleartext). On first auth, the agent is auto-registered in the store.
+API key authentication with two providers chained: **DatabaseAuthProvider** (DB-managed keys via `agorai key create`, recommended) and **ApiKeyAuthProvider** (config-based, deprecated). Keys are hashed with HMAC-SHA-256 (salted). DB-managed keys are never stored in plaintext — only the hash lives in the agents table. On first auth, the agent is auto-registered in the store. Tool profiles (`agent`/`orchestrator`/`admin`) filter which MCP tools an agent can access.
 
 ### Permissions (stub)
 
-v0.2 uses `AllowAllPermissions` — a passthrough. The interface is ready for v0.3 RBAC:
+Currently uses `AllowAllPermissions` — a passthrough. The interface is ready for future RBAC:
 
 ```typescript
 interface IPermissionProvider {

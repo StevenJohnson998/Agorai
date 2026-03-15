@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-03-15 — Tool Profiles & Config Isolation
+
+### Added
+- **Tool profiles (D12)**: 3 predefined tool allowlists — `agent` (11 tools), `orchestrator` (20), `admin` (42). `toolProfile` in config takes precedence over `toolGroups`. MCP instructions adapt to profile (skip irrelevant sections). `llms.txt` updated for LLM discovery.
+- **Config isolation**: DB-managed pass-keys via `agorai key` CLI.
+  - `agorai key create --agent <name> [--type] [--clearance] [--toolProfile] [--force]` — generates a key, hashes with HMAC-SHA-256, stores in DB, prints key once (never stored in plaintext).
+  - `agorai key list` — lists agents with DB-managed keys (no hashes shown).
+  - `agorai key revoke --agent <name>` — removes an agent's key.
+  - `DatabaseAuthProvider` (DB lookup) + `ChainAuthProvider` (DB first → config fallback).
+  - `saltEnv` config option — read salt from environment variable (recommended over plaintext in config).
+  - Internal agents (`internal:*` hash) no longer overwrite real DB-managed key hashes on `registerAgent`.
+  - Startup warnings for plaintext keys in config + deprecation notice for `apiKeys`.
+- **`toolGroups` / `toolProfile` in agents table** — DB-managed agents store their tool config directly in the DB (schema migration auto-applied).
+- **`getAgentByName()` store method** — lookup agent by name (for CLI key management).
+- 21 new tests (tool profiles: 14, auth: 7). Total: 540 server tests.
+
+### Changed
+- **FEATURES.md restructured** into 3 sections: To Deliver MVP / Already Delivered / To Deliver Post-MVP. Premium features moved to ROADMAP-IDEAS.md (gitignored). FEATURES.md removed from .gitignore — now published on GitHub.
+
+## 2026-03-11 — Keryx Modular Architecture & Agent Error Reporting
+
+### Added
+- **Agent error reporting**: Agents report errors to Keryx via `agent-error` status messages. Keryx removes errored agents from active rounds immediately.
+- **Offline whisper dedup**: When a human @mentions an offline agent, the system whispers a warning — but only once per 5 minutes per agent/conversation combo (prevents spam).
+- **Agent Roles section** in FEATURES.md (planned — skills extension with `category: role` tag).
+
+### Changed
+- **Keryx modular mode architecture**: Refactored `module.ts` into core dispatcher + mode handlers.
+  - `mode-interface.ts` — `ConversationModeHandler` + `ModeContext` interfaces.
+  - `modes/ecclesia.ts` — Round lifecycle, escalation, synthesis, interrupts (extracted from module.ts).
+  - `modes/socratic.ts` — Turn queue, skip-on-timeout, cycle-based (skeleton, untested).
+  - `commands.ts` — Added `mode` command for runtime switching (`@keryx mode socratic|ecclesia`).
+
 ## 2026-03-05 — Keryx Auto-Round Progression & GUI Slash Commands
 
 ### Added
