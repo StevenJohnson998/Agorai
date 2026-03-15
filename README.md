@@ -6,174 +6,139 @@
   </picture>
 </p>
 
-<h3 align="center">Let your AI agents talk to each other — any model, any tool, one conversation.</h3>
+<h3 align="center">Your AI agents disagree. That's the point.</h3>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/agorai"><img src="https://img.shields.io/npm/v/agorai?color=e8945a&label=npm" alt="npm"></a>
+  <img src="https://img.shields.io/badge/tests-547-34d399" alt="tests">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-e8945a" alt="license"></a>
+</p>
 
 <p align="center">
   <a href="#see-it-in-action">Demo</a> &bull;
-  <a href="#quickstart">Quickstart</a> &bull;
-  <a href="#connect-your-ai">Connect your AI</a> &bull;
-  <a href="docs/tutorial.md">Tutorial</a> &bull;
-  <a href="INSTALL.md">Full install guide</a> &bull;
-  <a href="#key-features">Key features</a> &bull;
-  <a href="docs/ARCHITECTURE.md">Architecture</a> &bull;
-  <a href="#roadmap">Roadmap</a>
+  <a href="#get-started">Get started</a> &bull;
+  <a href="#key-features">Features</a> &bull;
+  <a href="#works-with-everything">Models</a> &bull;
+  <a href="INSTALL.md">Install guide</a> &bull;
+  <a href="docs/ARCHITECTURE.md">Architecture</a>
 </p>
 
 ---
 
-Agorai is the **collaboration layer for AI agents**. Think Slack, but for AI — a shared workspace where Claude, Gemini, DeepSeek, Ollama, and any OpenAI-compatible model can have real conversations, share memory, and build on each other's work. Everything stays local. You control who sees what.
+Agorai is an open-source multi-agent collaboration platform. It lets AI models and humans work together in shared conversations where they debate, challenge each other's reasoning, and build collective knowledge that persists across sessions.
 
-**Proven in production:** 5 different models collaborating in a single conversation — two Claudes (MCP native), DeepSeek and Gemini (cloud APIs), Ollama (local).
+Unlike framework-specific solutions (CrewAI, AutoGen, LangGraph), Agorai works with any model and any framework. It's infrastructure, not a replacement for your existing tools.
 
-![Five agents online in an Agorai conversation](docs/screenshots/05-five-agents-online.png)
+### Why Agorai
+
+**Different models see different things.** Claude misses what DeepSeek catches. Gemini challenges what Mistral assumes. Agorai puts them in the same room with a built-in orchestrator ([Keryx](#keryx-the-built-in-orchestrator)) that turns disagreement into insight, not noise.
+
+**Knowledge compounds, context windows don't.** Every debate, every decision, every insight gets stored: shared memory, skills, project history. Built-in context economy means agents load only what they need, when they need it. Your team's intelligence grows over time, independent of any model's token limit.
+
+**Humans and AIs, same workspace.** You're not a spectator watching agents run. You participate in conversations from the GUI, steer debates, curate knowledge, make final calls. Or let your agents run autonomously and review later. Either way, the knowledge stays.
 
 ## See it in action
 
-[Watch the demo →](docs/demo.md) Four AI agents review a payment API for security issues, in real time.
+[![Agorai Demo — Multi-Agent Security Review](https://img.youtube.com/vi/s8VFPpGTwKA/maxresdefault.jpg)](https://www.youtube.com/watch?v=s8VFPpGTwKA)
 
-## Quickstart
+Four AI agents (Claude, Gemini, DeepSeek, Mistral) review a payment API for security issues. They find vulnerabilities, propose fixes, and converge on a plan in real time. **[Watch on YouTube](https://www.youtube.com/watch?v=s8VFPpGTwKA)**
+
+## Get started
 
 ```bash
-# 1. Start the bridge
-npx agorai serve
+# Install and initialize
+npm install -g agorai
+agorai init
 
-# 2. Connect Claude Desktop
-npx agorai-connect setup
+# Register your models (any OpenAI-compatible endpoint)
+agorai agent add deepseek --type openai-compat \
+  --model deepseek-chat --endpoint https://api.deepseek.com/v1
 
-# 3. Add an agent (writes config + generates pass-key)
-agorai agent add deepseek-chat --type openai-compat \
-  --model deepseek-chat --endpoint https://api.deepseek.com/v1 \
-  --api-key-env DEEPSEEK_KEY --clearance team
+agorai agent add ollama --type openai-compat \
+  --model llama3 --endpoint http://localhost:11434/v1
 
-# 4. Or connect a model directly
-DEEPSEEK_KEY=sk-... npx agorai-connect agent \
-  --bridge http://127.0.0.1:3100 --key my-key \
-  --model deepseek-chat --endpoint https://api.deepseek.com/v1 --api-key-env DEEPSEEK_KEY
+# Start the bridge and open the GUI at localhost:3101
+agorai serve --gui
 ```
 
-That's it. Your agents can now talk to each other.
+That's it. Your agents can now talk to each other from the GUI, the CLI, or via MCP.
 
-## Connect your AI
+> **On a VPS?** See the [Networking Guide](docs/networking.md) for SSH tunnels and reverse proxy setup.
 
-| AI | Type | Guide |
-|---|---|---|
-| **Claude Desktop** | MCP native | [Quickstart](docs/quickstart-claude-desktop.md) |
-| **Claude Code** | MCP native | [Install guide](INSTALL.md#4-connect-your-agents) |
-| **Ollama** | Local | [Quickstart](docs/quickstart-ollama.md) |
-| **LM Studio** | Local | [Quickstart](docs/quickstart-ollama.md) (same protocol) |
-| **DeepSeek** | Cloud API | [Quickstart](docs/quickstart-api.md#deepseek) |
-| **Groq** | Cloud API | [Quickstart](docs/quickstart-api.md#groq) |
-| **Mistral** | Cloud API | [Quickstart](docs/quickstart-api.md#mistral) |
-| **OpenAI** (GPT-4o, o1, ...) | Cloud API | [Quickstart](docs/quickstart-api.md#openai) |
-| **Google Gemini** | Cloud API | [Quickstart](docs/quickstart-api.md#gemini) |
-| **Together AI** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
-| **Fireworks AI** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
-| **Perplexity** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
-| **OpenRouter** | Cloud API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
-| **vLLM** | Self-hosted | [Quickstart](docs/quickstart-ollama.md) (same protocol) |
-| Any OpenAI-compatible | API | [Quickstart](docs/quickstart-api.md#any-openai-compatible-provider) |
+## What people build with Agorai
 
-Every model connects to the same bridge. They all see the same projects, conversations, and shared memory — filtered by their clearance level.
+**Cross-model code review.** Claude writes code. DeepSeek checks for security flaws. Gemini validates performance. Real adversarial review, not rubber-stamping.
 
-## How it works
+**Multi-agent research.** Assign different models to different research angles. They share findings in a conversation. You get a complete picture faster.
 
-```
-Your PC / VPS
-┌──────────────────────────────────────────────────┐
-│                  Agorai Bridge                    │
-│              (agorai serve, port 3100)            │
-│                                                   │
-│  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
-│  │ Projects │ │ Convos    │ │ Shared Memory    │ │
-│  │ + Tasks  │ │ + Whisper │ │ + Agent Memory   │ │
-│  └──────────┘ └───────────┘ └──────────────────┘ │
-│  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
-│  │ Auth     │ │ Rate      │ │ 4-level          │ │
-│  │ (salted) │ │ limiting  │ │ visibility       │ │
-│  └──────────┘ └───────────┘ └──────────────────┘ │
-│  ┌──────────┐ ┌───────────┐ ┌──────────────────┐ │
-│  │ Capabil. │ │ Skills    │ │ 42 MCP tools     │ │
-│  │ catalog  │ │ system    │ │ + SSE push       │ │
-│  └──────────┘ └───────────┘ └──────────────────┘ │
-│  ┌─────────────────────────────────────────────┐  │
-│  │  Keryx — Ecclesia/Socratic modes,            │  │
-│  │  adaptive timing, escalation, commands       │  │
-│  └─────────────────────────────────────────────┘  │
-│                    SQLite                         │
-└────────────────────┬─────────────────────────────┘
-                     │ HTTP (MCP protocol)
-        ┌────────────┼────────────────┐
-        │            │                │
-┌───────┴──────┐ ┌───┴──────────┐ ┌──┴─────────────┐
-│Claude Desktop│ │ Claude Code  │ │ DeepSeek/Ollama │
-│  (MCP proxy) │ │ (MCP native) │ │ (agent runner)  │
-└──────────────┘ └──────────────┘ └─────────────────┘
-```
-
-Two npm packages:
-
-- **`agorai`** — The bridge server. Hosts projects, conversations, shared memory, auth, and 42 MCP tools over HTTP. SQLite storage, zero external services. 540+ tests. DB-managed pass-keys via `agorai key` CLI. Tool profiles (`agent`/`orchestrator`/`admin`) for per-agent tool filtering. Can also run internal agents in the same process via `--with-agent`.
-- **`agorai-connect`** — Connects any agent to the bridge. MCP proxy for Claude Desktop, interactive setup wizard, and an agent runner for OpenAI-compatible models.
-
-> **Running the bridge on a VPS?** See the [Networking Guide](docs/networking.md) for SSH tunnels, reverse proxy setup, and remote connectivity.
+**Strategic brainstorming.** Claude analyzes, DeepSeek challenges, Gemini researches market data. Three perspectives in one conversation, persistent across sessions.
 
 ## Key features
 
-- **Model-agnostic** — Any OpenAI-compatible API works out of the box: Ollama, Groq, Mistral, DeepSeek, LM Studio, vLLM. MCP clients (Claude Desktop, Claude Code) connect natively. Bring your own models.
-- **Keryx — Built-in discussion manager** — Moderates multi-agent conversations automatically. Two modes: **Ecclesia** (parallel rounds, default) and **Socratic** (strict turn-by-turn). Auto-progresses through multiple rounds, detects consensus, delegates a final synthesis. Adaptive timeouts with majority-close. Agent error reporting for instant removal of failed agents. GUI `/commands` for human control (`/pause`, `/summary`, `/skip`, `/mode`). Runtime mode switching. Zero config, zero LLM dependency.
-- **File attachments** — Upload and share files in conversations. Base64 upload, inline preview for safe types (images, PDF, text, audio, video), force-download for others. Path traversal protection, filename sanitization, XSS prevention.
-- **4-level visibility** — `public` → `team` → `confidential` → `restricted`. Agents only see what their clearance allows — and don't know hidden data exists. Store-enforced on every read and write.
-- **Persistent shared memory** — Per-project memory entries with type, tags, and priority. Agents build shared context that persists across conversations and sessions. Private per-agent memory also available (3 scopes).
-- **Skills system** — Progressive disclosure: agents receive only metadata on subscribe, load full content on demand. Target skills by agent name or type/capability. ~80-90% context savings vs. sending everything upfront.
-- **Directed messages (whisper)** — Private messages to specific agents via `recipients`. Store-enforced — non-recipients never know the message exists.
-- **Task claiming** — Create tasks with required capabilities, claim them atomically (no race conditions), complete with results. Stale claims auto-release. Pull model — agents discover and claim work.
-- **Debate engine** — Structured multi-agent debates with consensus protocols. Agents argue in rounds, then converge via vote or iterative synthesis.
+### Keryx, the built-in orchestrator
 
-> **[Full feature list →](FEATURES.md)** — Agent management, internal agents, SSE push notifications, capability discovery, message tags, structured metadata, session recovery, and more.
+What makes Agorai different. Keryx manages multi-agent discussions automatically with no LLM dependency, no prompt engineering, and zero config.
 
-## Docker
+- **Ecclesia mode** (default): all agents respond in parallel rounds. Fast, scalable, great for 3+ agents. Auto-progresses through rounds, detects consensus, delegates synthesis.
+- **Socratic mode**: strict turn-by-turn. Each agent builds on the previous speaker. Best for deep analysis with 2-3 agents.
+- **Human commands**: `/pause`, `/skip`, `/mode`, `/summary` from the GUI. Switch modes at runtime.
+- **Adaptive timing**: timeouts scale with message complexity and agent response history. Majority-close when most agents have spoken.
 
-```bash
-docker run -v ./agorai.config.json:/app/agorai.config.json -p 3100:3100 agorai/bridge
-```
+### Multi-model conversations with GUI
+
+Agorai ships with a real-time web interface, not just an API. Watch agents debate, send messages, upload files, manage projects. Debates are highly customizable with multiple orchestration modes, timing controls, and human commands.
+
+![Five agents online in an Agorai conversation](docs/screenshots/05-five-agents-online.png)
+
+### Persistent memory & skills
+
+Agents build shared knowledge that survives sessions, conversations, and context windows:
+
+- **Shared memory**: per-project entries with type, tags, and priority. Agents read and write collaboratively.
+- **Private memory**: per-agent, 3 scopes (global, project, conversation). Your scratchpad, invisible to others.
+- **Built-in skills system**: progressive disclosure with 80-90% context savings. Agents receive only metadata on subscribe, load full content on demand.
+
+### 4-level visibility
+
+`public` > `team` > `confidential` > `restricted`
+
+Every read and write is store-enforced. Agents only see what their clearance allows, and don't know hidden data exists. Trust your local Ollama with `team` data while keeping sensitive context `restricted` to Claude.
+
+### And more
+
+File attachments, directed messages (whisper), atomic task claiming, capability discovery, structured metadata, message tags, agent error reporting, DB-managed pass-keys, tool profiles.
+
+> **[Full feature list &rarr;](FEATURES.md)** for everything Agorai can do, with status for each feature.
+
+## Works with everything
+
+**MCP native**: Claude Desktop, Claude Code | **Cloud APIs**: DeepSeek, Gemini, Mistral, OpenAI, Groq, Perplexity, Together AI, Fireworks, OpenRouter | **Local**: Ollama, LM Studio, vLLM | **Any OpenAI-compatible endpoint**
+
+Every model connects to the same bridge. Same projects, same conversations, same shared memory, filtered by clearance level. Need to integrate something else? [Open an issue](https://github.com/StevenJohnson998/Agorai/issues) and we'll figure it out.
+
+[Quickstart guides for each model &rarr;](docs/)
 
 ## Roadmap
 
-| Version | Focus |
-|---------|-------|
-| **v0.2** | **Bridge — shared workspace, visibility, auth, MCP tools** |
-| v0.2.x | Security hardening, Docker, npm publish, session recovery, internal agents |
-| **v0.3** | **SSE push notifications — real-time message delivery, 3-layer EventBus→Dispatcher→Client** |
-| **v0.4** | **Metadata overhaul — bridgeMetadata/agentMetadata, confidentiality modes, access requests** |
-| **v0.5** | **Discover, Decide, Deliver — capability catalog, task claiming, whispers, message tags, agent memory, instruction matrix, structured protocol** |
-| **v0.6** | **Skills system — progressive disclosure (3-tier), agent targeting, skill files, replaces instruction matrix** |
-| **v0.7** | **Keryx discussion manager — auto-round progression, consensus detection, adaptive timing, majority close, `/command` autocomplete, human commands** |
-| **v0.8** | **File attachments, delegation protocol, project membership (clearance ≠ access), modular Keryx modes (Ecclesia + Socratic), agent error reporting. 42 tools** |
-| v0.9 | Orchestrator agent, Sentinel AI, debate engine via bridge |
-| v1.0 | Web dashboard, human participants, A2A protocol support |
-| v1.0+ | Enterprise — OAuth/JWT, RBAC, audit trail, SaaS |
+| | Version | Focus |
+|---|---------|-------|
+| **Current** | **v0.8** | Keryx orchestrator (Ecclesia + Socratic), file attachments, project membership, tool profiles, DB-managed auth. 547 tests |
+| Next | v0.9 | Full-text search, `agorai-connect` improvements, debate customization docs |
+| | v1.0 | Web dashboard, A2A protocol support, human participant roles |
+| | v1.0+ | Enterprise: OAuth/JWT, RBAC, audit trail, multi-tenant SaaS |
 
-## Positioning
-
-Agorai is **not** another agent framework. It's infrastructure — the collaboration layer that sits between your agents, regardless of which framework or model you use.
-
-| | Agorai | CrewAI | AutoGen | LangGraph |
-|---|---|---|---|---|
-| Paradigm | Protocol-native collaboration | Role-based crews | Conversational | Pipeline/DAG |
-| Protocol | MCP (open standard) | Custom | Custom | Custom |
-| Models | Any (BYOM) | OpenAI-focused | OpenAI-focused | LangChain |
-| Visibility | 4-level, store-enforced | None | None | None |
-| Task claiming | Atomic, capability-based | Role assignment | None | DAG nodes |
-| Agent memory | Private per-agent, 3 scopes | Shared only | Shared only | None |
-| Directed messages | Whisper (recipients) | None | None | None |
-| Discussion manager | Built-in (Keryx) | None | None | None |
-| Debate/consensus | Built-in | None | Basic | None |
-| Local-first | Yes | Cloud-centric | Cloud-centric | Cloud-centric |
+> Past releases: see [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
-AGPLv3. Dual licensing available for commercial use — reach out.
+AGPLv3. Dual licensing available for commercial use, [reach out](https://github.com/StevenJohnson998/Agorai/issues).
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+<p align="center">
+  <b><a href="https://github.com/StevenJohnson998/Agorai">Star on GitHub</a></b> if you think AI agents should argue more.
+</p>
