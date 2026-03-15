@@ -41,11 +41,17 @@ export interface Round {
   synthesisMessageId?: string;
 }
 
+// --- Conversation mode ---
+
+export type ConversationMode = "socratic" | "ecclesia" | "wild-agora";
+
 // --- Conversation state ---
 
 export interface ConversationState {
   conversationId: string;
   projectId: string;
+  /** Active conversation mode. */
+  mode: ConversationMode;
   currentRound: Round | null;
   roundHistory: Round[];
   /** Timestamp of last processed message (bootstrap marker). */
@@ -56,6 +62,29 @@ export interface ConversationState {
   disabled: boolean;
   /** Rolling message window for pattern detection. */
   messageWindow: WindowMessage[];
+  /** Socratic mode state (only used when mode === "socratic"). */
+  socratic?: SocraticState;
+}
+
+// --- Socratic mode state ---
+
+export interface SocraticState {
+  /** Ordered list of agent IDs to take turns. */
+  turnQueue: string[];
+  /** Index of the current speaker in turnQueue. */
+  currentTurnIndex: number;
+  /** Topic of the current discussion. */
+  topic: string;
+  /** Message ID that triggered this discussion. */
+  triggerMessageId: string;
+  /** Whether we're waiting for an agent to respond. */
+  awaitingResponse: boolean;
+  /** Timeout handle for the current turn. */
+  turnTimeoutHandle?: ReturnType<typeof setTimeout>;
+  /** Number of completed full cycles through all agents. */
+  completedCycles: number;
+  /** Agents who passed ([NO_RESPONSE]) in the current cycle. */
+  passedAgents: Set<string>;
 }
 
 export interface WindowMessage {

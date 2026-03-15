@@ -9,8 +9,16 @@ export type {
   RoundStatus,
   Round,
   ConversationState,
+  ConversationMode,
+  SocraticState,
   AgentProfile,
   KeryxConfig,
   InterventionType,
   WindowMessage,
 } from "./types.js";
+export type {
+  ConversationModeHandler,
+  ModeContext,
+} from "./mode-interface.js";
+export { EcclesiaMode } from "./modes/ecclesia.js";
+export { SocraticMode } from "./modes/socratic.js";
