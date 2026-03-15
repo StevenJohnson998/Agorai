@@ -1106,3 +1106,272 @@ describe("Phase 7 — Auto-Round Progression", () => {
     await keryx.stop();
   });
 });
+
+// --- Phase 8: Socratic Mode ---
+
+describe("Phase 8 — Socratic Mode", () => {
+  let keryx: KeryxModule;
+  let ac: AbortController;
+
+  beforeEach(() => {
+    ac = new AbortController();
+  });
+
+  afterEach(async () => {
+    ac.abort();
+    await new Promise(r => setTimeout(r, 50));
+  });
+
+  it("starts a discussion when a human sends a message", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("alpha");
+    const agent2 = await createAgent("beta");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    // Human sends a message
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "What are the pros and cons of GraphQL?",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    expect(state.socratic).toBeDefined();
+    expect(state.socratic!.turnQueue.length).toBe(2);
+    expect(state.socratic!.awaitingResponse).toBe(true);
+    expect(state.socratic!.completedCycles).toBe(0);
+
+    // Keryx should have sent an intro + first turn call
+    const messages = await store.getMessages(conv.id, keryx.getKeryxAgentId()!);
+    const keryxMessages = messages.filter(m => m.fromAgent === keryx.getKeryxAgentId());
+    expect(keryxMessages.length).toBeGreaterThanOrEqual(2); // intro + turn call
+
+    await keryx.stop();
+  });
+
+  it("uses alphabetical turn order", async () => {
+    const human = await createAgent("human", "human");
+    // Names chosen so alphabetical order is clear: alpha < beta < gamma
+    const agent1 = await createAgent("gamma");
+    const agent2 = await createAgent("alpha");
+    const agent3 = await createAgent("beta");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id, agent3.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Discuss testing strategies",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    // Turn queue should be alphabetical: alpha, beta, gamma
+    const queueNames: string[] = [];
+    for (const id of state.socratic!.turnQueue) {
+      const agent = await store.getAgent(id);
+      queueNames.push(agent!.name);
+    }
+    expect(queueNames).toEqual(["alpha", "beta", "gamma"]);
+
+    await keryx.stop();
+  });
+
+  it("advances turn when expected agent responds", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("alpha");
+    const agent2 = await createAgent("beta");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Discuss error handling",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    const firstAgentId = state.socratic!.turnQueue[0];
+    expect(state.socratic!.currentTurnIndex).toBe(0);
+
+    // First agent responds
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: firstAgentId,
+      content: "I recommend using Result types.",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    // Turn should advance to second agent
+    expect(state.socratic!.currentTurnIndex).toBe(1);
+    expect(state.socratic!.awaitingResponse).toBe(true);
+
+    await keryx.stop();
+  });
+
+  it("marks agent as passed on [NO_RESPONSE]", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("alpha");
+    const agent2 = await createAgent("beta");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Quick question",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    const firstAgentId = state.socratic!.turnQueue[0];
+
+    // First agent passes
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: firstAgentId,
+      content: "[NO_RESPONSE]",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    expect(state.socratic!.passedAgents.has(firstAgentId)).toBe(true);
+
+    await keryx.stop();
+  });
+
+  it("concludes when all agents pass", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("alpha");
+    const agent2 = await createAgent("beta");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Any thoughts?",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    const [firstId, secondId] = state.socratic!.turnQueue;
+
+    // First agent passes
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: firstId,
+      content: "[NO_RESPONSE]",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    // Second agent passes
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: secondId,
+      content: "[NO_RESPONSE]",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    // Discussion should be concluded — socratic state cleaned up
+    expect(state.socratic).toBeUndefined();
+
+    // Conclusion message should exist
+    const messages = await store.getMessages(conv.id, keryx.getKeryxAgentId()!);
+    const keryxMessages = messages.filter(m => m.fromAgent === keryx.getKeryxAgentId());
+    const conclusionMsg = keryxMessages.find(m => m.content.includes("Discussion concluded"));
+    expect(conclusionMsg).toBeDefined();
+
+    await keryx.stop();
+  });
+
+  it("does not start on non-human message", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("alpha");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    // Agent sends a message (not human)
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      content: "I have something to say",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    const state = keryx.getState(conv.id)!;
+    expect(state.socratic).toBeUndefined();
+
+    await keryx.stop();
+  });
+
+  it("cleanup clears socratic state", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("alpha");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "socratic");
+
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Start a discussion",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const state = keryx.getState(conv.id)!;
+    expect(state.socratic).toBeDefined();
+
+    // Import and call cleanup directly via the mode handler
+    const { SocraticMode } = await import("../keryx/modes/socratic.js");
+    const mode = new SocraticMode();
+    mode.cleanup(state);
+
+    expect(state.socratic).toBeUndefined();
+
+    await keryx.stop();
+  });
+});

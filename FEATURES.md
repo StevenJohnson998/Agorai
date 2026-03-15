@@ -20,7 +20,7 @@
 | Feature | Description | Status |
 |---------|-------------|--------|
 | **Loop/drift detection fix** | Currently muted due to false positives. Needs better thresholds or different approach | Planned |
-| **Socratic mode tests** | Socratic mode is implemented but has 0 tests. Add TNR tests for stability | Planned |
+| **Socratic mode tests** | 7 tests covering discussion start, turn order, advance, [NO_RESPONSE], conclusion, cleanup | Done (v0.8) |
 
 ### GUI
 
@@ -206,7 +206,7 @@ Built-in rule-based orchestrator. Registers as type `orchestrator`. Manages proc
 | Human commands | `@keryx pause/resume/skip/extend/status/interrupt/enable/disable/summary` | Done (v0.7) |
 | `/command` autocomplete | GUI slash commands with dropdown autocomplete, keyboard nav, auto-send | Done (v0.7) |
 | Interrupt flow | Cancel timers, wait for human follow-up, re-open round with context | Done (v0.7) |
-| Conversation modes | Modular architecture: Ecclesia (parallel rounds, default) + Socratic (turn-by-turn, experimental) | Done (v0.7) |
+| Conversation modes | Modular architecture: Ecclesia (parallel rounds, default) + Socratic (turn-by-turn, tested) | Done (v0.7) |
 | Event-driven | Subscribes to `store.eventBus.onMessage()` — instant reaction, not poll-based | Done (v0.7) |
 
 ### File Attachments & Delegation Protocol (v0.8)

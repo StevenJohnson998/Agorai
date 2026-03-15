@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-03-15 — Tool Profiles & Config Isolation
+## 2026-03-15 — Tool Profiles, Config Isolation & Orchestrator Type
 
 ### Added
 - **Tool profiles (D12)**: 3 predefined tool allowlists — `agent` (11 tools), `orchestrator` (20), `admin` (42). `toolProfile` in config takes precedence over `toolGroups`. MCP instructions adapt to profile (skip irrelevant sections). `llms.txt` updated for LLM discovery.
@@ -15,8 +15,11 @@
 - **`toolGroups` / `toolProfile` in agents table** — DB-managed agents store their tool config directly in the DB (schema migration auto-applied).
 - **`getAgentByName()` store method** — lookup agent by name (for CLI key management).
 - 21 new tests (tool profiles: 14, auth: 7). Total: 540 server tests.
+- **Socratic mode tests**: 7 tests covering discussion lifecycle — start on human message, alphabetical turn order, turn advance on response, [NO_RESPONSE] pass tracking, all-pass conclusion, non-human rejection, cleanup. Total: 547 server tests.
 
 ### Changed
+- **Agent type `moderator` → `orchestrator`**: Keryx now registers as type `orchestrator`. Prepares for future AI-based orchestrator (premium tier). Updated across all code, tests, and docs.
+- **Subscription cascade fix**: Access request approval no longer auto-adds the requesting agent as project member. Only conversation creators and orchestrator-type agents get auto-added, preventing unwanted subscription cascade to all project conversations.
 - **FEATURES.md restructured** into 3 sections: To Deliver MVP / Already Delivered / To Deliver Post-MVP. Premium features moved to ROADMAP-IDEAS.md (gitignored). FEATURES.md removed from .gitignore — now published on GitHub.
 
 ## 2026-03-11 — Keryx Modular Architecture & Agent Error Reporting
