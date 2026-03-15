@@ -84,6 +84,10 @@ const transports = new Map<string, StreamableHTTPServerTransport>();
 /** Reverse index: agentId → set of sessionIds (one agent can have multiple sessions). */
 const agentSessions = new Map<string, Set<string>>();
 
+/** Dedup: offline whisper — key = "convId:agentId" → last whisper timestamp. Prevents spam on @mention of offline agents. */
+const offlineWhisperDedup = new Map<string, number>();
+const OFFLINE_WHISPER_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 // --- Rate limiter (sliding window per agent) ---
 
 interface RateBucket {
@@ -1654,15 +1658,30 @@ async function dispatchMessageNotification(store: IStore, event: MessageCreatedE
       }
 
       if (offlineNames.length > 0) {
-        const names = offlineNames.map((n) => `@${n}`).join(", ");
-        const plural = offlineNames.length > 1;
-        await store.sendMessage({
-          conversationId: message.conversationId,
-          fromAgent: systemAgentId,
-          content: `⚠️ ${names} ${plural ? "are" : "is"} currently offline — do not wait for a reply.`,
-          type: "status",
-          recipients: [message.fromAgent],
-        });
+        // Dedup: skip if we already whispered about these agents in this conversation recently
+        const dedupKey = `${message.conversationId}:${offlineNames.sort().join(",")}`;
+        const lastWhisper = offlineWhisperDedup.get(dedupKey);
+        const shouldWhisper = !lastWhisper || (now - lastWhisper > OFFLINE_WHISPER_COOLDOWN_MS);
+
+        if (shouldWhisper) {
+          offlineWhisperDedup.set(dedupKey, now);
+          const names = offlineNames.map((n) => `@${n}`).join(", ");
+          const plural = offlineNames.length > 1;
+          await store.sendMessage({
+            conversationId: message.conversationId,
+            fromAgent: systemAgentId,
+            content: `⚠️ ${names} ${plural ? "are" : "is"} currently offline — do not wait for a reply.`,
+            type: "status",
+            recipients: [message.fromAgent],
+          });
+        }
+
+        // Periodic cleanup (every 100 entries)
+        if (offlineWhisperDedup.size > 100) {
+          for (const [key, ts] of offlineWhisperDedup) {
+            if (now - ts > OFFLINE_WHISPER_COOLDOWN_MS) offlineWhisperDedup.delete(key);
+          }
+        }
       }
     }
   }

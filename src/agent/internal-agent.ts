@@ -431,6 +431,23 @@ async function invokeAndSend(
       return "rate_limited";
     }
     log.error(`Adapter/send failed in ${conversationId}: ${errMsg}`);
+
+    // Notify Keryx (and other listeners) that this agent failed to respond.
+    // This allows Keryx to remove the agent from the current round immediately
+    // instead of waiting for the full timeout.
+    try {
+      const shortErr = errMsg.length > 120 ? errMsg.slice(0, 120) + "..." : errMsg;
+      await store.sendMessage({
+        conversationId,
+        fromAgent: agentId,
+        type: "status",
+        content: `[agent-error] Failed to generate response: ${shortErr}`,
+        tags: ["agent-error"],
+      });
+    } catch (notifyErr) {
+      log.error(`Failed to send error notification: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`);
+    }
+
     return "error";
   }
 }

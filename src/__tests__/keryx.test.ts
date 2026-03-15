@@ -110,6 +110,12 @@ describe("Phase 1 — Types & Config", () => {
 
 // --- Phase 2: Core State Machine ---
 
+/** Helper: set a conversation's mode after Keryx discovers it. */
+function setMode(keryx: KeryxModule, convId: string, mode: "socratic" | "ecclesia" | "wild-agora") {
+  const state = keryx.getState(convId);
+  if (state) state.mode = mode;
+}
+
 describe("Phase 2 — Core State Machine", () => {
   let keryx: KeryxModule;
   let ac: AbortController;
@@ -158,6 +164,7 @@ describe("Phase 2 — Core State Machine", () => {
     const keryxId = keryx.getKeryxAgentId()!;
     // Trigger discovery manually
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human sends a message
     await store.sendMessage({
@@ -189,6 +196,7 @@ describe("Phase 2 — Core State Machine", () => {
 
     await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human triggers a round
     await store.sendMessage({
@@ -223,6 +231,7 @@ describe("Phase 2 — Core State Machine", () => {
 
     await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human triggers
     await store.sendMessage({
@@ -296,6 +305,148 @@ describe("Phase 2 — Core State Machine", () => {
 
     const state = keryx.getState(conv.id);
     expect(state!.currentRound).toBeNull();
+
+    await keryx.stop();
+  });
+
+  it("removes errored agent from round and completes early", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const agent2 = await createAgent("agent2");
+    const { conv } = await setupConversation([human.id, agent1.id, agent2.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
+
+    // Human triggers a round — both agent1 and agent2 expected
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Test question for error reporting",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    let state = keryx.getState(conv.id);
+    expect(state!.currentRound).not.toBeNull();
+    expect(state!.currentRound!.expectedAgents.has(agent1.id)).toBe(true);
+    expect(state!.currentRound!.expectedAgents.has(agent2.id)).toBe(true);
+
+    // Agent1 reports an error via agent-error status message
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      type: "status",
+      content: "[agent-error] Failed to generate response: API rate limit exceeded",
+      tags: ["agent-error"],
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    // Agent1 should be removed from expected
+    state = keryx.getState(conv.id);
+    expect(state!.currentRound!.expectedAgents.has(agent1.id)).toBe(false);
+
+    // Agent2 responds normally — round should complete
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent2.id,
+      content: "Here is my answer.",
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    state = keryx.getState(conv.id);
+    // Round 1 should be closed (moved to history)
+    expect(state!.roundHistory.length).toBeGreaterThanOrEqual(1);
+    expect(state!.roundHistory[0].status).toBe("closed");
+
+    await keryx.stop();
+  });
+
+  it("completes round immediately when all agents error out", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
+
+    // Human triggers a round
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Test question",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    let state = keryx.getState(conv.id);
+    expect(state!.currentRound).not.toBeNull();
+
+    // Agent1 errors out — the only expected agent
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent1.id,
+      type: "status",
+      content: "[agent-error] Failed to generate response: 500 Internal Server Error",
+      tags: ["agent-error"],
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    state = keryx.getState(conv.id);
+    // Round 1 should be closed and moved to history
+    expect(state!.roundHistory.length).toBeGreaterThanOrEqual(1);
+    expect(state!.roundHistory[0].status).toBe("closed");
+    // Auto-progression opens Round 2 (same agents re-enrolled from subscribers)
+    expect(state!.currentRound).not.toBeNull();
+    expect(state!.currentRound!.id).toBe(2);
+
+    await keryx.stop();
+  });
+
+  it("ignores agent-error from agents not in the round", async () => {
+    const human = await createAgent("human", "human");
+    const agent1 = await createAgent("agent1");
+    const agent2 = await createAgent("agent2");
+    const { conv } = await setupConversation([human.id, agent1.id]);
+    // agent2 is NOT subscribed to this conversation
+
+    keryx = new KeryxModule(store, defaultKeryxConfig, ac.signal);
+    await keryx.start();
+
+    await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
+    await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
+
+    // Human triggers a round
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: human.id,
+      content: "Test question",
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    let state = keryx.getState(conv.id);
+    const expectedBefore = state!.currentRound!.expectedAgents.size;
+
+    // agent2 sends error — should be ignored (not in round)
+    await store.sendMessage({
+      conversationId: conv.id,
+      fromAgent: agent2.id,
+      type: "status",
+      content: "[agent-error] Failed",
+      tags: ["agent-error"],
+    });
+    await new Promise(r => setTimeout(r, 200));
+
+    state = keryx.getState(conv.id);
+    // Expected agents count unchanged
+    expect(state!.currentRound!.expectedAgents.size).toBe(expectedBefore);
 
     await keryx.stop();
   });
@@ -765,6 +916,7 @@ describe("Phase 7 — Auto-Round Progression", () => {
 
     await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human triggers Round 1
     await store.sendMessage({
@@ -810,6 +962,7 @@ describe("Phase 7 — Auto-Round Progression", () => {
 
     await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human triggers Round 1
     await store.sendMessage({
@@ -851,6 +1004,7 @@ describe("Phase 7 — Auto-Round Progression", () => {
 
     await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human triggers Round 1
     await store.sendMessage({
@@ -901,6 +1055,7 @@ describe("Phase 7 — Auto-Round Progression", () => {
 
     await store.subscribe(conv.id, keryx.getKeryxAgentId()!);
     await (keryx as any).discoverConversations();
+    setMode(keryx, conv.id, "ecclesia");
 
     // Human triggers Round 1
     await store.sendMessage({

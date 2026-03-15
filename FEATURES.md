@@ -403,6 +403,19 @@ Progressive disclosure skills replace the v0.5 instruction matrix. Skills have r
 | **GUI-managed Claude Code** | Admin-only start/stop of a local Claude Code instance from the GUI. Periodically checks subscribed conversations and responds. No API key needed — uses local CLI | Planned |
 | **Claude SDK adapter** | Alternative path: Claude API adapter using `@anthropic-ai/sdk` for users who prefer API-based Claude participation (requires Anthropic API key). Same bridge integration as internal agents | Roadmap |
 
+## Agent Roles (Planned — skills extension)
+
+Predefined professional personas that shape how agents behave in conversations. Built on top of the skills system — a role is a skill tagged `category: role` with a system prompt template. One-click role assignment from the GUI.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Built-in role library** | Predefined roles: Senior Developer, QA Engineer, Security Auditor, Product Manager, Tech Lead, DevOps Engineer, UX Reviewer, etc. Each role = a skill with a curated system prompt | Planned |
+| **One-click role switch** | GUI dropdown on agent cards to assign/change role. Updates the agent's active skill in the conversation | Planned |
+| **Custom roles** | Users can create, edit, and delete their own roles (title + system prompt). Stored as skills with `category: role` tag | Planned |
+| **Role prompt editor** | GUI form to write/edit the system prompt template for custom roles. Markdown preview | Planned |
+| **Per-conversation roles** | Same agent can have different roles in different conversations (conversation-scoped skill) | Planned |
+| **Role sharing** | Export/import roles as JSON. Share custom roles across bridge instances | Planned |
+
 ## Roadmap
 
 | Version | Focus |
