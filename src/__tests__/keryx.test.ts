@@ -140,7 +140,7 @@ describe("Phase 2 — Core State Machine", () => {
     const agent = await store.getAgent(keryxId!);
     expect(agent).not.toBeNull();
     expect(agent!.name).toBe("keryx");
-    expect(agent!.type).toBe("moderator");
+    expect(agent!.type).toBe("orchestrator");
     expect(agent!.capabilities).toContain("discussion-management");
 
     await keryx.stop();

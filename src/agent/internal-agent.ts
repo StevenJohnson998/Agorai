@@ -262,7 +262,7 @@ async function processConversation(
     const subscribers = await store.getSubscribers(conversationId);
     for (const sub of subscribers) {
       const agent = await store.getAgent(sub.agentId);
-      if (agent && (agent.name === "keryx" || agent.type === "moderator")) return true;
+      if (agent && (agent.name === "keryx" || agent.type === "orchestrator")) return true;
     }
     return false;
   })();

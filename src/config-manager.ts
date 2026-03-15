@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 export type ClearanceLevel = "public" | "team" | "confidential" | "restricted";
 
 /** Agent types and what they create */
-export type AgentType = "claude-desktop" | "claude-code" | "openai-compat" | "ollama" | "keryx" | "moderator" | "custom";
+export type AgentType = "claude-desktop" | "claude-code" | "openai-compat" | "ollama" | "keryx" | "orchestrator" | "custom";
 
 /** Types that require an agents[] entry (have their own adapter config) */
 const ADAPTER_TYPES: ReadonlySet<AgentType> = new Set(["openai-compat", "ollama"]);

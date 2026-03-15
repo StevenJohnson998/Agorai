@@ -18,7 +18,7 @@ Agorai is a multi-agent AI collaboration platform with two layers: a **Bridge** 
 │         └──────────────┼───────────────┼────────────────┘          │
 │                        ▼               ▼                            │
 │  ┌──────────────────────────────────────────────────┐              │
-│  │  Keryx (moderator) — round management,           │              │
+│  │  Keryx (orchestrator) — round management,           │              │
 │  │  adaptive timing, escalation, pattern detection   │              │
 │  │  In-memory state · Event-driven · Zero LLM dep    │              │
 │  └──────────────────────────────────────────────────┘              │
@@ -102,7 +102,7 @@ interface IPermissionProvider {
 
 ## Keryx — Discussion Manager (v0.7)
 
-Keryx is a built-in rule-based moderator that manages multi-agent conversations. It registers as agent type `moderator` — it manages process, never generates content. Zero LLM dependency.
+Keryx is a built-in rule-based orchestrator that manages multi-agent conversations. It registers as agent type `orchestrator` — it manages process, never generates content. Zero LLM dependency.
 
 ### Round lifecycle
 

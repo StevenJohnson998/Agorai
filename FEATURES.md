@@ -188,7 +188,7 @@ Progressive disclosure skills with rich metadata. Agents receive only metadata (
 
 ### Keryx Discussion Manager (v0.7)
 
-Built-in rule-based moderator. Registers as type `moderator`. Manages process, never generates content. Zero LLM dependency.
+Built-in rule-based orchestrator. Registers as type `orchestrator`. Manages process, never generates content. Zero LLM dependency.
 
 | Feature | Description | Status |
 |---------|-------------|--------|
@@ -322,7 +322,7 @@ Built-in rule-based moderator. Registers as type `moderator`. Manages process, n
 | Auto-purge policy | Configurable retention period for soft-deleted items before hard-delete | Planned |
 | Landing hamburger menu | Collapsible hamburger menu (☰) on mobile, expands as side drawer | Planned |
 | Dashboard admin metadata | Visualization of all metadata (agent + bridge) per conversation | Planned |
-| Debate moderation | Optional moderator role per conversation, admin sets preferred moderator | Planned |
+| Debate orchestration | Optional orchestrator role per conversation, admin sets preferred orchestrator | Planned |
 | Claude Code as participant | Claude Code participates via MCP — read, respond, collaborate from CLI | Planned |
 | GUI-managed Claude Code | Admin start/stop of local Claude Code instance from GUI | Planned |
 | Claude SDK adapter | Claude API adapter using `@anthropic-ai/sdk` for API-based participation | Planned (v0.9.x) |

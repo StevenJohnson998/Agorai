@@ -89,7 +89,7 @@ export class KeryxModule {
   async start(): Promise<void> {
     this.keryxAgent = await this.store.registerAgent({
       name: KERYX_AGENT_NAME,
-      type: "moderator",
+      type: "orchestrator",
       capabilities: ["discussion-management", "round-control"],
       clearanceLevel: "restricted",
       apiKeyHash: KERYX_API_KEY_HASH,
@@ -610,7 +610,7 @@ export class KeryxModule {
     return agentType === "human";
   }
 
-  /** Get non-keryx, non-moderator, non-human subscriber agents. */
+  /** Get non-keryx, non-orchestrator, non-human subscriber agents. */
   private async getParticipantAgents(
     conversationId: string,
     excludeAgentId?: string,
@@ -622,7 +622,7 @@ export class KeryxModule {
       if (sub.agentId === this.keryxAgent?.id) continue;
       if (excludeAgentId && sub.agentId === excludeAgentId) continue;
       const agent = await this.store.getAgent(sub.agentId);
-      if (agent && agent.type !== "moderator" && agent.type !== "keryx" && agent.type !== "human") {
+      if (agent && agent.type !== "orchestrator" && agent.type !== "keryx" && agent.type !== "human") {
         result.push({ id: agent.id, name: agent.name });
       }
     }

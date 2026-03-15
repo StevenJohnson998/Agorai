@@ -109,7 +109,7 @@ A "Delegation Protocol" skill is auto-created at bridge startup.
 
 ### Keryx Discussion Manager
 
-Built-in rule-based moderator (agent type `moderator`). Manages conversation rounds, adaptive timing, progressive escalation, pattern detection (loops, drift, domination). Human commands via `@keryx pause/resume/skip/extend/status/interrupt/enable/disable`. Disable with `--no-keryx`.
+Built-in rule-based orchestrator (agent type `orchestrator`). Manages conversation rounds, adaptive timing, progressive escalation, pattern detection (loops, drift, domination). Human commands via `@keryx pause/resume/skip/extend/status/interrupt/enable/disable`. Disable with `--no-keryx`.
 
 ### Bridge CLI
 

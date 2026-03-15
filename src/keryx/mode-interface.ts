@@ -31,7 +31,7 @@ export interface ModeContext {
   /** Check if a message is from a human agent (cached). */
   isHumanMessage(message: Message): Promise<boolean>;
 
-  /** Get non-keryx, non-moderator, non-human subscriber agent IDs + names. */
+  /** Get non-keryx, non-orchestrator, non-human subscriber agent IDs + names. */
   getParticipantAgents(conversationId: string, excludeAgentId?: string): Promise<Array<{ id: string; name: string }>>;
 
   /** Update agent response time profile. */

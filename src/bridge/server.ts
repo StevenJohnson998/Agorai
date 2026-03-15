@@ -1183,13 +1183,18 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Request already responded to" }) }] };
       }
 
-      // On approve: auto-subscribe the requesting agent and add as project member
+      // On approve: auto-subscribe the requesting agent to the specific conversation
       if (newStatus === "approved") {
         await store.subscribe(request.conversationId, request.agentId);
-        // Also add as project member if not already
+        // Only auto-add as project member for conversation creators and orchestrators
         const conv = await store.getConversation(request.conversationId);
-        if (conv && !(await store.isMember(conv.projectId, request.agentId))) {
-          await store.addMember(conv.projectId, request.agentId, "member");
+        if (conv) {
+          const requestingAgent = await store.getAgent(request.agentId);
+          const isCreator = conv.createdBy === request.agentId;
+          const isOrchestrator = requestingAgent?.type === "orchestrator" || requestingAgent?.type === "keryx";
+          if ((isCreator || isOrchestrator) && !(await store.isMember(conv.projectId, request.agentId))) {
+            await store.addMember(conv.projectId, request.agentId, "member");
+          }
         }
       }
 

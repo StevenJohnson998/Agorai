@@ -17,7 +17,7 @@
           var subscriberIds = subscribers.map(function(s) { return s.agentId; });
           var availableAgents = (typeof agents !== 'undefined' ? agents : []).filter(function(a) {
             if (subscriberIds.indexOf(a.id) !== -1) return false;
-            return a.type === 'human' || a.type === 'claude-code' || a.type === 'claude-desktop' || a.type === 'internal' || a.type === 'moderator' || (a.capabilities && a.capabilities.indexOf('chat') !== -1);
+            return a.type === 'human' || a.type === 'claude-code' || a.type === 'claude-desktop' || a.type === 'internal' || a.type === 'orchestrator' || (a.capabilities && a.capabilities.indexOf('chat') !== -1);
           });
         %>
         <%- include('partials/participants', { user: user, conversation: conversation, subscribers: subscribers, agents: availableAgents, envPath: envPath, basePath: basePath }) %>

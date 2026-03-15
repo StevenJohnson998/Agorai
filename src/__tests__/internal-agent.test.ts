@@ -267,10 +267,10 @@ describe("Internal Agent — Passive Mode", () => {
 
 describe("Internal Agent — Keryx Gateway", () => {
   it("Keryx-managed: skips when no round-open in unread", async () => {
-    // Create a Keryx-like moderator so the conversation is detected as Keryx-managed
+    // Create a Keryx-like orchestrator so the conversation is detected as Keryx-managed
     const keryxAgent = await store.registerAgent({
       name: "keryx",
-      type: "moderator",
+      type: "orchestrator",
       capabilities: ["discussion-management"],
       clearanceLevel: "restricted",
       apiKeyHash: "internal:keryx",
@@ -329,7 +329,7 @@ describe("Internal Agent — Keryx Gateway", () => {
   it("Keryx-managed: responds to direct request (e.g. synthesis)", async () => {
     const keryxAgent = await store.registerAgent({
       name: "keryx",
-      type: "moderator",
+      type: "orchestrator",
       capabilities: ["discussion-management"],
       clearanceLevel: "restricted",
       apiKeyHash: "internal:keryx_synth",
