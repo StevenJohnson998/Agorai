@@ -98,10 +98,19 @@ export interface BuildContextOptions {
 /**
  * Build structured bridge rules. Active tool groups determine which
  * conditional sections are included.
+ *
+ * When `allowedToolNames` is provided (from a tool profile), it takes precedence
+ * over group membership for deciding which instruction sections to include.
  */
-export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: boolean): BridgeRules {
+export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: boolean, allowedToolNames?: Set<string>): BridgeRules {
   const groups = new Set(activeToolGroups);
-  const allActive = !activeToolGroups || activeToolGroups.length === 0 || groups.has("all");
+  const allActive = !allowedToolNames && (!activeToolGroups || activeToolGroups.length === 0 || groups.has("all"));
+
+  /** Check if any tool from a group is in the allowed set. */
+  const hasToolFrom = (groupToolNames: string[]): boolean => {
+    if (allowedToolNames) return groupToolNames.some(t => allowedToolNames.has(t));
+    return true; // no profile filter → fall through to group check
+  };
 
   const rules: BridgeRules = {
     messageTracking: [
@@ -144,16 +153,21 @@ export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: bool
     ].join("\n"),
   };
 
-  if (allActive || groups.has("access")) {
-    rules.accessRequestRules = [
+  if ((allActive || groups.has("access")) && hasToolFrom(["list_access_requests", "respond_to_access_request", "get_my_access_requests"])) {
+    // Tailor instructions based on available tools
+    const hasRespond = !allowedToolNames || allowedToolNames.has("respond_to_access_request");
+    const lines = [
       "IMPORTANT — Access requests:",
       "If you try to subscribe to a conversation you don't have access to, an access request is created automatically.",
-      "Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.",
-      "Check your request status with get_my_access_requests.",
-    ].join("\n");
+    ];
+    if (hasRespond) {
+      lines.push("Subscribers of that conversation can approve or deny your request via list_access_requests + respond_to_access_request.");
+    }
+    lines.push("Check your request status with get_my_access_requests.");
+    rules.accessRequestRules = lines.join("\n");
   }
 
-  if (allActive || groups.has("members")) {
+  if ((allActive || groups.has("members")) && hasToolFrom(["add_member", "remove_member", "list_members"])) {
     rules.membershipRules = [
       "IMPORTANT — Project membership:",
       "Projects have an access_mode: 'visible' (appears in listings, subscribe requires membership or access request) or 'hidden' (invisible to non-members).",
@@ -163,18 +177,23 @@ export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: bool
     ].join("\n");
   }
 
-  if (allActive || groups.has("skills")) {
-    rules.skillsRules = [
+  if ((allActive || groups.has("skills")) && hasToolFrom(["list_skills", "get_skill", "set_skill", "delete_skill", "set_skill_file", "get_skill_file"])) {
+    // Tailor tiers based on available tools
+    const hasTier3 = !allowedToolNames || allowedToolNames.has("get_skill_file");
+    const lines = [
       "IMPORTANT — Skills system (progressive disclosure):",
       "Skills provide behavioral instructions and context. They use 3-tier progressive disclosure to save context:",
       "- Tier 1 (metadata): When you subscribe, you receive skill metadata (title, summary, instructions, tags) — NOT the full content.",
       "- Tier 2 (content): Call get_skill(skill_id) to load the full content of a skill you need.",
-      "- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.",
-      "Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.",
-    ].join("\n");
+    ];
+    if (hasTier3) {
+      lines.push("- Tier 3 (files): Call get_skill_file(skill_id, filename) to load supporting files attached to a skill.");
+    }
+    lines.push("Only load tier 2/3 when you actually need the detail. The summary and instructions fields give you enough to decide.");
+    rules.skillsRules = lines.join("\n");
   }
 
-  if (allActive || groups.has("attachments")) {
+  if ((allActive || groups.has("attachments")) && hasToolFrom(["upload_attachment", "get_attachment", "list_attachments", "delete_attachment"])) {
     rules.attachmentRules = [
       "IMPORTANT — File attachments:",
       "Agents can share files (images, code, documents) via message attachments.",
@@ -184,7 +203,7 @@ export function buildBridgeRules(activeToolGroups?: string[], keryxActive?: bool
     ].join("\n");
   }
 
-  if (allActive || groups.has("tasks")) {
+  if ((allActive || groups.has("tasks")) && hasToolFrom(["create_task", "list_tasks", "claim_task", "complete_task", "release_task", "update_task"])) {
     rules.delegationRules = [
       "IMPORTANT — Delegation protocol:",
       "To delegate work to another agent, use the task system (create_task with required_capabilities).",

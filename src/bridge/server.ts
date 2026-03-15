@@ -1,7 +1,7 @@
 /**
  * Bridge HTTP server — Streamable HTTP transport for the MCP bridge.
  *
- * Exposes bridge tools (up to 35, filtered by per-agent tool groups) over HTTP.
+ * Exposes bridge tools (up to 42, filtered by per-agent tool groups or profiles) over HTTP.
  * Auth is handled via API key in Authorization header.
  * Each request is authenticated before being passed to the MCP handler.
  */
@@ -175,15 +175,48 @@ export const TOOL_GROUPS: Record<string, string[]> = {
   ],
 };
 
-export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups?: string[], fileStore?: IFileStore, config?: Config): McpServer {
+const AGENT_TOOLS = [
+  "get_status", "list_projects", "list_conversations",
+  "subscribe", "unsubscribe",
+  "get_messages", "send_message", "mark_read",
+  "get_my_access_requests",
+  "list_skills", "get_skill",
+];
+
+/** Predefined tool profiles — allowlists of tool names. Takes precedence over toolGroups. */
+export const TOOL_PROFILES: Record<string, string[]> = {
+  agent: AGENT_TOOLS,
+  orchestrator: [
+    ...AGENT_TOOLS,
+    "create_task", "list_tasks", "claim_task",
+    "complete_task", "release_task", "update_task",
+    "set_agent_memory", "get_agent_memory", "delete_agent_memory",
+  ],
+  admin: Object.values(TOOL_GROUPS).flat(),
+};
+
+export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups?: string[], fileStore?: IFileStore, config?: Config, toolProfile?: string): McpServer {
+  // Resolve tool-level allowlist from profile (takes precedence over groups)
+  const allowedTools: Set<string> | null = (toolProfile && TOOL_PROFILES[toolProfile])
+    ? new Set(TOOL_PROFILES[toolProfile])
+    : null;
+
+  const shouldRegister = (toolName: string): boolean => {
+    if (allowedTools && !allowedTools.has(toolName)) return false;
+    return true;
+  };
+
   // Resolve which tool groups are active
   const activeGroups = new Set(
-    (!toolGroups || toolGroups.length === 0 || toolGroups.includes("all"))
+    allowedTools
+      // Profile mode: activate all groups, let shouldRegister filter individual tools
       ? Object.keys(TOOL_GROUPS)
-      : ["core", ...toolGroups]
+      : (!toolGroups || toolGroups.length === 0 || toolGroups.includes("all"))
+        ? Object.keys(TOOL_GROUPS)
+        : ["core", ...toolGroups]
   );
   // Build instructions from single source of truth (agent/context.ts)
-  const rules = buildBridgeRules([...activeGroups]);
+  const rules = buildBridgeRules([...activeGroups], undefined, allowedTools ?? undefined);
   const instructions = renderForMcpInstructions(rules);
 
   const server = new McpServer({
@@ -195,6 +228,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
 
   // --- Agent tools ---
 
+  if (shouldRegister("register_agent"))
   server.tool(
     "register_agent",
     "Register or update the calling agent",
@@ -216,6 +250,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_agents"))
   server.tool(
     "list_agents",
     "List registered agents",
@@ -244,6 +279,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("discover_capabilities"))
   server.tool(
     "discover_capabilities",
     "Find agents by capability. Without a filter, returns all agents and their capabilities.",
@@ -262,6 +298,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
 
   // --- Project tools ---
 
+  if (shouldRegister("create_project"))
   server.tool(
     "create_project",
     "Create a new project",
@@ -279,6 +316,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_projects"))
   server.tool(
     "list_projects",
     "List accessible projects",
@@ -292,6 +330,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   // --- Memory tools ---
 
   if (activeGroups.has("memory")) {
+  if (shouldRegister("set_memory"))
   server.tool(
     "set_memory",
     "Add or update a project memory entry",
@@ -315,6 +354,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_memory"))
   server.tool(
     "get_memory",
     "Get project memory entries filtered by clearance",
@@ -329,6 +369,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("delete_memory"))
   server.tool(
     "delete_memory",
     "Delete a memory entry",
@@ -349,6 +390,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
 
   // --- Conversation tools ---
 
+  if (shouldRegister("create_conversation"))
   server.tool(
     "create_conversation",
     "Create a conversation in a project",
@@ -391,6 +433,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_conversations"))
   server.tool(
     "list_conversations",
     "List conversations in a project",
@@ -404,6 +447,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("subscribe"))
   server.tool(
     "subscribe",
     "Subscribe to a conversation. If you don't have access, an access request is created automatically — existing subscribers can approve it.",
@@ -509,6 +553,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("unsubscribe"))
   server.tool(
     "unsubscribe",
     "Unsubscribe from a conversation",
@@ -519,6 +564,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_subscribers"))
   server.tool(
     "list_subscribers",
     "List agents subscribed to a conversation (with name, type, online status — useful for @mention suggestions)",
@@ -551,6 +597,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
 
   // --- Message tools ---
 
+  if (shouldRegister("send_message"))
   server.tool(
     "send_message",
     "Send a message in a conversation (visibility capped at your clearance). Set visibility to the highest level among the input messages you used (public < team < confidential < restricted). If unsure, omit it and the conversation default will be used.",
@@ -612,6 +659,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_messages"))
   server.tool(
     "get_messages",
     "Get messages from a conversation (filtered by your clearance). IMPORTANT: After calling this, you MUST call mark_read with the same conversation_id to avoid seeing the same messages again.",
@@ -652,6 +700,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   // --- Task tools ---
 
   if (activeGroups.has("tasks")) {
+  if (shouldRegister("create_task"))
   server.tool(
     "create_task",
     "Create a task in a project. Other agents can discover and claim it.",
@@ -672,6 +721,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_tasks"))
   server.tool(
     "list_tasks",
     "List tasks in a project, optionally filtered by status, capability, or claiming agent",
@@ -686,6 +736,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("claim_task"))
   server.tool(
     "claim_task",
     "Claim an open task. Atomic — only one agent can claim a task at a time.",
@@ -699,6 +750,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("complete_task"))
   server.tool(
     "complete_task",
     "Mark a claimed task as completed with an optional result",
@@ -712,6 +764,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("release_task"))
   server.tool(
     "release_task",
     "Release a claimed task back to open so another agent can claim it",
@@ -725,6 +778,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("update_task"))
   server.tool(
     "update_task",
     "Update a task you created (title, description, or status). Only the creator can update.",
@@ -746,6 +800,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   // --- Skill tools ---
 
   if (activeGroups.has("skills")) {
+  if (shouldRegister("set_skill"))
   server.tool(
     "set_skill",
     "Create or update a skill in a scope. Creator can always create/edit. Listed agents (in agents[]) can edit existing skills. Use selector and agents[] to target specific agents.",
@@ -812,6 +867,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_skills"))
   server.tool(
     "list_skills",
     "List skills for a scope (returns metadata only — no content). No params = bridge-level. With project_id = project-level. With conversation_id = conversation-level.",
@@ -848,6 +904,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_skill"))
   server.tool(
     "get_skill",
     "Get a skill's full content by ID (progressive disclosure tier 2). Returns content + file list.",
@@ -872,6 +929,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("delete_skill"))
   server.tool(
     "delete_skill",
     "Delete a skill by ID. Creator or listed agents can delete.",
@@ -896,6 +954,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
 
   // --- Skill File tools ---
 
+  if (shouldRegister("set_skill_file"))
   server.tool(
     "set_skill_file",
     "Add or update a file attached to a skill. Creator or listed agents can manage files.",
@@ -918,6 +977,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_skill_file"))
   server.tool(
     "get_skill_file",
     "Get a file attached to a skill (progressive disclosure tier 3).",
@@ -946,6 +1006,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   // --- Agent Memory tools ---
 
   if (activeGroups.has("memory")) {
+  if (shouldRegister("set_agent_memory"))
   server.tool(
     "set_agent_memory",
     "Save private memory for yourself. No scope = global. With project_id = per-project. With conversation_id = per-conversation. Content overwrites previous.",
@@ -973,6 +1034,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_agent_memory"))
   server.tool(
     "get_agent_memory",
     "Read your private memory. No scope = global. With project_id = per-project. With conversation_id = per-conversation.",
@@ -997,6 +1059,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("delete_agent_memory"))
   server.tool(
     "delete_agent_memory",
     "Delete your private memory for a scope. No scope = global. With project_id = per-project. With conversation_id = per-conversation.",
@@ -1021,6 +1084,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
 
   // --- Status tools ---
 
+  if (shouldRegister("get_status"))
   server.tool(
     "get_status",
     "Get a summary: projects, active conversations, unread messages, online agents",
@@ -1048,6 +1112,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("mark_read"))
   server.tool(
     "mark_read",
     "Mark messages as read in a conversation. Call this after every get_messages to avoid re-reading the same messages. Pass just conversation_id to mark all messages read.",
@@ -1076,6 +1141,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   // --- Access Request tools ---
 
   if (activeGroups.has("access")) {
+  if (shouldRegister("list_access_requests"))
   server.tool(
     "list_access_requests",
     "List pending access requests for a conversation you're subscribed to",
@@ -1090,6 +1156,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("respond_to_access_request"))
   server.tool(
     "respond_to_access_request",
     "Approve, deny, or silently deny an access request. On approve, the requesting agent is auto-subscribed.",
@@ -1130,6 +1197,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_my_access_requests"))
   server.tool(
     "get_my_access_requests",
     "Check the status of your own access requests. Note: silently denied requests appear as 'pending'.",
@@ -1152,6 +1220,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   // --- Member tools ---
 
   if (activeGroups.has("members")) {
+  if (shouldRegister("add_member"))
   server.tool(
     "add_member",
     "Add an agent as a project member. Only project owners can add members.",
@@ -1175,6 +1244,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("remove_member"))
   server.tool(
     "remove_member",
     "Remove an agent from a project. Only project owners can remove members. Unsubscribes from all project conversations.",
@@ -1197,6 +1267,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_members"))
   server.tool(
     "list_members",
     "List members of a project with their roles.",
@@ -1232,6 +1303,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
   const maxFileSize = fileStoreConfig?.maxFileSize ?? 10 * 1024 * 1024;
   const allowedTypes = fileStoreConfig?.allowedTypes ?? [];
 
+  if (shouldRegister("upload_attachment"))
   server.tool(
     "upload_attachment",
     "Upload a file attachment to a conversation. Returns attachment metadata with an ID to use in send_message's attachment_ids.",
@@ -1269,6 +1341,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("get_attachment"))
   server.tool(
     "get_attachment",
     "Download an attachment's content as base64. Requires subscription to the attachment's conversation.",
@@ -1291,6 +1364,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("list_attachments"))
   server.tool(
     "list_attachments",
     "List attachments for a specific message.",
@@ -1301,6 +1375,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
     },
   );
 
+  if (shouldRegister("delete_attachment"))
   server.tool(
     "delete_attachment",
     "Delete an attachment you created. Removes both the file and metadata.",
@@ -1483,7 +1558,7 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
         sessionIdGenerator: () => randomUUID(),
       });
 
-      const mcpServer = createBridgeMcpServer(store, authResult.agentId!, authResult.toolGroups, fileStore, config);
+      const mcpServer = createBridgeMcpServer(store, authResult.agentId!, authResult.toolGroups, fileStore, config, authResult.toolProfile);
       await mcpServer.connect(transport);
 
       // Track whether onclose fired before we finish registration

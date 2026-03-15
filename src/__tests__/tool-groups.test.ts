@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SqliteStore } from "../store/sqlite.js";
-import { createBridgeMcpServer, TOOL_GROUPS } from "../bridge/server.js";
+import { createBridgeMcpServer, TOOL_GROUPS, TOOL_PROFILES } from "../bridge/server.js";
 import { LocalFileStore } from "../store/file-store.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -192,5 +192,104 @@ describe("createBridgeMcpServer tool filtering", () => {
     const server = createBridgeMcpServer(store, agentId, ["attachments"], fileStore);
     const tools = getToolNames(server);
     expect(tools).toHaveLength(18);
+  });
+});
+
+describe("TOOL_PROFILES constant", () => {
+  it("agent profile has 11 tools", () => {
+    expect(TOOL_PROFILES.agent).toHaveLength(11);
+  });
+
+  it("orchestrator profile has 20 tools", () => {
+    expect(TOOL_PROFILES.orchestrator).toHaveLength(20);
+  });
+
+  it("admin profile has all 42 tools", () => {
+    expect(TOOL_PROFILES.admin).toHaveLength(42);
+  });
+
+  it("orchestrator includes all agent tools", () => {
+    for (const tool of TOOL_PROFILES.agent) {
+      expect(TOOL_PROFILES.orchestrator).toContain(tool);
+    }
+  });
+
+  it("admin includes all orchestrator tools", () => {
+    for (const tool of TOOL_PROFILES.orchestrator) {
+      expect(TOOL_PROFILES.admin).toContain(tool);
+    }
+  });
+
+  it("all profile tools exist in TOOL_GROUPS", () => {
+    const allGroupTools = Object.values(TOOL_GROUPS).flat();
+    for (const [profileName, tools] of Object.entries(TOOL_PROFILES)) {
+      for (const tool of tools) {
+        expect(allGroupTools, `${profileName}.${tool} not found in any group`).toContain(tool);
+      }
+    }
+  });
+});
+
+describe("createBridgeMcpServer with toolProfile", () => {
+  it('"agent" profile registers exactly 11 tools', () => {
+    const server = createBridgeMcpServer(store, agentId, undefined, undefined, undefined, "agent");
+    const tools = getToolNames(server);
+    expect(tools).toHaveLength(11);
+    for (const tool of TOOL_PROFILES.agent) {
+      expect(tools).toContain(tool);
+    }
+  });
+
+  it('"orchestrator" profile registers exactly 20 tools', () => {
+    const server = createBridgeMcpServer(store, agentId, undefined, undefined, undefined, "orchestrator");
+    const tools = getToolNames(server);
+    expect(tools).toHaveLength(20);
+    for (const tool of TOOL_PROFILES.orchestrator) {
+      expect(tools).toContain(tool);
+    }
+  });
+
+  it('"admin" profile registers all tools (no fileStore = 38)', () => {
+    const server = createBridgeMcpServer(store, agentId, undefined, undefined, undefined, "admin");
+    const tools = getToolNames(server);
+    // admin profile allows all 42, but attachments need fileStore — so 38
+    expect(tools).toHaveLength(38);
+  });
+
+  it('"admin" profile with fileStore registers all 42 tools', () => {
+    const fileStore = new LocalFileStore(join(tmpDir, "attachments"));
+    const server = createBridgeMcpServer(store, agentId, undefined, fileStore, undefined, "admin");
+    const tools = getToolNames(server);
+    expect(tools).toHaveLength(42);
+  });
+
+  it("profile takes precedence over toolGroups", () => {
+    // toolGroups says ["all"] but profile says "agent" — agent wins
+    const server = createBridgeMcpServer(store, agentId, ["all"], undefined, undefined, "agent");
+    const tools = getToolNames(server);
+    expect(tools).toHaveLength(11);
+  });
+
+  it("unknown profile falls back to toolGroups behavior", () => {
+    const server = createBridgeMcpServer(store, agentId, undefined, undefined, undefined, "nonexistent");
+    const tools = getToolNames(server);
+    // Unknown profile → allowedTools is null → falls through to toolGroups (default = all)
+    expect(tools).toHaveLength(38);
+  });
+
+  it("no profile and no toolGroups = default 38 tools", () => {
+    const server = createBridgeMcpServer(store, agentId);
+    const tools = getToolNames(server);
+    expect(tools).toHaveLength(38);
+  });
+
+  it("agent profile excludes admin/discovery tools", () => {
+    const server = createBridgeMcpServer(store, agentId, undefined, undefined, undefined, "agent");
+    const tools = getToolNames(server);
+    const excluded = ["register_agent", "list_agents", "discover_capabilities",
+      "create_project", "create_conversation", "list_subscribers"];
+    for (const tool of excluded) {
+      expect(tools, `${tool} should be excluded from agent profile`).not.toContain(tool);
+    }
   });
 });

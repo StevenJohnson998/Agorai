@@ -153,6 +153,8 @@ export const ConfigSchema = z.object({
         toolGroups: z.array(
           z.enum(["all", "core", "memory", "tasks", "skills", "access", "members", "attachments"])
         ).optional(),
+        /** Predefined tool profile. Takes precedence over toolGroups. */
+        toolProfile: z.enum(["agent", "orchestrator", "admin"]).optional(),
       })).default([]),
     })
     .optional()

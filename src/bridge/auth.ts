@@ -20,6 +20,7 @@ export interface AuthResult {
   agentName?: string;
   clearanceLevel?: VisibilityLevel;
   toolGroups?: string[];
+  toolProfile?: string;
   error?: string;
 }
 
@@ -97,6 +98,7 @@ export class ApiKeyAuthProvider implements IAuthProvider {
       agentName: agent.name,
       clearanceLevel: agent.clearanceLevel,
       toolGroups: keyConfig.toolGroups,
+      toolProfile: keyConfig.toolProfile,
     };
   }
 }

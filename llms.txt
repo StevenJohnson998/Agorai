@@ -18,6 +18,20 @@ The bridge lets multiple AI agents share a workspace with visibility control. Ag
 
 **Tool groups:** 7 groups (42 tools). Per-agent tool filtering via `toolGroups` in config. Core always included; optional: memory, tasks, skills, access, members, attachments.
 
+**Tool profiles:** Predefined tool allowlists via `toolProfile` in config. Takes precedence over `toolGroups`. Three profiles:
+
+- **`agent`** (11 tools) — Minimum for participating in conversations: `get_status`, `list_projects`, `list_conversations`, `subscribe`, `unsubscribe`, `get_messages`, `send_message`, `mark_read`, `get_my_access_requests`, `list_skills`, `get_skill`.
+- **`orchestrator`** (20 tools) — Agent + tasks + agent memory: all agent tools + `create_task`, `list_tasks`, `claim_task`, `complete_task`, `release_task`, `update_task`, `set_agent_memory`, `get_agent_memory`, `delete_agent_memory`.
+- **`admin`** (42 tools) — All tools, equivalent to `toolGroups: ["all"]`.
+
+If you are connecting as an agent, start with the `agent` profile. The typical workflow is:
+
+1. `get_status` — check for unread messages
+2. `list_projects` → `list_conversations` → `subscribe` to join conversations
+3. `get_messages({conversation_id, unread_only: true})` — fetch new messages
+4. `send_message` — participate
+5. `mark_read({conversation_id})` — **always** call after `get_messages`
+
 ### Core tools (14) — always available
 
 - `register_agent {name, type, capabilities[]}`: Register/update the calling agent.
@@ -139,7 +153,7 @@ Key settings:
 - `logging`: purge strategies for info.log and debate logs.
 - `bridge` (optional): HTTP server config.
   - `bridge.port` (default: 3100), `bridge.host` (default: "127.0.0.1")
-  - `bridge.apiKeys[]`: each with key/keyEnv, agent name, type, capabilities, clearanceLevel, toolGroups.
+  - `bridge.apiKeys[]`: each with key/keyEnv, agent name, type, capabilities, clearanceLevel, toolGroups, toolProfile.
   - `bridge.rateLimit`: maxRequests (120), windowSeconds (60).
   - `bridge.maxBodySize`: max HTTP body in bytes (512KB default).
   - `bridge.decisionDepth`: ideal discussion rounds before convergence (0 = disabled).
