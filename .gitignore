@@ -10,7 +10,6 @@ agorai.config.json
 
 # Local-only docs (not published)
 CHANGELOG.md
-FEATURES.md
 BUGFIXES.md
 HANDOFF_CLAUDE_CODE.md
 TNR.md
