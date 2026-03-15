@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { ApiKeyAuthProvider, hashApiKey } from "../bridge/auth.js";
+import { ApiKeyAuthProvider, DatabaseAuthProvider, ChainAuthProvider, hashApiKey } from "../bridge/auth.js";
 import { SqliteStore } from "../store/sqlite.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -155,5 +155,133 @@ describe("ApiKeyAuthProvider", () => {
 
     const code = await auth.authenticate("ak_test_code_456");
     expect(code.clearanceLevel).toBe("confidential");
+  });
+});
+
+describe("DatabaseAuthProvider", () => {
+  const salt = "test-db-salt";
+
+  it("authenticates agent registered directly in DB", async () => {
+    const hash = hashApiKey("db-managed-key-123", salt);
+    await store.registerAgent({
+      name: "db-agent",
+      type: "custom",
+      capabilities: ["analysis"],
+      clearanceLevel: "team",
+      apiKeyHash: hash,
+      toolProfile: "agent",
+    });
+
+    const auth = new DatabaseAuthProvider(store, salt);
+    const result = await auth.authenticate("db-managed-key-123");
+
+    expect(result.authenticated).toBe(true);
+    expect(result.agentName).toBe("db-agent");
+    expect(result.clearanceLevel).toBe("team");
+    expect(result.toolProfile).toBe("agent");
+  });
+
+  it("rejects unknown keys", async () => {
+    const auth = new DatabaseAuthProvider(store, salt);
+    const result = await auth.authenticate("nonexistent-key");
+
+    expect(result.authenticated).toBe(false);
+    expect(result.error).toBe("Invalid API key");
+  });
+
+  it("rejects empty token", async () => {
+    const auth = new DatabaseAuthProvider(store, salt);
+    const result = await auth.authenticate("");
+
+    expect(result.authenticated).toBe(false);
+    expect(result.error).toBe("Missing API key");
+  });
+
+  it("returns toolGroups and toolProfile from DB", async () => {
+    const hash = hashApiKey("key-with-groups", salt);
+    await store.registerAgent({
+      name: "grouped-agent",
+      type: "custom",
+      capabilities: [],
+      clearanceLevel: "team",
+      apiKeyHash: hash,
+      toolGroups: ["tasks", "memory"],
+      toolProfile: "orchestrator",
+    });
+
+    const auth = new DatabaseAuthProvider(store, salt);
+    const result = await auth.authenticate("key-with-groups");
+
+    expect(result.authenticated).toBe(true);
+    expect(result.toolGroups).toEqual(["tasks", "memory"]);
+    expect(result.toolProfile).toBe("orchestrator");
+  });
+});
+
+describe("ChainAuthProvider", () => {
+  const salt = "test-chain-salt";
+
+  it("DB provider takes priority over config provider", async () => {
+    // Register agent in DB with a DB-managed key
+    const dbHash = hashApiKey("db-key", salt);
+    await store.registerAgent({
+      name: "chain-agent",
+      type: "custom",
+      capabilities: [],
+      clearanceLevel: "confidential",
+      apiKeyHash: dbHash,
+      toolProfile: "agent",
+    });
+
+    // Also set up a config-based key for the same agent
+    const configKeys: ApiKeyConfig[] = [{
+      key: "config-key",
+      agent: "chain-agent",
+      type: "custom",
+      capabilities: [],
+      clearanceLevel: "team", // different clearance
+    }];
+
+    const chain = new ChainAuthProvider([
+      new DatabaseAuthProvider(store, salt),
+      new ApiKeyAuthProvider(configKeys, store, salt),
+    ]);
+
+    // DB key should work and return DB clearance
+    const dbResult = await chain.authenticate("db-key");
+    expect(dbResult.authenticated).toBe(true);
+    expect(dbResult.clearanceLevel).toBe("confidential");
+
+    // Config key should also work (fallback)
+    const configResult = await chain.authenticate("config-key");
+    expect(configResult.authenticated).toBe(true);
+  });
+
+  it("falls back to config when DB has no match", async () => {
+    const configKeys: ApiKeyConfig[] = [{
+      key: "only-in-config",
+      agent: "config-only",
+      type: "custom",
+      capabilities: [],
+      clearanceLevel: "team",
+    }];
+
+    const chain = new ChainAuthProvider([
+      new DatabaseAuthProvider(store, salt),
+      new ApiKeyAuthProvider(configKeys, store, salt),
+    ]);
+
+    const result = await chain.authenticate("only-in-config");
+    expect(result.authenticated).toBe(true);
+    expect(result.agentName).toBe("config-only");
+  });
+
+  it("rejects when no provider matches", async () => {
+    const chain = new ChainAuthProvider([
+      new DatabaseAuthProvider(store, salt),
+    ]);
+
+    const result = await chain.authenticate("totally-unknown");
+    expect(result.authenticated).toBe(false);
   });
 });

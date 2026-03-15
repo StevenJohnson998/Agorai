@@ -49,6 +49,9 @@ Commands:
   agent update <name>      Update an agent's configuration
   agent remove <name>      Remove an agent from config
   agent run --adapter <n>  Run an internal agent (uses store directly)
+  key create --agent <n>   Create a DB-managed pass-key for an agent
+  key list                 List agents with DB-managed keys
+  key revoke --agent <n>   Revoke an agent's pass-key
   project create <name>    Create a new project
   project list [--archived] List projects (most recent first)
   project switch <id>      Switch to a project
@@ -158,6 +161,9 @@ async function main() {
       break;
     case "agent":
       await cmdAgent(args.slice(1));
+      break;
+    case "key":
+      await cmdKey(args.slice(1));
       break;
     case "connect":
       await cmdConnect(args.slice(1));
@@ -666,14 +672,9 @@ async function cmdServe(args: string[]) {
     config.bridge.host = hostOverride;
   }
 
-  if (config.bridge.apiKeys.length === 0) {
-    console.error("Error: bridge.apiKeys is empty. At least one API key is required.");
-    process.exit(1);
-  }
-
   // Dynamic imports to avoid loading bridge deps when not needed
   const { SqliteStore } = await import("./store/sqlite.js");
-  const { ApiKeyAuthProvider } = await import("./bridge/auth.js");
+  const { ApiKeyAuthProvider, DatabaseAuthProvider, ChainAuthProvider } = await import("./bridge/auth.js");
   const { startBridgeServer } = await import("./bridge/server.js");
   const { LocalFileStore } = await import("./store/file-store.js");
 
@@ -681,18 +682,55 @@ async function cmdServe(args: string[]) {
   const store = new SqliteStore(dbPath);
   await store.initialize();
 
-  const auth = new ApiKeyAuthProvider(config.bridge.apiKeys, store, config.bridge.salt);
+  // Resolve salt (env var takes precedence)
+  const salt = resolveSalt(config);
+  if (config.bridge.salt && config.bridge.saltEnv) {
+    // saltEnv wins — inform user
+    console.log("  Salt: loaded from env var (saltEnv takes precedence over salt in config)");
+  }
+
+  // Startup warnings
+  for (const keyEntry of config.bridge.apiKeys) {
+    if (keyEntry.key) {
+      console.warn(`  ⚠ Agent "${keyEntry.agent}" uses a plaintext key in config. Use keyEnv or 'agorai key create' instead.`);
+    }
+  }
+  if (config.bridge.apiKeys.length > 0) {
+    console.log("  ℹ apiKeys in config is deprecated. Use 'agorai key create' for DB-managed keys.");
+  }
+
+  // Check: need at least DB-managed agents OR config-based keys
+  const dbAgents = await store.listAgents();
+  const hasDbKeys = dbAgents.some((a) => !a.apiKeyHash.startsWith("internal:"));
+  if (config.bridge.apiKeys.length === 0 && !hasDbKeys) {
+    console.error("Error: No API keys configured. Use 'agorai key create' or add bridge.apiKeys in config.");
+    process.exit(1);
+  }
+
+  // Chain auth: DB-managed keys first, then config-based (deprecated fallback)
+  const providers: import("./bridge/auth.js").IAuthProvider[] = [
+    new DatabaseAuthProvider(store, salt),
+  ];
+  if (config.bridge.apiKeys.length > 0) {
+    providers.push(new ApiKeyAuthProvider(config.bridge.apiKeys, store, salt));
+  }
+  const auth = new ChainAuthProvider(providers);
 
   // Initialize file store for attachments
   const fileStore = new LocalFileStore(config.fileStore.basePath);
   await fileStore.initialize();
 
+  // Collect agent names from both sources
+  const configAgentNames = config.bridge.apiKeys.map((k) => k.agent);
+  const dbAgentNames = dbAgents.filter((a) => !a.apiKeyHash.startsWith("internal:")).map((a) => a.name);
+  const allAgentNames = [...new Set([...configAgentNames, ...dbAgentNames])];
+
   console.log(`Starting Agorai bridge server...`);
   console.log(`  Endpoint: http://${config.bridge.host}:${config.bridge.port}/mcp`);
   console.log(`  Health:   http://${config.bridge.host}:${config.bridge.port}/health`);
-  console.log(`  Agents:   ${config.bridge.apiKeys.map((k) => k.agent).join(", ")}`);
+  console.log(`  Agents:   ${allAgentNames.join(", ") || "(none)"}`);
   console.log(`  Database: ${dbPath}`);
-  console.log(`  Salt:     ${config.bridge.salt ? "configured" : "NOT SET (unsalted hashes — add bridge.salt)"}`);
+  console.log(`  Salt:     ${salt ? "configured" : "NOT SET (unsalted hashes — add bridge.salt)"}`);
   console.log(`  Rate limit: ${config.bridge.rateLimit.maxRequests} req/${config.bridge.rateLimit.windowSeconds}s`);
 
   // Validate env vars for agents with apiKeyEnv
@@ -1092,6 +1130,187 @@ async function cmdAgentRun(args: string[]) {
   });
 
   await store.close();
+}
+
+// --- Key management (DB-managed pass-keys) ---
+
+async function cmdKey(args: string[]) {
+  const sub = args[0];
+  switch (sub) {
+    case "create":
+      await cmdKeyCreate(args.slice(1));
+      break;
+    case "list":
+      await cmdKeyList();
+      break;
+    case "revoke":
+      await cmdKeyRevoke(args.slice(1));
+      break;
+    default:
+      console.log("Usage: agorai key <create|list|revoke>");
+      console.log("  create --agent <name> [--type custom] [--clearance team] [--toolProfile agent] [--capabilities a,b]");
+      console.log("  list");
+      console.log("  revoke --agent <name>");
+      process.exit(1);
+  }
+}
+
+function resolveSalt(config: { bridge?: { salt?: string; saltEnv?: string } }): string | undefined {
+  if (config.bridge?.saltEnv) {
+    const envSalt = process.env[config.bridge.saltEnv];
+    if (envSalt) return envSalt;
+  }
+  return config.bridge?.salt;
+}
+
+async function cmdKeyCreate(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      agent: { type: "string" },
+      type: { type: "string", default: "custom" },
+      clearance: { type: "string", default: "team" },
+      toolProfile: { type: "string" },
+      capabilities: { type: "string" },
+    },
+    strict: false,
+  });
+
+  if (!values.agent) {
+    console.error("Error: --agent <name> is required.");
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+  if (!config.bridge) {
+    console.error("Error: bridge config required. Run `agorai init` first.");
+    process.exit(1);
+  }
+
+  const salt = resolveSalt(config);
+  if (!salt) {
+    console.error("Error: bridge.salt (or bridge.saltEnv) must be set to use DB-managed keys.");
+    console.error("  Set bridge.salt in agorai.config.json or AGORAI_BRIDGE_SALT env var.");
+    process.exit(1);
+  }
+
+  const { SqliteStore } = await import("./store/sqlite.js");
+  const { hashApiKey } = await import("./bridge/auth.js");
+
+  const store = new SqliteStore(config.database.path);
+  await store.initialize();
+
+  const agentName = values.agent as string;
+  const agentType = (values.type as string) ?? "custom";
+  const clearance = (values.clearance as string as "public" | "team" | "confidential" | "restricted") ?? "team";
+  const capStr = values.capabilities as string | undefined;
+  const capabilities = capStr ? capStr.split(",").map((s) => s.trim()) : [];
+  const toolProfile = values.toolProfile as string | undefined;
+
+  // Check if agent already has a key (unless --force for key rotation)
+  const existing = await store.getAgentByName(agentName);
+  if (existing && !existing.apiKeyHash.startsWith("internal:")) {
+    const { values: forceValues } = parseArgs({ args, options: { force: { type: "boolean" } }, strict: false });
+    if (!forceValues.force) {
+      console.error(`Error: Agent "${agentName}" already has a key. Use --force to rotate, or 'agorai key revoke' first.`);
+      await store.close();
+      process.exit(1);
+    }
+    console.log(`  Rotating key for existing agent "${agentName}"...`);
+  }
+
+  // Generate pass-key
+  const passKey = randomBytes(24).toString("base64url");
+  const hash = hashApiKey(passKey, salt);
+
+  await store.registerAgent({
+    name: agentName,
+    type: agentType,
+    capabilities,
+    clearanceLevel: clearance,
+    apiKeyHash: hash,
+    toolProfile,
+  });
+
+  await store.close();
+
+  console.log("");
+  console.log(`  Pass-key created for agent "${agentName}":`);
+  console.log("");
+  console.log(`  ${passKey}`);
+  console.log("");
+  console.log("  Save this key — it cannot be recovered.");
+  console.log(`  Type: ${agentType}  Clearance: ${clearance}  Profile: ${toolProfile ?? "none"}`);
+  console.log("");
+}
+
+async function cmdKeyList() {
+  const config = loadConfig();
+
+  const { SqliteStore } = await import("./store/sqlite.js");
+  const store = new SqliteStore(config.database.path);
+  await store.initialize();
+
+  const agents = await store.listAgents();
+  // Filter out internal/system agents (their hash starts with "internal:")
+  const managed = agents.filter((a) => !a.apiKeyHash.startsWith("internal:"));
+
+  if (managed.length === 0) {
+    console.log("No DB-managed keys found. Use 'agorai key create' to create one.");
+    await store.close();
+    return;
+  }
+
+  console.log("");
+  console.log("  DB-managed agents:");
+  console.log("");
+  console.log("  Name                 Type              Clearance     Profile        Created");
+  console.log("  " + "─".repeat(90));
+  for (const a of managed) {
+    const name = a.name.padEnd(20);
+    const type = a.type.padEnd(17);
+    const cl = a.clearanceLevel.padEnd(13);
+    const profile = (a.toolProfile ?? "—").padEnd(14);
+    const created = a.createdAt.slice(0, 10);
+    console.log(`  ${name} ${type} ${cl} ${profile} ${created}`);
+  }
+  console.log("");
+
+  await store.close();
+}
+
+async function cmdKeyRevoke(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      agent: { type: "string" },
+    },
+    strict: false,
+  });
+
+  const agentName = values.agent as string;
+  if (!agentName) {
+    console.error("Error: --agent <name> is required.");
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+
+  const { SqliteStore } = await import("./store/sqlite.js");
+  const store = new SqliteStore(config.database.path);
+  await store.initialize();
+
+  const agent = await store.getAgentByName(agentName);
+  if (!agent) {
+    console.error(`Error: Agent "${agentName}" not found.`);
+    await store.close();
+    process.exit(1);
+  }
+
+  await store.removeAgent(agent.id);
+  await store.close();
+
+  console.log(`Key revoked for agent "${agentName}".`);
 }
 
 async function cmdConnect(args: string[]) {

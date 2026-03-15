@@ -58,6 +58,7 @@ export interface IStore {
   registerAgent(agent: AgentRegistration): Promise<Agent>;
   getAgent(id: string): Promise<Agent | null>;
   getAgentByApiKey(keyHash: string): Promise<Agent | null>;
+  getAgentByName(name: string): Promise<Agent | null>;
   listAgents(): Promise<Agent[]>;
   findAgentsByCapability(capability: string): Promise<Agent[]>;
   updateAgentLastSeen(id: string): Promise<void>;

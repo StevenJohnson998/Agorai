@@ -72,6 +72,8 @@ export interface Agent {
   capabilities: string[];
   clearanceLevel: VisibilityLevel;
   apiKeyHash: string;
+  toolGroups: string[] | null;
+  toolProfile: string | null;
   lastSeenAt: string;
   createdAt: string;
   status: AgentStatus;
@@ -148,6 +150,8 @@ export interface AgentRegistration {
   capabilities: string[];
   clearanceLevel?: VisibilityLevel;
   apiKeyHash: string;
+  toolGroups?: string[];
+  toolProfile?: string;
 }
 
 export interface CreateProject {

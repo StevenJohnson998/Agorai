@@ -3,6 +3,8 @@
  *
  * v0.2: API key authentication via config.
  * v0.2.1: Salted HMAC-SHA-256 (optional salt in config).
+ * v0.8: DatabaseAuthProvider (DB-managed keys via `agorai key create`).
+ *       ChainAuthProvider (DB first → config fallback).
  * Future: OAuth/JWT, external identity providers.
  */
 
@@ -100,5 +102,66 @@ export class ApiKeyAuthProvider implements IAuthProvider {
       toolGroups: keyConfig.toolGroups,
       toolProfile: keyConfig.toolProfile,
     };
+  }
+}
+
+/**
+ * DB-managed key auth provider.
+ *
+ * Looks up the hashed key directly in the agents table.
+ * Keys are created via `agorai key create` and never stored in config.
+ * Returns toolGroups/toolProfile from the DB agent record.
+ */
+export class DatabaseAuthProvider implements IAuthProvider {
+  private store: IStore;
+  private salt?: string;
+
+  constructor(store: IStore, salt?: string) {
+    this.store = store;
+    this.salt = salt;
+  }
+
+  async authenticate(token: string): Promise<AuthResult> {
+    if (!token) {
+      return { authenticated: false, error: "Missing API key" };
+    }
+
+    const hash = hashApiKey(token, this.salt);
+    const agent = await this.store.getAgentByApiKey(hash);
+
+    if (!agent) {
+      return { authenticated: false, error: "Invalid API key" };
+    }
+
+    await this.store.updateAgentLastSeen(agent.id);
+
+    return {
+      authenticated: true,
+      agentId: agent.id,
+      agentName: agent.name,
+      clearanceLevel: agent.clearanceLevel,
+      toolGroups: agent.toolGroups ?? undefined,
+      toolProfile: agent.toolProfile ?? undefined,
+    };
+  }
+}
+
+/**
+ * Chain auth provider — tries providers in order, returns first success.
+ * Typical setup: DatabaseAuthProvider (DB keys) → ApiKeyAuthProvider (config keys, deprecated).
+ */
+export class ChainAuthProvider implements IAuthProvider {
+  private providers: IAuthProvider[];
+
+  constructor(providers: IAuthProvider[]) {
+    this.providers = providers;
+  }
+
+  async authenticate(token: string): Promise<AuthResult> {
+    for (const provider of this.providers) {
+      const result = await provider.authenticate(token);
+      if (result.authenticated) return result;
+    }
+    return { authenticated: false, error: "Invalid API key" };
   }
 }

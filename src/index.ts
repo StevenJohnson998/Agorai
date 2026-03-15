@@ -56,7 +56,7 @@ export type {
 
 // --- Bridge ---
 export { startBridgeServer } from "./bridge/server.js";
-export { ApiKeyAuthProvider, hashApiKey } from "./bridge/auth.js";
+export { ApiKeyAuthProvider, DatabaseAuthProvider, ChainAuthProvider, hashApiKey } from "./bridge/auth.js";
 export type { AuthResult, IAuthProvider } from "./bridge/auth.js";
 export type { BridgeServerOptions } from "./bridge/server.js";
 

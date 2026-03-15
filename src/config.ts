@@ -128,6 +128,8 @@ export const ConfigSchema = z.object({
       host: z.string().default("127.0.0.1"),
       /** Salt for HMAC-SHA-256 API key hashing. Set to a random string for security. */
       salt: z.string().optional().describe("Salt for API key hashing. Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""),
+      /** Environment variable name containing the salt. Takes precedence over `salt`. */
+      saltEnv: z.string().optional().describe("Read salt from this environment variable (recommended over salt in config)."),
       /** Per-agent rate limiting on /mcp endpoint. */
       rateLimit: z.object({
         /** Max requests per window per agent. Default 120. */

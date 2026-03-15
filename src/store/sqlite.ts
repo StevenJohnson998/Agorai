@@ -368,6 +368,14 @@ export class SqliteStore implements IStore {
       this.db.exec("ALTER TABLE agents ADD COLUMN status_message TEXT");
     }
 
+    // Add tool_groups and tool_profile to agents (for DB-managed keys)
+    if (!agentColNames.has("tool_groups")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN tool_groups TEXT");
+    }
+    if (!agentColNames.has("tool_profile")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN tool_profile TEXT");
+    }
+
     // Add access_mode to projects
     if (!projColNames.has("access_mode")) {
       this.db.exec("ALTER TABLE projects ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'visible'");
@@ -517,6 +525,8 @@ export class SqliteStore implements IStore {
       capabilities: JSON.parse(row.capabilities as string),
       clearanceLevel: row.clearance_level as VisibilityLevel,
       apiKeyHash: row.api_key_hash as string,
+      toolGroups: row.tool_groups ? JSON.parse(row.tool_groups as string) : null,
+      toolProfile: (row.tool_profile as string) ?? null,
       lastSeenAt: row.last_seen_at as string,
       createdAt: row.created_at as string,
       status: (row.status as AgentStatus) ?? "offline",
@@ -550,16 +560,28 @@ export class SqliteStore implements IStore {
       | Record<string, unknown>
       | undefined;
 
+    const toolGroupsJson = agent.toolGroups ? JSON.stringify(agent.toolGroups) : null;
+
     if (existing) {
       const ts = now();
+      // Don't overwrite a real API key hash with an internal one
+      const existingHash = existing.api_key_hash as string;
+      const newHash = agent.apiKeyHash;
+      const shouldUpdateHash = !newHash.startsWith("internal:") || existingHash.startsWith("internal:");
+      const finalHash = shouldUpdateHash ? newHash : existingHash;
+
       this.db.prepare(`
-        UPDATE agents SET type = ?, capabilities = ?, clearance_level = ?, api_key_hash = ?, last_seen_at = ?, status = 'online', status_message = NULL
+        UPDATE agents SET type = ?, capabilities = ?, clearance_level = ?, api_key_hash = ?,
+          tool_groups = COALESCE(?, tool_groups), tool_profile = COALESCE(?, tool_profile),
+          last_seen_at = ?, status = 'online', status_message = NULL
         WHERE name = ?
       `).run(
         agent.type,
         JSON.stringify(agent.capabilities),
         agent.clearanceLevel ?? "team",
-        agent.apiKeyHash,
+        finalHash,
+        toolGroupsJson,
+        agent.toolProfile ?? null,
         ts,
         agent.name,
       );
@@ -568,7 +590,9 @@ export class SqliteStore implements IStore {
         type: agent.type,
         capabilities: JSON.stringify(agent.capabilities),
         clearance_level: agent.clearanceLevel ?? "team",
-        api_key_hash: agent.apiKeyHash,
+        api_key_hash: finalHash,
+        tool_groups: toolGroupsJson ?? (existing.tool_groups as string | null),
+        tool_profile: agent.toolProfile ?? (existing.tool_profile as string | null),
         last_seen_at: ts,
         status: "online",
         status_message: null,
@@ -578,8 +602,8 @@ export class SqliteStore implements IStore {
     const id = randomUUID();
     const ts = now();
     this.db.prepare(`
-      INSERT INTO agents (id, name, type, capabilities, clearance_level, api_key_hash, last_seen_at, created_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'online')
+      INSERT INTO agents (id, name, type, capabilities, clearance_level, api_key_hash, tool_groups, tool_profile, last_seen_at, created_at, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'online')
     `).run(
       id,
       agent.name,
@@ -587,6 +611,8 @@ export class SqliteStore implements IStore {
       JSON.stringify(agent.capabilities),
       agent.clearanceLevel ?? "team",
       agent.apiKeyHash,
+      toolGroupsJson,
+      agent.toolProfile ?? null,
       ts,
       ts,
     );
@@ -598,6 +624,8 @@ export class SqliteStore implements IStore {
       capabilities: agent.capabilities,
       clearanceLevel: agent.clearanceLevel ?? "team",
       apiKeyHash: agent.apiKeyHash,
+      toolGroups: agent.toolGroups ?? null,
+      toolProfile: agent.toolProfile ?? null,
       lastSeenAt: ts,
       createdAt: ts,
       status: "online" as AgentStatus,
@@ -614,6 +642,13 @@ export class SqliteStore implements IStore {
 
   async getAgentByApiKey(keyHash: string): Promise<Agent | null> {
     const row = this.db.prepare("SELECT * FROM agents WHERE api_key_hash = ?").get(keyHash) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToAgent(row) : null;
+  }
+
+  async getAgentByName(name: string): Promise<Agent | null> {
+    const row = this.db.prepare("SELECT * FROM agents WHERE name = ?").get(name) as
       | Record<string, unknown>
       | undefined;
     return row ? this.rowToAgent(row) : null;
