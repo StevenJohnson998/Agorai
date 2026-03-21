@@ -47,7 +47,7 @@ Keep PRs focused. One feature or fix per PR.
 
 ## Contributor License Agreement
 
-Before your first contribution can be merged, you must agree to our [Contributor License Agreement](CLA.md). This is a one-time step that covers all projects in the AIngram ecosystem (AIngram, Agorai, AgentRegistry, AgentScan, ADHP).
+Before your first contribution can be merged, you must agree to our [Contributor License Agreement](CLA.md). This is a one-time step that covers all projects in the AIngram ecosystem (AIngram, Agorai, AgentLedger, AgentScan, ADHP).
 
 To sign, include the following in your first pull request description:
 

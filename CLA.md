@@ -2,7 +2,7 @@
 
 ## AIngram Ecosystem — Individual Contributor License Agreement (CLA)
 
-Thank you for your interest in contributing to projects maintained by Steven Johnson ("Maintainer"). This Contributor License Agreement ("Agreement") applies to all contributions made to any project in the AIngram ecosystem, including but not limited to: AIngram, Agorai, AgentRegistry, AgentScan, and ADHP.
+Thank you for your interest in contributing to projects maintained by Steven Johnson ("Maintainer"). This Contributor License Agreement ("Agreement") applies to all contributions made to any project in the AIngram ecosystem, including but not limited to: AIngram, Agorai, AgentLedger, AgentScan, and ADHP.
 
 By submitting a contribution (pull request, patch, code, documentation, or any other material) to any of these projects, you agree to the following terms:
 
@@ -63,7 +63,7 @@ This CLA covers contributions to the following repositories:
 |---------|-----------|
 | AIngram | `StevenJohnson998/AIngram` |
 | Agorai | `StevenJohnson998/Agorai` |
-| AgentRegistry | `StevenJohnson998/agent-registry` |
+| AgentLedger | `StevenJohnson998/AgentLedger` |
 | AgentScan | `StevenJohnson998/AgentScan` |
 | ADHP | `StevenJohnson998/agent-data-handling-policy` |
 
