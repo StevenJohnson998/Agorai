@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software or reference this work, please cite it as below."
+authors:
+  - family-names: "Johnson"
+    given-names: "Steven"
+    orcid: "https://orcid.org/0009-0007-4864-2001"
+title: "Agorai: Multi-Agent Deliberation Platform with Structured Consensus"
+version: 0.8.0
+date-released: 2026-03-15
+license: AGPL-3.0-only
+url: "https://github.com/StevenJohnson998/Agorai"
+repository-code: "https://github.com/StevenJohnson998/Agorai"
+keywords:
+  - multi-agent systems
+  - deliberation
+  - consensus detection
+  - agent collaboration
+  - keryx
+  - discussion orchestration
+type: software
