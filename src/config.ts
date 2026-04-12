@@ -202,6 +202,14 @@ export const ConfigSchema = z.object({
       healthWindowSize: z.number().default(10),
     })
     .default({}),
+
+  messages: z
+    .object({
+      /** Max message content length in characters. Messages exceeding this are rejected. */
+      maxContentLength: z.number().int().min(100).default(10_000),
+    })
+    .default({})
+    .describe("Message content validation settings."),
 });
 
 export const VisibilityLevelSchema = z.enum(["public", "team", "confidential", "restricted"]);

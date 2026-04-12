@@ -22,6 +22,8 @@ import { createLogger } from "../logger.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
+import { validateMessage } from "./validation.js";
+import { mcpError } from "./errors.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_VERSION: string = JSON.parse(
@@ -412,6 +414,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         title: args.title,
         defaultVisibility: args.default_visibility,
         accessMode: args.access_mode,
+        publicRead: args.public_read,
         createdBy: agentId,
       });
       // Creator auto-subscribed by store.createConversation() — fetch skills metadata
@@ -607,6 +610,13 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
       const subscribed = await store.isSubscribed(args.conversation_id, agentId);
       if (!subscribed) return ACCESS_DENIED;
 
+      // Content validation pipeline
+      const messagesConfig = config?.messages ?? { maxContentLength: 10_000 };
+      const validation = validateMessage(args.content, messagesConfig);
+      if (!validation.valid) {
+        return mcpError(validation.error!.code, validation.error!.message, validation.error!.data);
+      }
+
       // Validate @mentions in whispers: mentioned agents must be in recipients list
       if (args.recipients && args.recipients.length > 0) {
         const allAgents = await store.listAgents();
@@ -631,6 +641,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         visibility: args.visibility,
         content: args.content,
         tags: args.tags,
+        level: args.level,
         recipients: args.recipients,
         metadata: args.metadata as Record<string, unknown> | undefined,
       });
@@ -675,6 +686,7 @@ export function createBridgeMcpServer(store: IStore, agentId: string, toolGroups
         limit: args.limit,
         tags: args.tags,
         fromAgent: args.from_agent,
+        maxLevel: args.max_level,
       });
 
       // Batch-fetch attachments for all messages
@@ -1475,6 +1487,95 @@ export async function startBridgeServer(opts: BridgeServerOptions): Promise<{
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", version: PKG_VERSION }));
+        return;
+      }
+
+      // Public read endpoint — no auth required
+      const publicMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)\/public$/);
+      if (publicMatch && req.method === "GET") {
+        const conversationId = decodeURIComponent(publicMatch[1]);
+        const since = url.searchParams.get("since") ?? undefined;
+        const limitParam = url.searchParams.get("limit");
+        const maxLevelParam = url.searchParams.get("max_level");
+        const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+        const maxLevel = maxLevelParam ? parseInt(maxLevelParam, 10) : undefined;
+
+        const messages = await store.getPublicMessages(conversationId, {
+          since,
+          limit: limit && !isNaN(limit) ? Math.min(limit, 200) : undefined,
+          maxLevel: maxLevel && !isNaN(maxLevel) ? maxLevel : undefined,
+        });
+
+        if (messages.length === 0) {
+          // Could be not found or no public messages — don't leak existence
+          const conv = await store.getConversation(conversationId);
+          if (!conv || !conv.publicRead) {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Not found or not public" }));
+            return;
+          }
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(messages, null, 2));
+        return;
+      }
+
+      // Active conversations endpoint — no auth required
+      const activeMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/conversations\/active$/);
+      if (activeMatch && req.method === "GET") {
+        const projectId = decodeURIComponent(activeMatch[1]);
+        const daysParam = url.searchParams.get("days");
+        const limitParam = url.searchParams.get("limit");
+        const maxLevelParam = url.searchParams.get("max_level");
+        const days = daysParam ? parseInt(daysParam, 10) : undefined;
+        const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+        const maxLevel = maxLevelParam ? parseInt(maxLevelParam, 10) : undefined;
+
+        if ((days != null && (isNaN(days) || days < 1 || days > 365)) ||
+            (limit != null && (isNaN(limit) || limit < 1)) ||
+            (maxLevel != null && (isNaN(maxLevel) || maxLevel < 1 || maxLevel > 3))) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid parameters" }));
+          return;
+        }
+
+        const results = await store.getActiveConversations(projectId, {
+          days: days ?? undefined,
+          limit: limit ?? undefined,
+          maxLevel: maxLevel ?? undefined,
+        });
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(results, null, 2));
+        return;
+      }
+
+      // Conversation stats endpoint — no auth required
+      const statsMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)\/stats$/);
+      if (statsMatch && req.method === "GET") {
+        const conversationId = decodeURIComponent(statsMatch[1]);
+        const maxLevelParam = url.searchParams.get("max_level");
+        const maxLevel = maxLevelParam ? parseInt(maxLevelParam, 10) : undefined;
+
+        if (maxLevel != null && (isNaN(maxLevel) || maxLevel < 1 || maxLevel > 3)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid max_level parameter" }));
+          return;
+        }
+
+        const stats = await store.getConversationStats(conversationId, {
+          maxLevel: maxLevel ?? undefined,
+        });
+
+        if (!stats) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Not found or not public" }));
+          return;
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(stats, null, 2));
         return;
       }
 
